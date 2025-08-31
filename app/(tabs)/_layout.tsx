@@ -34,10 +34,26 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="explore"
+      name="library"
+      options={{
+        title: 'Library',
+        tabBarIcon: ({ color }) => <IconSymbol size={28} name="folder.fill" color={color}/>,
+      }}
+      />
+
+      <Tabs.Screen
+        name="recordingScreen"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'Record',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="video.fill" color={color} />,
+          ...(Platform.OS === 'web' ? {tabBarButton: () => null} : {}),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gearshape.fill" color={color} />,
         }}
       />
     </Tabs>
