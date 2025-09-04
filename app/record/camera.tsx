@@ -1,10 +1,17 @@
 // app/record/camera.tsx
+//
+// STABLE BUILD: overlay mounts only AFTER camera is on screen
+//
+// Changes vs. your last debug build:
+// - Uses InteractionManager to wait for nav transitions
+// - Mounts CameraView first; mounts overlay only after CameraView onLayout (+ small delay)
+// - Keeps safe-area spacing; allows rotation (no orientation lock)
+
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import * as ScreenOrientation from 'expo-screen-orientation';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, InteractionManager, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
@@ -17,50 +24,45 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
-  // Screen focus + delayed camera mount
+  // Focus + staged mount flags
   const isFocused = useIsFocused();
   const [mountCam, setMountCam] = useState(false);
   const [camKey, setCamKey] = useState(0);
+  const [showOverlay, setShowOverlay] = useState(false);
 
+  // Wait for screen focus + transitions to finish before mounting camera
   useEffect(() => {
     let cancelled = false;
-    async function onFocus() {
-      // lock to the *current* orientation while camera is active
-      try {
-        const o = await ScreenOrientation.getOrientationAsync();
-        if (
-          o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
-          o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT
-        ) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        } else {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-        }
-      } catch {}
+    let interaction: { cancel?: () => void } | null = null;
 
-      // small delay prevents mount-race with navigation/animations
-      setTimeout(() => {
+    if (isFocused && permission?.granted) {
+      setShowOverlay(false);      // hide overlay when (re)entering
+      interaction = InteractionManager.runAfterInteractions(() => {
         if (!cancelled) {
-          setCamKey((k) => k + 1); // clean mount each time
+          setCamKey((k) => k + 1); // clean camera mount each focus
           setMountCam(true);
         }
-      }, 150);
-    }
-
-    async function onBlur() {
+      });
+    } else {
       setMountCam(false);
-      try {
-        await ScreenOrientation.unlockAsync();
-      } catch {}
+      setShowOverlay(false);
     }
-
-    if (isFocused) onFocus();
-    else onBlur();
 
     return () => {
       cancelled = true;
+      interaction?.cancel?.();
     };
-  }, [isFocused]);
+  }, [isFocused, permission?.granted]);
+
+  // Camera ready → then show overlay (tiny delay to avoid mount race)
+  const handleCameraLayout = () => {
+    // Guard against duplicate calls
+    setShowOverlay((prev) => {
+      if (prev) return prev;
+      setTimeout(() => setShowOverlay(true), 60);
+      return prev;
+    });
+  };
 
   const [isRecording, setIsRecording] = useState(false);
   const [startMs, setStartMs] = useState<number | null>(null);
@@ -112,14 +114,15 @@ export default function CameraScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      {/* Mount camera only when: permission granted + screen focused + delayed flag */}
+      {/* Camera mounts only after focus + transitions complete */}
       {permission.granted && isFocused && mountCam ? (
         <CameraView
-          key={camKey}                 // clean mount on focus
+          key={camKey}
           ref={cameraRef}
           style={{ flex: 1 }}
           facing="back"
-          // NOTE: omit `mode="video"` for maximum stability during mount; add back later
+          // Omit mode prop for max stability; add later if needed
+          onLayout={handleCameraLayout}
         />
       ) : (
         <View style={{ flex: 1, backgroundColor: 'black' }} />
@@ -143,22 +146,27 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Full-screen overlay host (transparent) */}
-      <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}>
-        {isFolkstyle ? (
-          <WrestlingFolkstyleOverlay
-            isRecording={isRecording}
-            onEvent={onEvent}
-            getCurrentTSec={getCurrentTSec}
-            sport={String(sport)}
-            style={String(style)}
-          />
-        ) : (
-          <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: insets.left + 12 }}>
-            No overlay registered for {String(sport)}:{String(style)}
-          </Text>
-        )}
-      </View>
+      {/* Full-screen overlay host (transparent) — mounts AFTER camera is laid out */}
+      {showOverlay && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
+        >
+          {isFolkstyle ? (
+            <WrestlingFolkstyleOverlay
+              isRecording={isRecording}
+              onEvent={onEvent}
+              getCurrentTSec={getCurrentTSec}
+              sport={String(sport)}
+              style={String(style)}
+            />
+          ) : (
+            <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: insets.left + 12 }}>
+              No overlay registered for {String(sport)}:{String(style)}
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Record / Stop (safe-area aware) */}
       <View
@@ -191,6 +199,9 @@ export default function CameraScreen() {
     </View>
   );
 }
+
+
+
 
 
 
