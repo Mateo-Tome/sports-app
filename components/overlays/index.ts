@@ -3,8 +3,8 @@ import { ComponentType } from 'react';
 import { OverlayProps } from './types';
 
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
-import WrestlingFreestyleOverlay from './WrestlingFreestyleOverlay';
-import WrestlingGrecoOverlay from './WrestlingGrecoOverlay';
+import WrestlingFreestyleOverlay from './wrestlingFreestyleOverlay';
+import WrestlingGrecoOverlay from './wrestlingGrecoOverlay';
 
 type OverlayComp = ComponentType<OverlayProps>;
 

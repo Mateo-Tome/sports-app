@@ -20,18 +20,18 @@ export default function WrestlingFreestyleOverlay({ isRecording, onEvent }: Over
     <View style={{ flexDirection: 'row', gap: 12 }}>
       <View style={{ flex: 1 }}>
         <Text style={{ color: 'white', marginBottom: 8, fontWeight: '600' }}>Home</Text>
-        <Btn label="Takedown (2)" actor="home" keyName="takedown2" value={2} />
-        <Btn label="Takedown (4)" actor="home" keyName="takedown4" value={4} />
-        <Btn label="Exposure (2)" actor="home" keyName="exposure2" value={2} />
-        <Btn label="Step-Out (1)" actor="home" keyName="stepout1" value={1} />
+        <Btn label="Takedown (+2)" actor="home" keyName="takedown2" value={2} />
+        <Btn label="Takedown (+4)" actor="home" keyName="takedown4" value={4} />
+        <Btn label="Exposure (+2)" actor="home" keyName="exposure2" value={2} />
+        <Btn label="push-Out (+1)" actor="home" keyName="stepout1" value={1} />
         <Btn label="Passivity"    actor="home" keyName="passivity" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: 'white', marginBottom: 8, fontWeight: '600' }}>Opponent</Text>
-        <Btn label="Takedown (2)" actor="opponent" keyName="takedown2" value={2} />
-        <Btn label="Takedown (4)" actor="opponent" keyName="takedown4" value={4} />
-        <Btn label="Exposure (2)" actor="opponent" keyName="exposure2" value={2} />
-        <Btn label="Step-Out (1)" actor="opponent" keyName="stepout1" value={1} />
+        <Btn label="Takedown (+2)" actor="opponent" keyName="takedown2" value={2} />
+        <Btn label="Takedown (+4)" actor="opponent" keyName="takedown4" value={4} />
+        <Btn label="Exposure (+2)" actor="opponent" keyName="exposure2" value={2} />
+        <Btn label="push-Out (+1)" actor="opponent" keyName="stepout1" value={1} />
         <Btn label="Passivity"    actor="opponent" keyName="passivity" />
       </View>
     </View>
