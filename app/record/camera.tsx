@@ -1,9 +1,13 @@
 // app/record/camera.tsx
+import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useLocalSearchParams } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
-import { getOverlayFor } from '../../components/overlays';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
 export default function CameraScreen() {
@@ -13,9 +17,55 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
+  // Screen focus + delayed camera mount
+  const isFocused = useIsFocused();
+  const [mountCam, setMountCam] = useState(false);
+  const [camKey, setCamKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function onFocus() {
+      // lock to the *current* orientation while camera is active
+      try {
+        const o = await ScreenOrientation.getOrientationAsync();
+        if (
+          o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
+          o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT
+        ) {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        } else {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        }
+      } catch {}
+
+      // small delay prevents mount-race with navigation/animations
+      setTimeout(() => {
+        if (!cancelled) {
+          setCamKey((k) => k + 1); // clean mount each time
+          setMountCam(true);
+        }
+      }, 150);
+    }
+
+    async function onBlur() {
+      setMountCam(false);
+      try {
+        await ScreenOrientation.unlockAsync();
+      } catch {}
+    }
+
+    if (isFocused) onFocus();
+    else onBlur();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocused]);
+
   const [isRecording, setIsRecording] = useState(false);
   const [startMs, setStartMs] = useState<number | null>(null);
   const [events, setEvents] = useState<any[]>([]);
+  const insets = useSafeAreaInsets();
 
   const getCurrentTSec = () => {
     if (!startMs) return 0;
@@ -24,11 +74,16 @@ export default function CameraScreen() {
   };
 
   const onEvent = (evt: OverlayEvent) =>
-    setEvents(prev => [...prev, { ...evt, t: getCurrentTSec() }]);
+    setEvents((prev) => [...prev, { ...evt, t: getCurrentTSec() }]);
 
-  const Overlay = getOverlayFor(String(sport), String(style)); // ensure strings
+  // Hide nav header safely
+  const navigation = useNavigation();
+  useEffect(() => {
+    try { (navigation as any)?.setOptions?.({ headerShown: false }); } catch {}
+    return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
+  }, [navigation]);
 
-  if (!permission) return <View style={{ flex: 1 }} />;
+  if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
   if (!permission.granted) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}>
@@ -44,26 +99,54 @@ export default function CameraScreen() {
     setEvents([]);
     setIsRecording(true);
     setStartMs(Date.now());
-    // later: cameraRef.current?.recordAsync(...)
   };
 
   const handleStop = async () => {
     setIsRecording(false);
-    // later: cameraRef.current?.stopRecording()
     Alert.alert('Stopped', `Captured ${events.length} events`);
   };
 
+  const isFolkstyle =
+    String(sport).toLowerCase() === 'wrestling' &&
+    String(style).toLowerCase() === 'folkstyle';
+
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back" />
+      {/* Mount camera only when: permission granted + screen focused + delayed flag */}
+      {permission.granted && isFocused && mountCam ? (
+        <CameraView
+          key={camKey}                 // clean mount on focus
+          ref={cameraRef}
+          style={{ flex: 1 }}
+          facing="back"
+          // NOTE: omit `mode="video"` for maximum stability during mount; add back later
+        />
+      ) : (
+        <View style={{ flex: 1, backgroundColor: 'black' }} />
+      )}
 
-      <View style={{ position: 'absolute', top: 40, left: 16, right: 16, padding: 8, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-        <Text style={{ color: 'white' }}>{sport} — {style}</Text>
-      </View>
+      {/* Back button (safe-area; hidden while recording) */}
+      {!isRecording && (
+        <View style={{ position: 'absolute', top: insets.top + 8, left: insets.left + 8 }}>
+          <TouchableOpacity
+            onPress={() => (navigation as any)?.goBack?.()}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '600' }}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      <View style={{ position: 'absolute', bottom: 100, left: 16, right: 16 }}>
-        {Overlay ? (
-          <Overlay
+      {/* Full-screen overlay host (transparent) */}
+      <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}>
+        {isFolkstyle ? (
+          <WrestlingFolkstyleOverlay
             isRecording={isRecording}
             onEvent={onEvent}
             getCurrentTSec={getCurrentTSec}
@@ -71,17 +154,36 @@ export default function CameraScreen() {
             style={String(style)}
           />
         ) : (
-          <Text style={{ color: 'white' }}>No overlay registered for {String(sport)}:{String(style)}</Text>
+          <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: insets.left + 12 }}>
+            No overlay registered for {String(sport)}:{String(style)}
+          </Text>
         )}
       </View>
 
-      <View style={{ position: 'absolute', bottom: 24, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 16 }}>
+      {/* Record / Stop (safe-area aware) */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: insets.bottom + 16,
+          left: insets.left,
+          right: insets.right,
+          flexDirection: 'row',
+          justifyContent: 'center',
+          gap: 16,
+        }}
+      >
         {!isRecording ? (
-          <TouchableOpacity onPress={handleStart} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'red', borderRadius: 999 }}>
+          <TouchableOpacity
+            onPress={handleStart}
+            style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'red', borderRadius: 999 }}
+          >
             <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={handleStop} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}>
+          <TouchableOpacity
+            onPress={handleStop}
+            style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}
+          >
             <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
           </TouchableOpacity>
         )}
@@ -89,5 +191,14 @@ export default function CameraScreen() {
     </View>
   );
 }
+
+
+
+
+
+
+
+
+
 
 
