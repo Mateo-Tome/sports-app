@@ -6,9 +6,11 @@
 // - Uses InteractionManager to wait for nav transitions
 // - Mounts CameraView first; mounts overlay only after CameraView onLayout (+ small delay)
 // - Keeps safe-area spacing; allows rotation (no orientation lock)
+// - NOW: real video recording via recordAsync()/stopRecording()
 
 import { useIsFocused } from '@react-navigation/native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, InteractionManager, Text, TouchableOpacity, View } from 'react-native';
@@ -17,11 +19,34 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
+
+const saveToAppStorage = async (srcUri?: string | null) => {
+  if (!srcUri) return null;
+  try {
+    const dir = FileSystem.documentDirectory + 'videos/';
+    // make sure the folder exists
+    try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
+    // simple filename; you can improve later
+    const ext = srcUri.split('.').pop()?.split('?')[0] || 'mp4';
+    const destUri = `${dir}match_${Date.now()}.${ext}`;
+    await FileSystem.copyAsync({ from: srcUri, to: destUri });
+    return destUri; // this is your persistent app-local file
+  } catch (e: any) {
+    console.log('saveToAppStorage error:', e);
+    Alert.alert('Save failed', String(e?.message ?? e));
+    return null;
+  }
+};
+
+
 export default function CameraScreen() {
   const { sport = 'wrestling', style = 'folkstyle' } =
     useLocalSearchParams<{ sport?: string; style?: string }>();
 
   const [permission, requestPermission] = useCameraPermissions();
+  // If you want to capture AUDIO too, uncomment the next line and request mic permission as well
+   const [micPerm, requestMicPerm] = useMicrophonePermissions();
+
   const cameraRef = useRef<CameraView>(null);
 
   // Focus + staged mount flags
@@ -30,13 +55,21 @@ export default function CameraScreen() {
   const [camKey, setCamKey] = useState(0);
   const [showOverlay, setShowOverlay] = useState(false);
 
+  // recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [startMs, setStartMs] = useState<number | null>(null);
+  const [events, setEvents] = useState<any[]>([]);
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+
+  const insets = useSafeAreaInsets();
+
   // Wait for screen focus + transitions to finish before mounting camera
   useEffect(() => {
     let cancelled = false;
     let interaction: { cancel?: () => void } | null = null;
 
     if (isFocused && permission?.granted) {
-      setShowOverlay(false);      // hide overlay when (re)entering
+      setShowOverlay(false); // hide overlay when (re)entering
       interaction = InteractionManager.runAfterInteractions(() => {
         if (!cancelled) {
           setCamKey((k) => k + 1); // clean camera mount each focus
@@ -64,14 +97,9 @@ export default function CameraScreen() {
     });
   };
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [startMs, setStartMs] = useState<number | null>(null);
-  const [events, setEvents] = useState<any[]>([]);
-  const insets = useSafeAreaInsets();
-
   const getCurrentTSec = () => {
     if (!startMs) return 0;
-    const raw = Math.round((Date.now() - startMs) / 1000) - 3;
+    const raw = Math.round((Date.now() - startMs) / 1000) - 3; // 3s lookback
     return raw < 0 ? 0 : raw;
   };
 
@@ -85,6 +113,13 @@ export default function CameraScreen() {
     return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
   }, [navigation]);
 
+  // Stop recording if the component unmounts mid-record (safety)
+  useEffect(() => {
+    return () => {
+      try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
+    };
+  }, []);
+
   if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
   if (!permission.granted) {
     return (
@@ -97,15 +132,59 @@ export default function CameraScreen() {
     );
   }
 
+  // If using audio, consider prompting for mic permission before starting:
+  // if (micPerm && !micPerm.granted) { await requestMicPerm(); }
+
   const handleStart = async () => {
+    if (isRecording) return; // ignore double-taps
+
+    if (!micPerm?.granted) {
+      const r = await requestMicPerm();
+      if (!r?.granted) {
+        Alert.alert('Microphone needed', 'Enable microphone to record audio.');
+        return; // bail before flipping state
+      }
+    }
+
+
     setEvents([]);
+    setVideoUri(null);
     setIsRecording(true);
     setStartMs(Date.now());
+
+    try {
+      const recPromise = (cameraRef.current as any)?.recordAsync?.({
+        // You can tweak options later (e.g., maxDuration, quality)
+        mute: false,  
+      });
+
+      recPromise
+      ?.then(async (res: any) => {
+        const uri = typeof res === 'string' ? res : res?.uri;
+        setVideoUri(uri ?? null);
+    
+        // ⬇️ Save a copy into the app's private storage
+        const appUri = await saveToAppStorage(uri);
+    
+        Alert.alert(
+          'Recording saved',
+          `In-app file: ${appUri ?? 'n/a'}\nTemp: ${uri ?? 'n/a'}`
+        );
+      })
+      .catch((e: any) => {
+        console.log('recordAsync error:', e);
+        Alert.alert('Recording error', String(e?.message ?? e));
+      });
+    } catch (e: any) {
+      console.log('recordAsync threw:', e);
+      Alert.alert('Recording error (thrown)', String(e?.message ?? e));
+    }
   };
 
   const handleStop = async () => {
+    if (!isRecording) return;
+    try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
     setIsRecording(false);
-    Alert.alert('Stopped', `Captured ${events.length} events`);
   };
 
   const isFolkstyle =
@@ -121,7 +200,7 @@ export default function CameraScreen() {
           ref={cameraRef}
           style={{ flex: 1 }}
           facing="back"
-          // Omit mode prop for max stability; add later if needed
+          mode="video"               // IMPORTANT for recording
           onLayout={handleCameraLayout}
         />
       ) : (
@@ -199,6 +278,7 @@ export default function CameraScreen() {
     </View>
   );
 }
+
 
 
 

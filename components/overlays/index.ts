@@ -1,22 +1,27 @@
-// components/overlays/index.ts
-import { ComponentType } from 'react';
-import { OverlayProps } from './types';
-
+// app/components/overlays/index.ts
+import React from 'react';
+import type { OverlayProps } from './types';
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
-import WrestlingFreestyleOverlay from './wrestlingFreestyleOverlay';
-import WrestlingGrecoOverlay from './wrestlingGrecoOverlay';
 
-type OverlayComp = ComponentType<OverlayProps>;
+export type OverlayComponent = React.ComponentType<OverlayProps>;
 
-export const overlayRegistry: Record<string, OverlayComp> = {
-  'wrestling:folkstyle': WrestlingFolkstyleOverlay,
-  'wrestling:freestyle': WrestlingFreestyleOverlay,
-  'wrestling:greco': WrestlingGrecoOverlay,
-};
+export function getOverlayFor(sport: string, style: string): OverlayComponent | null {
+  const s = (sport ?? '').trim().toLowerCase();
+  const st = (style ?? '').trim().toLowerCase();
 
-export function getOverlayFor(sport: string, style: string): OverlayComp | null {
-  const key = `${sport}:${style}`;
-  return overlayRegistry[key] ?? null;
+  if (s === 'wrestling') {
+    if (st === 'folkstyle' || st === 'folk' || st === 'fs') {
+      return WrestlingFolkstyleOverlay;
+    }
+    // you can add more styles here:
+    // if (st === 'freestyle') return WrestlingFreestyleOverlay;
+    // if (st === 'greco') return WrestlingGrecoOverlay;
+  }
+
+  return null;
 }
+
+export default getOverlayFor;
+
 
 

@@ -9,11 +9,12 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSCameraUsageDescription": "This app uses the camera to record games and add timestamps."
-      }
-    },
+  "infoPlist": {
+    "NSCameraUsageDescription": "This app records matches.",
+    "NSMicrophoneUsageDescription": "This app records match audio."
+  }
+}
+,
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
