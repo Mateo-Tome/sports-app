@@ -1,12 +1,9 @@
 // app/record/camera.tsx
 //
-// STABLE BUILD: overlay mounts only AFTER camera is on screen
-//
-// Changes vs. your last debug build:
-// - Uses InteractionManager to wait for nav transitions
-// - Mounts CameraView first; mounts overlay only after CameraView onLayout (+ small delay)
-// - Keeps safe-area spacing; allows rotation (no orientation lock)
-// - NOW: real video recording via recordAsync()/stopRecording()
+// Stable camera mount + overlay
+// - Request mic permission BEFORE mounting camera (fixes iOS black/record issues)
+// - Keep CameraView in mode="video" always
+// - Robust saving to app storage + index.json
 
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -19,18 +16,94 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
+// ---------- structured save + index ----------
+type VideoMeta = {
+  uri: string;
+  displayName: string;
+  athlete: string;
+  sport: string;
+  createdAt: number;
+};
 
-const saveToAppStorage = async (srcUri?: string | null) => {
-  if (!srcUri) return null;
+const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
+const INDEX_PATH = VIDEOS_DIR + 'index.json';
+
+const ensureDir = async (dir: string) => {
+  try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
+};
+
+const slug = (s: string) =>
+  (s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'unknown';
+
+const tsStamp = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+};
+
+async function appendVideoIndex(entry: VideoMeta) {
   try {
-    const dir = FileSystem.documentDirectory + 'videos/';
-    // make sure the folder exists
-    try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
-    // simple filename; you can improve later
+    await ensureDir(VIDEOS_DIR); // make sure parent exists
+    const info = await FileSystem.getInfoAsync(INDEX_PATH);
+    let list: VideoMeta[] = [];
+    if ((info as any)?.exists) {
+      const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
+      list = JSON.parse(raw || '[]');
+    }
+    list.unshift(entry);
+    await FileSystem.writeAsStringAsync(INDEX_PATH, JSON.stringify(list));
+  } catch (e) {
+    console.log('appendVideoIndex error:', e);
+    Alert.alert('Index write failed', String((e as any)?.message ?? e));
+  }
+}
+
+const saveToAppStorage = async (
+  srcUri?: string | null,
+  athleteRaw?: string,
+  sportRaw?: string
+): Promise<string | null> => {
+  if (!srcUri) {
+    Alert.alert('No video URI', 'Recording did not return a file path.');
+    return null;
+  }
+  const athlete = (athleteRaw || 'Unassigned').trim();
+  const sport = (sportRaw || 'unknown').trim();
+  const athleteSlug = slug(athlete);
+  const sportSlug = slug(sport);
+
+  try {
+    const dir = `${VIDEOS_DIR}${athleteSlug}/${sportSlug}/`;
+    await ensureDir(dir);
+
     const ext = srcUri.split('.').pop()?.split('?')[0] || 'mp4';
-    const destUri = `${dir}match_${Date.now()}.${ext}`;
+    const filename = `match_${tsStamp()}.${ext}`;
+    const destUri = dir + filename;
+
     await FileSystem.copyAsync({ from: srcUri, to: destUri });
-    return destUri; // this is your persistent app-local file
+
+    // sanity check
+    const copied = await FileSystem.getInfoAsync(destUri);
+    if (!(copied as any)?.exists) {
+      Alert.alert('Save failed', 'Copied file was not found afterward.');
+      return null;
+    }
+
+    const displayName = `${athlete} — ${sport} — ${new Date().toLocaleString()}`;
+
+    await appendVideoIndex({
+      uri: destUri,
+      displayName,
+      athlete,
+      sport,
+      createdAt: Date.now(),
+    });
+
+    return destUri;
   } catch (e: any) {
     console.log('saveToAppStorage error:', e);
     Alert.alert('Save failed', String(e?.message ?? e));
@@ -38,18 +111,17 @@ const saveToAppStorage = async (srcUri?: string | null) => {
   }
 };
 
-
+// ---------- component ----------
 export default function CameraScreen() {
   const { sport = 'wrestling', style = 'folkstyle' } =
     useLocalSearchParams<{ sport?: string; style?: string }>();
 
   const [permission, requestPermission] = useCameraPermissions();
-  // If you want to capture AUDIO too, uncomment the next line and request mic permission as well
-   const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
 
   const cameraRef = useRef<CameraView>(null);
 
-  // Focus + staged mount flags
+  // staged mount flags
   const isFocused = useIsFocused();
   const [mountCam, setMountCam] = useState(false);
   const [camKey, setCamKey] = useState(0);
@@ -63,19 +135,33 @@ export default function CameraScreen() {
 
   const insets = useSafeAreaInsets();
 
-  // Wait for screen focus + transitions to finish before mounting camera
+  // Wait for focus + transitions; request mic BEFORE mounting camera; then mount camera
   useEffect(() => {
     let cancelled = false;
     let interaction: { cancel?: () => void } | null = null;
 
-    if (isFocused && permission?.granted) {
-      setShowOverlay(false); // hide overlay when (re)entering
-      interaction = InteractionManager.runAfterInteractions(() => {
-        if (!cancelled) {
-          setCamKey((k) => k + 1); // clean camera mount each focus
-          setMountCam(true);
+    async function prepAndMount() {
+      try {
+        // camera permission is required
+        if (!permission?.granted) return;
+
+        // request mic up-front so AV session is ready in video mode
+        if (!micPerm?.granted) {
+          try { await requestMicPerm(); } catch {}
         }
-      });
+
+        setShowOverlay(false);
+        interaction = InteractionManager.runAfterInteractions(() => {
+          if (!cancelled) {
+            setCamKey((k) => k + 1);
+            setMountCam(true);
+          }
+        });
+      } catch {}
+    }
+
+    if (isFocused && permission?.granted) {
+      prepAndMount();
     } else {
       setMountCam(false);
       setShowOverlay(false);
@@ -85,11 +171,10 @@ export default function CameraScreen() {
       cancelled = true;
       interaction?.cancel?.();
     };
-  }, [isFocused, permission?.granted]);
+  }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
 
-  // Camera ready → then show overlay (tiny delay to avoid mount race)
+  // After camera lays out, show overlay (tiny delay to avoid race)
   const handleCameraLayout = () => {
-    // Guard against duplicate calls
     setShowOverlay((prev) => {
       if (prev) return prev;
       setTimeout(() => setShowOverlay(true), 60);
@@ -99,7 +184,7 @@ export default function CameraScreen() {
 
   const getCurrentTSec = () => {
     if (!startMs) return 0;
-    const raw = Math.round((Date.now() - startMs) / 1000) - 3; // 3s lookback
+    const raw = Math.round((Date.now() - startMs) / 1000) - 3;
     return raw < 0 ? 0 : raw;
   };
 
@@ -113,68 +198,70 @@ export default function CameraScreen() {
     return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
   }, [navigation]);
 
-  // Stop recording if the component unmounts mid-record (safety)
+  // Stop recording if unmounting
   useEffect(() => {
     return () => {
       try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
     };
   }, []);
 
+  // ---- permission gates ----
   if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
+
   if (!permission.granted) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}>
-        <Text>We need camera permission</Text>
-        <TouchableOpacity onPress={requestPermission} style={{ padding: 12, borderWidth: 1, borderRadius: 8 }}>
-          <Text>Grant Permissions</Text>
+      <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center', gap: 12 }}>
+        <Text style={{ color: 'white' }}>We need camera permission</Text>
+        <TouchableOpacity onPress={requestPermission} style={{ padding: 12, borderWidth: 1, borderRadius: 8, borderColor: 'white' }}>
+          <Text style={{ color: 'white', fontWeight: '600' }}>Grant Permissions</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // If using audio, consider prompting for mic permission before starting:
-  // if (micPerm && !micPerm.granted) { await requestMicPerm(); }
-
+  // ---- handlers ----
   const handleStart = async () => {
-    if (isRecording) return; // ignore double-taps
+    if (isRecording) return;
 
+    // mic for audio (should already be granted from preflight, but double-check)
     if (!micPerm?.granted) {
       const r = await requestMicPerm();
       if (!r?.granted) {
         Alert.alert('Microphone needed', 'Enable microphone to record audio.');
-        return; // bail before flipping state
+        return;
       }
     }
 
-
     setEvents([]);
     setVideoUri(null);
-    setIsRecording(true);
     setStartMs(Date.now());
+    setIsRecording(true);
 
     try {
       const recPromise = (cameraRef.current as any)?.recordAsync?.({
-        // You can tweak options later (e.g., maxDuration, quality)
-        mute: false,  
+        mute: false,
       });
 
       recPromise
-      ?.then(async (res: any) => {
-        const uri = typeof res === 'string' ? res : res?.uri;
-        setVideoUri(uri ?? null);
-    
-        // ⬇️ Save a copy into the app's private storage
-        const appUri = await saveToAppStorage(uri);
-    
-        Alert.alert(
-          'Recording saved',
-          `In-app file: ${appUri ?? 'n/a'}\nTemp: ${uri ?? 'n/a'}`
-        );
-      })
-      .catch((e: any) => {
-        console.log('recordAsync error:', e);
-        Alert.alert('Recording error', String(e?.message ?? e));
-      });
+        ?.then(async (res: any) => {
+          const uri = typeof res === 'string' ? res : res?.uri;
+          if (!uri) {
+            Alert.alert('No file created', 'Recording finished without a URI.');
+            return;
+          }
+          setVideoUri(uri);
+
+          const athleteName = 'Unassigned';
+          const sportKey = `${String(sport)}:${String(style)}`;
+
+          const appUri = await saveToAppStorage(uri, athleteName, sportKey);
+
+          Alert.alert('Recording saved', `In-app file: ${appUri ?? 'n/a'}\nTemp: ${uri ?? 'n/a'}`);
+        })
+        .catch((e: any) => {
+          console.log('recordAsync error:', e);
+          Alert.alert('Recording error', String(e?.message ?? e));
+        });
     } catch (e: any) {
       console.log('recordAsync threw:', e);
       Alert.alert('Recording error (thrown)', String(e?.message ?? e));
@@ -200,36 +287,35 @@ export default function CameraScreen() {
           ref={cameraRef}
           style={{ flex: 1 }}
           facing="back"
-          mode="video"               // IMPORTANT for recording
+          mode="video"           // keep video mode the whole time
           onLayout={handleCameraLayout}
         />
       ) : (
         <View style={{ flex: 1, backgroundColor: 'black' }} />
       )}
 
-      {/* Back button (safe-area; hidden while recording) */}
+      {/* Back button (hidden while recording) */}
       {!isRecording && (
         <View style={{ position: 'absolute', top: insets.top + 8, left: insets.left + 8 }}>
           <TouchableOpacity
             onPress={() => (navigation as any)?.goBack?.()}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={{
-              paddingVertical: 6,
-              paddingHorizontal: 10,
-              borderRadius: 999,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-            }}
+            style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
           >
             <Text style={{ color: 'white', fontWeight: '600' }}>Back</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Full-screen overlay host (transparent) — mounts AFTER camera is laid out */}
+      {/* Overlay (transparent) — mounts AFTER camera is laid out */}
       {showOverlay && (
         <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
+          style={{
+            position: 'absolute',
+            top: 0, bottom: 0, left: 0, right: 0,
+            // RN deprecation: use style.pointerEvents instead of prop
+            pointerEvents: 'box-none' as any,
+          }}
         >
           {isFolkstyle ? (
             <WrestlingFolkstyleOverlay
@@ -247,7 +333,7 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Record / Stop (safe-area aware) */}
+      {/* Record / Stop */}
       <View
         style={{
           position: 'absolute',
@@ -278,6 +364,9 @@ export default function CameraScreen() {
     </View>
   );
 }
+
+
+
 
 
 
