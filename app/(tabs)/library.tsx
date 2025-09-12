@@ -7,6 +7,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   Alert,
   FlatList,
   Image,
@@ -47,35 +48,87 @@ type Row = {
 };
 type AthleteProfile = { id: string; name: string; photoUri?: string | null };
 
+/** mediaTypes option that works across SDKs:
+ *  - Newer SDKs: array of strings ['images'] (recommended)
+ *  - Older SDKs: fallback to ImagePicker.MediaTypeOptions.Images
+ */
+function imagesMediaTypes(): any {
+  const MT = (ImagePicker as any).MediaType;
+  if (MT && typeof MT === 'object' && MT.images) return [MT.images]; // e.g. 'images'
+  const MTO = (ImagePicker as any).MediaTypeOptions;
+  if (MTO && MTO.Images) return MTO.Images; // legacy enum
+  return ['images']; // safest default for modern SDKs
+}
+
 // ---- ImagePicker version-proof shim ----
 const MEDIA_TYPE_IMAGES: any =
   (ImagePicker as any)?.MediaType?.Images ??
   (ImagePicker as any)?.MediaTypeOptions?.Images;
 
-// Reusable helper (camera or library) with deferred launch
+// Reusable helper (camera or library) with robust iOS/Android behavior
 async function pickImageWithChoice(): Promise<string | null> {
-  const camPerm = await ImagePicker.getCameraPermissionsAsync();
-  const libPerm = await ImagePicker.getMediaLibraryPermissionsAsync();
+  // Ask upfront so action-sheet buttons don’t trigger extra permission prompts
+  try {
+    const cam = await ImagePicker.getCameraPermissionsAsync();
+    if (cam.status !== 'granted') await ImagePicker.requestCameraPermissionsAsync();
+    const lib = await ImagePicker.getMediaLibraryPermissionsAsync();
+    if (lib.status !== 'granted') await ImagePicker.requestMediaLibraryPermissionsAsync();
+  } catch {}
 
-  if (camPerm.status !== 'granted') {
-    await ImagePicker.requestCameraPermissionsAsync();
-  }
-  if (libPerm.status !== 'granted') {
-    await ImagePicker.requestMediaLibraryPermissionsAsync();
-  }
-
+  // Web: go straight to library
   if (Platform.OS === 'web') {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: MEDIA_TYPE_IMAGES,
+      mediaTypes: imagesMediaTypes(),
       allowsEditing: true,
       quality: 0.85,
     });
     return res.canceled ? null : res.assets?.[0]?.uri ?? null;
   }
 
+  // iOS: native action sheet (more reliable than Alert when launching camera)
+  if (Platform.OS === 'ios') {
+    return new Promise((resolve) => {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Take Photo', 'Choose from Library'],
+          cancelButtonIndex: 0,
+        },
+        async (idx) => {
+          try {
+            if (idx === 1) {
+              const res = await ImagePicker.launchCameraAsync({
+                mediaTypes: imagesMediaTypes(),
+                allowsEditing: true,
+                quality: 0.85,
+              });
+              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
+            } else if (idx === 2) {
+              const res = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: imagesMediaTypes(),
+                allowsEditing: true,
+                quality: 0.85,
+              });
+              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  // Android: Alert + extra defers so camera reliably opens
   return new Promise((resolve) => {
-    const defer = (fn: () => Promise<void>) =>
-      setTimeout(() => { fn().catch(() => resolve(null)); }, 180);
+    const defer = (fn: () => Promise<void>) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => { fn().catch(() => resolve(null)); }, 220);
+        });
+      });
+    };
 
     Alert.alert(
       'Set Athlete Photo',
@@ -85,26 +138,8 @@ async function pickImageWithChoice(): Promise<string | null> {
           text: 'Take Photo',
           onPress: () =>
             defer(async () => {
-              let cam = await ImagePicker.getCameraPermissionsAsync();
-              if (cam.status !== 'granted') cam = await ImagePicker.requestCameraPermissionsAsync();
-              if (cam.status !== 'granted') {
-                let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
-                if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (lib.status === 'granted') {
-                  const libRes = await ImagePicker.launchImageLibraryAsync({
-                    mediaTypes: MEDIA_TYPE_IMAGES,
-                    allowsEditing: true,
-                    quality: 0.85,
-                  });
-                  resolve(libRes.canceled ? null : libRes.assets?.[0]?.uri ?? null);
-                } else {
-                  resolve(null);
-                }
-                return;
-              }
-
               const res = await ImagePicker.launchCameraAsync({
-                mediaTypes: MEDIA_TYPE_IMAGES,
+                mediaTypes: imagesMediaTypes(),
                 allowsEditing: true,
                 quality: 0.85,
               });
@@ -115,11 +150,8 @@ async function pickImageWithChoice(): Promise<string | null> {
           text: 'Choose from Library',
           onPress: () =>
             defer(async () => {
-              let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
-              if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
-              if (lib.status !== 'granted') { resolve(null); return; }
               const res = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: MEDIA_TYPE_IMAGES,
+                mediaTypes: imagesMediaTypes(),
                 allowsEditing: true,
                 quality: 0.85,
               });
@@ -132,6 +164,7 @@ async function pickImageWithChoice(): Promise<string | null> {
     );
   });
 }
+
 
 async function ensureDir(dir: string) { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} }
 function bytesToMB(b?: number | null) { return b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB'; }

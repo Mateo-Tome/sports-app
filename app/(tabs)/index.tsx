@@ -3,7 +3,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Image, Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActionSheetIOS, // 👈 iOS-native sheet (more reliable than Alert)
+  Alert,
+  FlatList,
+  Image,
+  Linking,
+  Modal,
+  Platform,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const ATHLETES_KEY = 'athletes:list';
@@ -11,49 +23,121 @@ const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 type Athlete = { id: string; name: string; photoUri?: string | null };
 
-// Reusable helper: prompt user to Take Photo or Choose from Library (new API)
+/** mediaTypes option that works across SDKs:
+ *  - Newer SDKs: array of strings ['images'] (recommended)
+ *  - Older SDKs: fallback to ImagePicker.MediaTypeOptions.Images
+ */
+function imagesMediaTypes(): any {
+  const MT = (ImagePicker as any).MediaType;
+  if (MT && typeof MT === 'object' && MT.images) return [MT.images]; // e.g., 'images'
+  const MTO = (ImagePicker as any).MediaTypeOptions;
+  if (MTO && MTO.Images) return MTO.Images; // legacy shape
+  return ['images']; // safest default on modern SDKs
+}
+
+const wait = (ms = 160) => new Promise(res => setTimeout(res, ms));
+
+
 async function pickImageWithChoice(): Promise<string | null> {
-  const lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  const cam = await ImagePicker.requestCameraPermissionsAsync();
-  if (lib.status !== 'granted' && cam.status !== 'granted') {
-    Alert.alert('Permission needed', 'Allow Camera or Photos to set a picture.');
+  let cam = await ImagePicker.getCameraPermissionsAsync();
+  let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
+  if (cam.status !== 'granted') cam = await ImagePicker.requestCameraPermissionsAsync();
+  if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  const blocked = (p: any) => p.status === 'denied' && p.canAskAgain === false;
+  if (blocked(cam) || blocked(lib)) {
+    const go = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Permissions needed',
+        'Camera/Photos access is blocked. Open Settings to enable?',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Open Settings', onPress: () => resolve(true) },
+        ],
+        { cancelable: true }
+      );
+    });
+    if (go) Linking.openSettings();
     return null;
   }
 
+  if (Platform.OS === 'web') {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: imagesMediaTypes(),
+      allowsEditing: true,
+      quality: 0.85,
+    });
+    return res.canceled ? null : res.assets?.[0]?.uri ?? null;
+  }
+
+  if (Platform.OS === 'ios') {
+    return new Promise((resolve) => {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['Cancel', 'Take Photo', 'Choose from Library'], cancelButtonIndex: 0 },
+        async (idx) => {
+          try {
+            if (idx === 1) {
+              await wait(120);
+              const res = await ImagePicker.launchCameraAsync({
+                mediaTypes: imagesMediaTypes(),
+                allowsEditing: true,
+                quality: 0.85,
+              });
+              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
+            } else if (idx === 2) {
+              await wait(120);
+              const res = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: imagesMediaTypes(),
+                allowsEditing: true,
+                quality: 0.85,
+              });
+              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
   return new Promise((resolve) => {
+    const defer = (fn: () => Promise<void>) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => { fn().catch(() => resolve(null)); }, 220);
+        });
+      });
+    };
     Alert.alert(
       'Set Athlete Photo',
       undefined,
       [
         {
           text: 'Take Photo',
-          onPress: async () => {
-            try {
+          onPress: () =>
+            defer(async () => {
               const res = await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaType.Images,
+                mediaTypes: imagesMediaTypes(),
                 allowsEditing: true,
                 quality: 0.85,
               });
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
-            } catch {
-              resolve(null);
-            }
-          },
+            }),
         },
         {
           text: 'Choose from Library',
-          onPress: async () => {
-            try {
+          onPress: () =>
+            defer(async () => {
               const res = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaType.Images,
+                mediaTypes: imagesMediaTypes(),
                 allowsEditing: true,
                 quality: 0.85,
               });
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
-            } catch {
-              resolve(null);
-            }
-          },
+            }),
         },
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
       ],
@@ -95,13 +179,11 @@ export default function HomeAthletes() {
     setNameInput(''); setPendingPhoto(null); setAddOpen(false);
   };
 
-  // Add-photo in the "Add Athlete" modal
   const pickPendingPhoto = async () => {
     const uri = await pickImageWithChoice();
     if (uri) setPendingPhoto(uri);
   };
 
-  // Set / change photo for an existing athlete
   const setPhotoForAthlete = async (id: string) => {
     const uri = await pickImageWithChoice();
     if (!uri) return;
@@ -125,7 +207,6 @@ export default function HomeAthletes() {
     }
   };
 
-  // Record with/without athlete
   const recordNoAthlete = () => {
     router.push(`/(tabs)/recordingScreen?sport=wrestling&style=folkstyle`);
   };
@@ -192,7 +273,7 @@ export default function HomeAthletes() {
       <View style={{ paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          <TouchableOpacity onPress={() => router.push(`/(tabs)/recordingScreen?sport=wrestling&style=folkstyle`)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'red' }}>
+          <TouchableOpacity onPress={recordNoAthlete} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'red' }}>
             <Text style={{ color: 'white', fontWeight: '800' }}>Record (No Athlete)</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setAddOpen(true)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}>
