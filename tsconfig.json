@@ -1,17 +1,23 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
+    "jsx": "react-jsx",            // 👈  THIS is the key
     "strict": true,
-    "paths": {
-      "@/*": [
-        "./*"
-      ]
-    }
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] },
+    "types": ["node", "react", "react-native"],
+    "resolveJsonModule": true,
+    "noEmit": true
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    "app",
+    "src",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ]
 }
+
+

@@ -11,7 +11,9 @@
     "ios": {
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
-        "NSMicrophoneUsageDescription": "This app records match audio."
+        "NSMicrophoneUsageDescription": "This app records match audio.",
+          "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
+        "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
       }
     },
     "android": {

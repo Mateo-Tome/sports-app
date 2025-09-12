@@ -1,28 +1,28 @@
 // app/record/camera.tsx
-//
-// Stable camera mount + overlay
-// - Request mic permission BEFORE mounting camera (fixes iOS black/record issues)
-// - Keep CameraView in mode="video" always
-// - Robust saving to app storage + index.json
-
+// Stable camera + overlay + Photos albums
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, InteractionManager, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
-// ---------- structured save + index ----------
+// ---------- constants ----------
+const CURRENT_ATHLETE_KEY = 'currentAthleteName';
+
 type VideoMeta = {
   uri: string;
   displayName: string;
   athlete: string;
   sport: string;
   createdAt: number;
+  assetId?: string; // Photos asset id if imported
 };
 
 const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
@@ -47,7 +47,7 @@ const tsStamp = () => {
 
 async function appendVideoIndex(entry: VideoMeta) {
   try {
-    await ensureDir(VIDEOS_DIR); // make sure parent exists
+    await ensureDir(VIDEOS_DIR);
     const info = await FileSystem.getInfoAsync(INDEX_PATH);
     let list: VideoMeta[] = [];
     if ((info as any)?.exists) {
@@ -62,14 +62,50 @@ async function appendVideoIndex(entry: VideoMeta) {
   }
 }
 
+// Import the saved file to Photos & add to Athlete and Athlete—Sport albums (no duplicate storage).
+async function importToPhotosAndAlbums(
+  fileUri: string,
+  athlete: string,
+  sport: string
+): Promise<string | undefined> {
+  const { granted } = await MediaLibrary.requestPermissionsAsync();
+  if (!granted) return undefined;
+
+  // Create Photos asset (imports once)
+  const asset = await MediaLibrary.createAssetAsync(fileUri);
+
+  const athleteName = (athlete?.trim() || 'Unassigned');
+  const sportName = (sport?.trim() || 'unknown');
+  const athleteAlbumName = athleteName;
+  const sportAlbumName = `${athleteName} — ${sportName}`;
+
+  // Ensure Athlete album
+  let athleteAlbum = await MediaLibrary.getAlbumAsync(athleteAlbumName);
+  if (!athleteAlbum) {
+    athleteAlbum = await MediaLibrary.createAlbumAsync(athleteAlbumName, asset, false);
+  } else {
+    await MediaLibrary.addAssetsToAlbumAsync([asset], athleteAlbum, false);
+  }
+
+  // Ensure Athlete — Sport album
+  let sportAlbum = await MediaLibrary.getAlbumAsync(sportAlbumName);
+  if (!sportAlbum) {
+    sportAlbum = await MediaLibrary.createAlbumAsync(sportAlbumName, asset, false);
+  } else {
+    await MediaLibrary.addAssetsToAlbumAsync([asset], sportAlbum, false);
+  }
+
+  return asset.id;
+}
+
 const saveToAppStorage = async (
   srcUri?: string | null,
   athleteRaw?: string,
   sportRaw?: string
-): Promise<string | null> => {
+): Promise<{ appUri: string | null; assetId?: string }> => {
   if (!srcUri) {
     Alert.alert('No video URI', 'Recording did not return a file path.');
-    return null;
+    return { appUri: null };
   }
   const athlete = (athleteRaw || 'Unassigned').trim();
   const sport = (sportRaw || 'unknown').trim();
@@ -86,14 +122,22 @@ const saveToAppStorage = async (
 
     await FileSystem.copyAsync({ from: srcUri, to: destUri });
 
-    // sanity check
     const copied = await FileSystem.getInfoAsync(destUri);
     if (!(copied as any)?.exists) {
       Alert.alert('Save failed', 'Copied file was not found afterward.');
-      return null;
+      return { appUri: null };
     }
 
     const displayName = `${athlete} — ${sport} — ${new Date().toLocaleString()}`;
+
+    // Import into Photos and add to albums (no extra storage)
+    let assetId: string | undefined;
+    try {
+      assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
+    } catch (e) {
+      console.log('importToPhotosAndAlbums error:', e);
+      // keep going; not fatal
+    }
 
     await appendVideoIndex({
       uri: destUri,
@@ -101,55 +145,68 @@ const saveToAppStorage = async (
       athlete,
       sport,
       createdAt: Date.now(),
+      assetId,
     });
 
-    return destUri;
+    return { appUri: destUri, assetId };
   } catch (e: any) {
     console.log('saveToAppStorage error:', e);
     Alert.alert('Save failed', String(e?.message ?? e));
-    return null;
+    return { appUri: null };
   }
 };
 
 // ---------- component ----------
 export default function CameraScreen() {
-  const { sport = 'wrestling', style = 'folkstyle' } =
-    useLocalSearchParams<{ sport?: string; style?: string }>();
+  // UPDATED: include athlete from route
+  const { sport = 'wrestling', style = 'folkstyle', athlete: athleteParam } =
+    useLocalSearchParams<{ sport?: string; style?: string; athlete?: string }>();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
 
   const cameraRef = useRef<CameraView>(null);
-
-  // staged mount flags
   const isFocused = useIsFocused();
   const [mountCam, setMountCam] = useState(false);
   const [camKey, setCamKey] = useState(0);
   const [showOverlay, setShowOverlay] = useState(false);
 
-  // recording state
   const [isRecording, setIsRecording] = useState(false);
   const [startMs, setStartMs] = useState<number | null>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [videoUri, setVideoUri] = useState<string | null>(null);
 
-  const insets = useSafeAreaInsets();
+  const [currentAthlete, setCurrentAthlete] = useState<string>('Unassigned');
 
-  // Wait for focus + transitions; request mic BEFORE mounting camera; then mount camera
+  // Load current athlete from AsyncStorage (fallback)
+  useEffect(() => {
+    (async () => {
+      try {
+        const ca = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
+        if (ca && ca.trim()) setCurrentAthlete(ca.trim());
+      } catch {}
+    })();
+  }, []);
+
+  // OPTIONAL: request Photos permission early so import/album works first time
+  useEffect(() => {
+    (async () => {
+      try { await MediaLibrary.requestPermissionsAsync(); } catch {}
+    })();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let interaction: { cancel?: () => void } | null = null;
 
     async function prepAndMount() {
       try {
-        // camera permission is required
         if (!permission?.granted) return;
-
-        // request mic up-front so AV session is ready in video mode
         if (!micPerm?.granted) {
           try { await requestMicPerm(); } catch {}
         }
-
         setShowOverlay(false);
         interaction = InteractionManager.runAfterInteractions(() => {
           if (!cancelled) {
@@ -173,7 +230,6 @@ export default function CameraScreen() {
     };
   }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
 
-  // After camera lays out, show overlay (tiny delay to avoid race)
   const handleCameraLayout = () => {
     setShowOverlay((prev) => {
       if (prev) return prev;
@@ -191,21 +247,17 @@ export default function CameraScreen() {
   const onEvent = (evt: OverlayEvent) =>
     setEvents((prev) => [...prev, { ...evt, t: getCurrentTSec() }]);
 
-  // Hide nav header safely
-  const navigation = useNavigation();
   useEffect(() => {
     try { (navigation as any)?.setOptions?.({ headerShown: false }); } catch {}
     return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
   }, [navigation]);
 
-  // Stop recording if unmounting
   useEffect(() => {
     return () => {
       try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
     };
   }, []);
 
-  // ---- permission gates ----
   if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
 
   if (!permission.granted) {
@@ -219,11 +271,9 @@ export default function CameraScreen() {
     );
   }
 
-  // ---- handlers ----
   const handleStart = async () => {
     if (isRecording) return;
 
-    // mic for audio (should already be granted from preflight, but double-check)
     if (!micPerm?.granted) {
       const r = await requestMicPerm();
       if (!r?.granted) {
@@ -238,9 +288,7 @@ export default function CameraScreen() {
     setIsRecording(true);
 
     try {
-      const recPromise = (cameraRef.current as any)?.recordAsync?.({
-        mute: false,
-      });
+      const recPromise = (cameraRef.current as any)?.recordAsync?.({ mute: false });
 
       recPromise
         ?.then(async (res: any) => {
@@ -251,12 +299,19 @@ export default function CameraScreen() {
           }
           setVideoUri(uri);
 
-          const athleteName = 'Unassigned';
+          // UPDATED: prefer athlete from params, fallback to AsyncStorage current
+          const athleteName = (athleteParam && String(athleteParam).trim())
+            ? String(athleteParam).trim()
+            : (currentAthlete || 'Unassigned');
+
           const sportKey = `${String(sport)}:${String(style)}`;
 
-          const appUri = await saveToAppStorage(uri, athleteName, sportKey);
+          const { appUri, assetId } = await saveToAppStorage(uri, athleteName, sportKey);
 
-          Alert.alert('Recording saved', `In-app file: ${appUri ?? 'n/a'}\nTemp: ${uri ?? 'n/a'}`);
+          Alert.alert(
+            'Recording saved',
+            `Athlete: ${athleteName}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
+          );
         })
         .catch((e: any) => {
           console.log('recordAsync error:', e);
@@ -280,21 +335,19 @@ export default function CameraScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      {/* Camera mounts only after focus + transitions complete */}
       {permission.granted && isFocused && mountCam ? (
         <CameraView
           key={camKey}
           ref={cameraRef}
           style={{ flex: 1 }}
           facing="back"
-          mode="video"           // keep video mode the whole time
+          mode="video"
           onLayout={handleCameraLayout}
         />
       ) : (
         <View style={{ flex: 1, backgroundColor: 'black' }} />
       )}
 
-      {/* Back button (hidden while recording) */}
       {!isRecording && (
         <View style={{ position: 'absolute', top: insets.top + 8, left: insets.left + 8 }}>
           <TouchableOpacity
@@ -307,16 +360,8 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Overlay (transparent) — mounts AFTER camera is laid out */}
       {showOverlay && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0, bottom: 0, left: 0, right: 0,
-            // RN deprecation: use style.pointerEvents instead of prop
-            pointerEvents: 'box-none' as any,
-          }}
-        >
+        <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, pointerEvents: 'box-none' as any }}>
           {isFolkstyle ? (
             <WrestlingFolkstyleOverlay
               isRecording={isRecording}
@@ -333,7 +378,6 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Record / Stop */}
       <View
         style={{
           position: 'absolute',
@@ -364,21 +408,3 @@ export default function CameraScreen() {
     </View>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
