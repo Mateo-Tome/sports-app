@@ -78,13 +78,12 @@ function Player({ uri }: { uri: string }) {
 
   useEffect(() => {
     try { player.play(); } catch {}
-    // Do NOT pause on cleanup; native may already be disposed.
     return () => { /* no-op */ };
   }, [player]);
 
   return (
     <VideoView
-      key={uri}                 // force remount per new video
+      key={uri}
       style={{ flex: 1 }}
       player={player}
       contentFit="contain"
@@ -375,7 +374,7 @@ export default function LibraryScreen() {
           data={allRows}
           keyExtractor={(it) => it.uri}
           renderItem={renderRow}
-          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}   // ← bottom padding
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
           ListEmptyComponent={
             <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
@@ -403,7 +402,7 @@ export default function LibraryScreen() {
               <Text style={{ color: 'white', opacity: 0.7 }}>{rowsByAthlete[name].length} videos</Text>
             </Pressable>
           )}
-          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}   // ← bottom padding
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           ListEmptyComponent={
             <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
               No groups yet.
@@ -428,7 +427,7 @@ export default function LibraryScreen() {
             data={rowsByAthlete[selectedAthlete] ?? []}
             keyExtractor={(it)=>it.uri}
             renderItem={renderRow}
-            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}   // ← bottom padding
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           />
         </View>
       )}
@@ -451,7 +450,7 @@ export default function LibraryScreen() {
               <Text style={{ color: 'white', opacity: 0.7 }}>{rowsBySport[s].length} videos</Text>
             </Pressable>
           )}
-          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}   // ← bottom padding
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
         />
       )}
 
@@ -471,7 +470,7 @@ export default function LibraryScreen() {
             data={rowsBySport[selectedSport] ?? []}
             keyExtractor={(it)=>it.uri}
             renderItem={renderRow}
-            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}   // ← bottom padding
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           />
         </View>
       )}

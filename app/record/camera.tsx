@@ -1,5 +1,5 @@
 // app/record/camera.tsx
-// Stable camera + overlay + Photos albums
+// Stable camera + overlay + Photos albums + quick-switch athlete chip
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -7,13 +7,13 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, InteractionManager, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, InteractionManager, Modal, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
-// ---------- constants ----------
+const ATHLETES_KEY = 'athletes:list';
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 type VideoMeta = {
@@ -22,145 +22,84 @@ type VideoMeta = {
   athlete: string;
   sport: string;
   createdAt: number;
-  assetId?: string; // Photos asset id if imported
+  assetId?: string;
 };
 
 const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = VIDEOS_DIR + 'index.json';
 
-const ensureDir = async (dir: string) => {
-  try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
-};
-
-const slug = (s: string) =>
-  (s || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || 'unknown';
-
+const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
+const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 const tsStamp = () => {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 };
+const paramToStr = (v: unknown, fallback = '') => Array.isArray(v) ? String(v[0] ?? fallback) : (v == null ? fallback : String(v));
 
-async function appendVideoIndex(entry: VideoMeta) {
+async function readIndex(): Promise<VideoMeta[]> {
   try {
-    await ensureDir(VIDEOS_DIR);
     const info = await FileSystem.getInfoAsync(INDEX_PATH);
-    let list: VideoMeta[] = [];
-    if ((info as any)?.exists) {
-      const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
-      list = JSON.parse(raw || '[]');
-    }
-    list.unshift(entry);
-    await FileSystem.writeAsStringAsync(INDEX_PATH, JSON.stringify(list));
-  } catch (e) {
-    console.log('appendVideoIndex error:', e);
-    Alert.alert('Index write failed', String((e as any)?.message ?? e));
-  }
+    if (!(info as any)?.exists) return [];
+    const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
+    const list = JSON.parse(raw || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+async function writeIndexAtomic(list: VideoMeta[]) {
+  const tmp = INDEX_PATH + '.tmp';
+  await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
+  try { await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true }); } catch {}
+  await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
+}
+async function appendVideoIndex(entry: VideoMeta) {
+  await ensureDir(VIDEOS_DIR);
+  const list = await readIndex();
+  list.unshift(entry);
+  await writeIndexAtomic(list);
 }
 
-// Import the saved file to Photos & add to Athlete and Athlete—Sport albums (no duplicate storage).
-async function importToPhotosAndAlbums(
-  fileUri: string,
-  athlete: string,
-  sport: string
-): Promise<string | undefined> {
-  const { granted } = await MediaLibrary.requestPermissionsAsync();
-  if (!granted) return undefined;
-
-  // Create Photos asset (imports once)
-  const asset = await MediaLibrary.createAssetAsync(fileUri);
-
-  const athleteName = (athlete?.trim() || 'Unassigned');
-  const sportName = (sport?.trim() || 'unknown');
-  const athleteAlbumName = athleteName;
-  const sportAlbumName = `${athleteName} — ${sportName}`;
-
-  // Ensure Athlete album
-  let athleteAlbum = await MediaLibrary.getAlbumAsync(athleteAlbumName);
-  if (!athleteAlbum) {
-    athleteAlbum = await MediaLibrary.createAlbumAsync(athleteAlbumName, asset, false);
-  } else {
-    await MediaLibrary.addAssetsToAlbumAsync([asset], athleteAlbum, false);
-  }
-
-  // Ensure Athlete — Sport album
-  let sportAlbum = await MediaLibrary.getAlbumAsync(sportAlbumName);
-  if (!sportAlbum) {
-    sportAlbum = await MediaLibrary.createAlbumAsync(sportAlbumName, asset, false);
-  } else {
-    await MediaLibrary.addAssetsToAlbumAsync([asset], sportAlbum, false);
-  }
-
-  return asset.id;
-}
-
-const saveToAppStorage = async (
-  srcUri?: string | null,
-  athleteRaw?: string,
-  sportRaw?: string
-): Promise<{ appUri: string | null; assetId?: string }> => {
-  if (!srcUri) {
-    Alert.alert('No video URI', 'Recording did not return a file path.');
-    return { appUri: null };
-  }
-  const athlete = (athleteRaw || 'Unassigned').trim();
-  const sport = (sportRaw || 'unknown').trim();
-  const athleteSlug = slug(athlete);
-  const sportSlug = slug(sport);
-
+async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: string) {
   try {
-    const dir = `${VIDEOS_DIR}${athleteSlug}/${sportSlug}/`;
-    await ensureDir(dir);
+    const { granted } = await MediaLibrary.requestPermissionsAsync();
+    if (!granted) return undefined;
+    const asset = await MediaLibrary.createAssetAsync(fileUri);
+    const athleteName = (athlete?.trim() || 'Unassigned');
+    const sportName = (sport?.trim() || 'unknown');
+    const athleteAlbumName = athleteName;
+    const sportAlbumName = `${athleteName} — ${sportName}`;
+    let a = await MediaLibrary.getAlbumAsync(athleteAlbumName);
+    if (!a) a = await MediaLibrary.createAlbumAsync(athleteAlbumName, asset, false);
+    else await MediaLibrary.addAssetsToAlbumAsync([asset], a, false);
+    let s = await MediaLibrary.getAlbumAsync(sportAlbumName);
+    if (!s) s = await MediaLibrary.createAlbumAsync(sportAlbumName, asset, false);
+    else await MediaLibrary.addAssetsToAlbumAsync([asset], s, false);
+    return asset.id;
+  } catch { return undefined; }
+}
 
-    const ext = srcUri.split('.').pop()?.split('?')[0] || 'mp4';
-    const filename = `match_${tsStamp()}.${ext}`;
-    const destUri = dir + filename;
-
-    await FileSystem.copyAsync({ from: srcUri, to: destUri });
-
-    const copied = await FileSystem.getInfoAsync(destUri);
-    if (!(copied as any)?.exists) {
-      Alert.alert('Save failed', 'Copied file was not found afterward.');
-      return { appUri: null };
-    }
-
-    const displayName = `${athlete} — ${sport} — ${new Date().toLocaleString()}`;
-
-    // Import into Photos and add to albums (no extra storage)
-    let assetId: string | undefined;
-    try {
-      assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
-    } catch (e) {
-      console.log('importToPhotosAndAlbums error:', e);
-      // keep going; not fatal
-    }
-
-    await appendVideoIndex({
-      uri: destUri,
-      displayName,
-      athlete,
-      sport,
-      createdAt: Date.now(),
-      assetId,
-    });
-
-    return { appUri: destUri, assetId };
-  } catch (e: any) {
-    console.log('saveToAppStorage error:', e);
-    Alert.alert('Save failed', String(e?.message ?? e));
-    return { appUri: null };
-  }
+const saveToAppStorage = async (srcUri?: string | null, athleteRaw?: string, sportRaw?: string) => {
+  if (!srcUri) { Alert.alert('No video URI', 'Recording did not return a file path.'); return { appUri: null as string | null }; }
+  const athlete = (athleteRaw || '').trim() || 'Unassigned';
+  const sport = (sportRaw || '').trim() || 'unknown';
+  const dir = `${VIDEOS_DIR}${slug(athlete)}/${slug(sport)}/`; await ensureDir(dir);
+  const ext = srcUri.split('.').pop()?.split('?')[0] || 'mp4';
+  const filename = `match_${tsStamp()}.${ext}`;
+  const destUri = dir + filename;
+  await FileSystem.copyAsync({ from: srcUri, to: destUri });
+  const displayName = `${athlete} — ${sport} — ${new Date().toLocaleString()}`;
+  const assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
+  await appendVideoIndex({ uri: destUri, displayName, athlete, sport, createdAt: Date.now(), assetId });
+  return { appUri: destUri, assetId };
 };
 
-// ---------- component ----------
 export default function CameraScreen() {
-  // UPDATED: include athlete from route
-  const { sport = 'wrestling', style = 'folkstyle', athlete: athleteParam } =
-    useLocalSearchParams<{ sport?: string; style?: string; athlete?: string }>();
+  // params
+  const params = useLocalSearchParams<{ athlete?: string | string[]; sport?: string | string[]; style?: string | string[] }>();
+  const athleteParamIncluded = typeof params.athlete !== 'undefined';
+  const athleteParam = paramToStr(params.athlete, 'Unassigned');
+  const sportParam = paramToStr(params.sport, 'wrestling');
+  const styleParam = paramToStr(params.style, 'folkstyle');
 
   const [permission, requestPermission] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
@@ -175,91 +114,54 @@ export default function CameraScreen() {
 
   const [isRecording, setIsRecording] = useState(false);
   const [startMs, setStartMs] = useState<number | null>(null);
-  const [events, setEvents] = useState<any[]>([]);
-  const [videoUri, setVideoUri] = useState<string | null>(null);
 
-  const [currentAthlete, setCurrentAthlete] = useState<string>('Unassigned');
+  // 🔵 current athlete (chip)
+  const [athlete, setAthlete] = useState<string>('Unassigned');
+  const [athleteList, setAthleteList] = useState<{ id: string; name: string }[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [newName, setNewName] = useState('');
 
-  // Load current athlete from AsyncStorage (fallback)
+  // init athlete: route param > last used > Unassigned
   useEffect(() => {
     (async () => {
       try {
-        const ca = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
-        if (ca && ca.trim()) setCurrentAthlete(ca.trim());
+        const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+        setAthleteList(raw ? JSON.parse(raw) : []);
       } catch {}
+      if (athleteParamIncluded) {
+        const initial = (athleteParam || '').trim() || 'Unassigned';
+        setAthlete(initial);
+        try { await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, initial); } catch {}
+      } else {
+        const last = (await AsyncStorage.getItem(CURRENT_ATHLETE_KEY)) || '';
+        setAthlete((last || '').trim() || 'Unassigned');
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // OPTIONAL: request Photos permission early so import/album works first time
+  // mount/unmount camera
   useEffect(() => {
-    (async () => {
-      try { await MediaLibrary.requestPermissionsAsync(); } catch {}
-    })();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let interaction: { cancel?: () => void } | null = null;
-
-    async function prepAndMount() {
-      try {
-        if (!permission?.granted) return;
-        if (!micPerm?.granted) {
-          try { await requestMicPerm(); } catch {}
-        }
-        setShowOverlay(false);
-        interaction = InteractionManager.runAfterInteractions(() => {
-          if (!cancelled) {
-            setCamKey((k) => k + 1);
-            setMountCam(true);
-          }
-        });
-      } catch {}
-    }
-
-    if (isFocused && permission?.granted) {
-      prepAndMount();
-    } else {
-      setMountCam(false);
+    let cancelled = false; let interaction: { cancel?: () => void } | null = null;
+    async function prep() {
+      if (!permission?.granted) return;
+      if (!micPerm?.granted) { try { await requestMicPerm(); } catch {} }
       setShowOverlay(false);
+      interaction = InteractionManager.runAfterInteractions(() => {
+        if (!cancelled) { setCamKey(k => k + 1); setMountCam(true); }
+      });
     }
-
-    return () => {
-      cancelled = true;
-      interaction?.cancel?.();
-    };
+    if (isFocused && permission?.granted) prep();
+    else { setMountCam(false); setShowOverlay(false); }
+    return () => { cancelled = true; interaction?.cancel?.(); };
   }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
-
-  const handleCameraLayout = () => {
-    setShowOverlay((prev) => {
-      if (prev) return prev;
-      setTimeout(() => setShowOverlay(true), 60);
-      return prev;
-    });
-  };
-
-  const getCurrentTSec = () => {
-    if (!startMs) return 0;
-    const raw = Math.round((Date.now() - startMs) / 1000) - 3;
-    return raw < 0 ? 0 : raw;
-  };
-
-  const onEvent = (evt: OverlayEvent) =>
-    setEvents((prev) => [...prev, { ...evt, t: getCurrentTSec() }]);
 
   useEffect(() => {
     try { (navigation as any)?.setOptions?.({ headerShown: false }); } catch {}
     return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
   }, [navigation]);
 
-  useEffect(() => {
-    return () => {
-      try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
-    };
-  }, []);
-
   if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
-
   if (!permission.granted) {
     return (
       <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center', gap: 12 }}>
@@ -271,55 +173,36 @@ export default function CameraScreen() {
     );
   }
 
+  const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
+
   const handleStart = async () => {
     if (isRecording) return;
-
     if (!micPerm?.granted) {
       const r = await requestMicPerm();
-      if (!r?.granted) {
-        Alert.alert('Microphone needed', 'Enable microphone to record audio.');
-        return;
-      }
+      if (!r?.granted) { Alert.alert('Microphone needed', 'Enable microphone to record audio.'); return; }
     }
-
-    setEvents([]);
-    setVideoUri(null);
-    setStartMs(Date.now());
-    setIsRecording(true);
-
+    setStartMs(Date.now()); setIsRecording(true);
     try {
       const recPromise = (cameraRef.current as any)?.recordAsync?.({ mute: false });
-
-      recPromise
-        ?.then(async (res: any) => {
-          const uri = typeof res === 'string' ? res : res?.uri;
-          if (!uri) {
-            Alert.alert('No file created', 'Recording finished without a URI.');
-            return;
-          }
-          setVideoUri(uri);
-
-          // UPDATED: prefer athlete from params, fallback to AsyncStorage current
-          const athleteName = (athleteParam && String(athleteParam).trim())
-            ? String(athleteParam).trim()
-            : (currentAthlete || 'Unassigned');
-
-          const sportKey = `${String(sport)}:${String(style)}`;
-
-          const { appUri, assetId } = await saveToAppStorage(uri, athleteName, sportKey);
-
-          Alert.alert(
-            'Recording saved',
-            `Athlete: ${athleteName}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
-          );
-        })
-        .catch((e: any) => {
-          console.log('recordAsync error:', e);
-          Alert.alert('Recording error', String(e?.message ?? e));
-        });
-    } catch (e: any) {
+      recPromise?.then(async (res: any) => {
+        const uri = typeof res === 'string' ? res : res?.uri;
+        if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
+        const chosen = (athlete || '').trim() || 'Unassigned';
+        const { appUri, assetId } = await saveToAppStorage(uri, chosen, sportKey);
+        try { await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, chosen); } catch {}
+        Alert.alert('Recording saved', `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`);
+        setIsRecording(false);
+      }).catch((e: unknown) => {
+        console.log('recordAsync error:', e);
+        const msg = e instanceof Error ? e.message : String(e);
+        Alert.alert('Recording error', msg);
+        setIsRecording(false);
+      });
+    } catch (e: unknown) {
       console.log('recordAsync threw:', e);
-      Alert.alert('Recording error (thrown)', String(e?.message ?? e));
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert('Recording error', msg);
+      setIsRecording(false);
     }
   };
 
@@ -329,82 +212,122 @@ export default function CameraScreen() {
     setIsRecording(false);
   };
 
-  const isFolkstyle =
-    String(sport).toLowerCase() === 'wrestling' &&
-    String(style).toLowerCase() === 'folkstyle';
+  const isFolkstyle = sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
+
+  // UI pieces
+  const AthleteChip = () => (
+    <TouchableOpacity
+      onPress={() => setPickerOpen(true)}
+      onLongPress={() => setAthlete(prev => prev === 'Unassigned' ? (athleteList[0]?.name || 'Unassigned') : 'Unassigned')}
+      style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}
+    >
+      <Text style={{ color: 'white', fontWeight: '800' }}>Recording — {athlete || 'Unassigned'}</Text>
+    </TouchableOpacity>
+  );
+
+  const PickerModal = () => (
+    <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+        <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+          <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Choose Athlete</Text>
+
+          <Pressable onPress={() => { setAthlete('Unassigned'); setPickerOpen(false); }} style={{ paddingVertical: 12 }}>
+            <Text style={{ color: 'white', fontWeight: athlete === 'Unassigned' ? '900' : '600' }}>• Unassigned</Text>
+          </Pressable>
+
+          {athleteList.map(a => (
+            <Pressable key={a.id} onPress={() => { setAthlete(a.name); setPickerOpen(false); }} style={{ paddingVertical: 10 }}>
+              <Text style={{ color: 'white', fontWeight: athlete === a.name ? '900' : '600' }}>• {a.name}</Text>
+            </Pressable>
+          ))}
+
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 12 }} />
+
+          <Text style={{ color: 'white', opacity: 0.8, marginBottom: 6 }}>New athlete</Text>
+          <TextInput
+            placeholder="Enter new name"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={newName}
+            onChangeText={setNewName}
+            style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
+            <TouchableOpacity onPress={() => setPickerOpen(false)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
+              <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={async () => {
+                const n = newName.trim();
+                if (!n) return;
+                const next = [{ id: `${Date.now()}`, name: n }, ...athleteList];
+                try { await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next)); } catch {}
+                setAthleteList(next);
+                setAthlete(n);
+                setNewName('');
+                setPickerOpen(false);
+              }}
+              style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}
+            >
+              <Text style={{ color: 'black', fontWeight: '800' }}>Add</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       {permission.granted && isFocused && mountCam ? (
-        <CameraView
-          key={camKey}
-          ref={cameraRef}
-          style={{ flex: 1 }}
-          facing="back"
-          mode="video"
-          onLayout={handleCameraLayout}
-        />
+        <CameraView key={camKey} ref={cameraRef} style={{ flex: 1 }} facing="back" mode="video" onLayout={() => setTimeout(() => setShowOverlay(true), 60)} />
       ) : (
         <View style={{ flex: 1, backgroundColor: 'black' }} />
       )}
 
       {!isRecording && (
-        <View style={{ position: 'absolute', top: insets.top + 8, left: insets.left + 8 }}>
+        <View style={{ position: 'absolute', top: insets.top + 8, left: 12, right: 12, zIndex: 5, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <TouchableOpacity
             onPress={() => (navigation as any)?.goBack?.()}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+            style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}
           >
-            <Text style={{ color: 'white', fontWeight: '600' }}>Back</Text>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
           </TouchableOpacity>
+          <AthleteChip />
         </View>
       )}
 
-      {showOverlay && (
+      {showOverlay ? (
         <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, pointerEvents: 'box-none' as any }}>
           {isFolkstyle ? (
             <WrestlingFolkstyleOverlay
               isRecording={isRecording}
-              onEvent={onEvent}
-              getCurrentTSec={getCurrentTSec}
-              sport={String(sport)}
-              style={String(style)}
+              onEvent={(evt: OverlayEvent) => {}}
+              getCurrentTSec={() => Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3)}
+              sport={sportParam}
+              style={styleParam}
             />
           ) : (
-            <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: insets.left + 12 }}>
-              No overlay registered for {String(sport)}:{String(style)}
+            <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: 12 }}>
+              No overlay registered for {sportParam}:{styleParam}
             </Text>
           )}
         </View>
-      )}
+      ) : null}
 
-      <View
-        style={{
-          position: 'absolute',
-          bottom: insets.bottom + 16,
-          left: insets.left,
-          right: insets.right,
-          flexDirection: 'row',
-          justifyContent: 'center',
-          gap: 16,
-        }}
-      >
+      <View style={{ position: 'absolute', bottom: insets.bottom + 16, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 16 }}>
         {!isRecording ? (
-          <TouchableOpacity
-            onPress={handleStart}
-            style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'red', borderRadius: 999 }}
-          >
+          <TouchableOpacity onPress={handleStart} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'red', borderRadius: 999 }}>
             <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
-            onPress={handleStop}
-            style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}
-          >
+          <TouchableOpacity onPress={handleStop} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}>
             <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
           </TouchableOpacity>
         )}
       </View>
+
+      <PickerModal />
     </View>
   );
 }
