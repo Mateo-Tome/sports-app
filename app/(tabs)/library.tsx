@@ -1,5 +1,6 @@
 // app/(tabs)/library.tsx
 // Library with segmented views + Edit Athlete (moves file + updates index + albums best-effort)
+// Now supports: Athletes ➜ Sports-for-athlete ➜ Videos-for-athlete+sport
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as FileSystem from 'expo-file-system';
@@ -90,22 +91,22 @@ async function retagVideo(input: { uri: string; oldAthlete: string; sportKey: st
   await writeIndexAtomic(updated);
 
   // Update Photos albums (best-effort)
-try {
-  const { granted } = await MediaLibrary.requestPermissionsAsync();
-  if (!granted || !input.assetId) return;
+  try {
+    const { granted } = await MediaLibrary.requestPermissionsAsync();
+    if (!granted || !input.assetId) return;
 
-  const assetId = input.assetId; // use the id directly (more reliable)
-  const athleteAlbumName = newAthlete;
-  const sportAlbumName = `${newAthlete} — ${input.sportKey}`;
+    const assetId = input.assetId; // use the id directly (more reliable)
+    const athleteAlbumName = newAthlete;
+    const sportAlbumName = `${newAthlete} — ${input.sportKey}`;
 
-  let a = await MediaLibrary.getAlbumAsync(athleteAlbumName);
-  if (!a) a = await MediaLibrary.createAlbumAsync(athleteAlbumName, assetId, false);
-  else await MediaLibrary.addAssetsToAlbumAsync([assetId], a, false);
+    let a = await MediaLibrary.getAlbumAsync(athleteAlbumName);
+    if (!a) a = await MediaLibrary.createAlbumAsync(athleteAlbumName, assetId, false);
+    else await MediaLibrary.addAssetsToAlbumAsync([assetId], a, false);
 
-  let s = await MediaLibrary.getAlbumAsync(sportAlbumName);
-  if (!s) s = await MediaLibrary.createAlbumAsync(sportAlbumName, assetId, false);
-  else await MediaLibrary.addAssetsToAlbumAsync([assetId], s, false);
-} catch {}
+    let s = await MediaLibrary.getAlbumAsync(sportAlbumName);
+    if (!s) s = await MediaLibrary.createAlbumAsync(sportAlbumName, assetId, false);
+    else await MediaLibrary.addAssetsToAlbumAsync([assetId], s, false);
+  } catch {}
 }
 
 function Player({ uri }: { uri: string }) {
@@ -123,11 +124,11 @@ export default function LibraryScreen() {
   const [playingUri, setPlayingUri] = useState<string | null>(null);
 
   const [athletePickerOpen, setAthletePickerOpen] = useState<null | Row>(null);
-  const [athleteList, setAthleteList] = useState<{ id: string; name: string }[]>([]);
+  const [athleteList, setAthleteList] = useState<{ id: string; name: string; photoUri?: string | null }[]>([]);
   const [newName, setNewName] = useState('');
 
   // segmented state
-  const [view, setView] = useState<'all'|'athletes'|'sports'>('all');
+  const [view, setView] = useState<'all'|'athletes'|'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
@@ -152,7 +153,7 @@ export default function LibraryScreen() {
     built.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
     setRows(built);
 
-    // load athlete list
+    // load athlete list (with photos) from Home screen storage
     try {
       const raw = await AsyncStorage.getItem(ATHLETES_KEY);
       setAthleteList(raw ? JSON.parse(raw) : []);
@@ -169,7 +170,7 @@ export default function LibraryScreen() {
       const current = await readIndex();
       const updated = current.filter(e => e.uri !== row.uri);
       await writeIndexAtomic(updated);
-  
+
       if (row.assetId) {
         try {
           const { granted } = await MediaLibrary.requestPermissionsAsync();
@@ -178,7 +179,7 @@ export default function LibraryScreen() {
           }
         } catch {}
       }
-  
+
       Alert.alert('Deleted', 'Video removed.');
       await load();
     } catch (e: any) {
@@ -186,7 +187,6 @@ export default function LibraryScreen() {
       Alert.alert('Delete failed', String(e?.message ?? e));
     }
   }, [load]);
-  
 
   const saveToPhotos = useCallback(async (uri: string) => {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
@@ -195,18 +195,46 @@ export default function LibraryScreen() {
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  // groupings
+  // ====== GROUPINGS ======
   const allRows = useMemo(() => [...rows].sort((a,b)=>(b.mtime ?? 0)-(a.mtime ?? 0)), [rows]);
+
+  // by athlete
   const rowsByAthlete = useMemo(() => {
     const map: Record<string, Row[]> = {};
     for (const r of allRows) { const k = r.athlete || 'Unassigned'; (map[k] ||= []).push(r); }
     return map;
   }, [allRows]);
+
+  // by sport (global, for the "Sports" tab)
   const rowsBySport = useMemo(() => {
     const map: Record<string, Row[]> = {};
     for (const r of allRows) { const k = r.sport || 'unknown'; (map[k] ||= []).push(r); }
     return map;
   }, [allRows]);
+
+  // athlete -> sport -> rows (for drill-down in Athletes tab)
+  const athleteSportsMap = useMemo(() => {
+    const m: Record<string, Record<string, Row[]>> = {};
+    for (const r of allRows) {
+      const a = r.athlete || 'Unassigned';
+      const s = r.sport || 'unknown';
+      (m[a] ||= {});
+      (m[a][s] ||= []);
+      m[a][s].push(r);
+    }
+    // keep each inner list newest-first
+    for (const a of Object.keys(m)) {
+      for (const s of Object.keys(m[a])) {
+        m[a][s].sort((x, y) => (y.mtime ?? 0) - (x.mtime ?? 0));
+      }
+    }
+    return m;
+  }, [allRows]);
+
+  const photoFor = useCallback(
+    (name: string) => athleteList.find(a => a.name === name)?.photoUri ?? null,
+    [athleteList]
+  );
 
   const doEditAthlete = async (row: Row, newAthlete: string) => {
     try {
@@ -218,7 +246,8 @@ export default function LibraryScreen() {
     }
   };
 
-  const renderRow = ({ item }: { item: Row }) => {
+  // ====== RENDER HELPERS ======
+  const renderVideoRow = ({ item }: { item: Row }) => {
     const dateStr = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
     const subtitleBits = [item.athlete ? `👤 ${item.athlete}` : null, item.sport ? `🏷️ ${item.sport}` : null, `${bytesToMB(item.size)}`, dateStr].filter(Boolean);
 
@@ -270,6 +299,7 @@ export default function LibraryScreen() {
     </View>
   );
 
+  // ====== UI ======
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       <View style={{ paddingHorizontal: 16, paddingTop: insets.top, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -280,33 +310,92 @@ export default function LibraryScreen() {
       </View>
       <Segmented />
 
+      {/* ===== All Videos ===== */}
       {view === 'all' && (
         <FlatList
           data={allRows}
           keyExtractor={(it) => it.uri}
-          renderItem={renderRow}
+          renderItem={renderVideoRow}
           contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
           ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No recordings yet. Record a match, then come back.</Text>}
         />
       )}
 
+      {/* ===== Athletes root ===== */}
       {view === 'athletes' && selectedAthlete == null && (
         <FlatList
-          data={Object.keys(rowsByAthlete).sort((a,b)=>a.localeCompare(b))}
+          data={Object.keys(rowsByAthlete).sort((a, b) => {
+            if (a === 'Unassigned') return 1;
+            if (b === 'Unassigned') return -1;
+            return a.localeCompare(b);
+          })}
           keyExtractor={(k)=>k}
-          renderItem={({ item: name }) => (
-            <Pressable onPress={() => setSelectedAthlete(name)} style={{ padding: 12, marginHorizontal: 16, marginVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>{name}</Text>
-              <Text style={{ color: 'white', opacity: 0.7 }}>{rowsByAthlete[name].length} videos</Text>
-            </Pressable>
-          )}
+          renderItem={({ item: name }) => {
+            const photoUri = photoFor(name);
+            const videos = rowsByAthlete[name];
+            const count = videos.length;
+            const last = videos?.[0]?.mtime ? new Date(videos[0].mtime).toLocaleString() : '—';
+
+            return (
+              <Pressable
+                onPress={() => { setSelectedAthlete(name); setSelectedSport(null); }}
+                style={{
+                  padding: 12,
+                  marginHorizontal: 16,
+                  marginVertical: 8,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.12)',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  justifyContent: 'space-between',
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                  {photoUri ? (
+                    <Image
+                      source={{ uri: photoUri }}
+                      style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 24,
+                        backgroundColor: 'rgba(255,255,255,0.12)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text style={{ color: 'white', opacity: 0.7, fontSize: 20 }}>👤</Text>
+                    </View>
+                  )}
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
+                      {name}
+                    </Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
+                      {count} {count === 1 ? 'video' : 'videos'} • last {last}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>›</Text>
+              </Pressable>
+            );
+          }}
           contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No groups yet.</Text>}
         />
       )}
 
-      {view === 'athletes' && selectedAthlete != null && (
+      {/* ===== Athletes ➜ Sports ===== */}
+      {view === 'athletes' && selectedAthlete != null && selectedSport == null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
             <TouchableOpacity onPress={() => setSelectedAthlete(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
@@ -314,10 +403,80 @@ export default function LibraryScreen() {
             </TouchableOpacity>
             <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedAthlete}</Text>
           </View>
-          <FlatList data={rowsByAthlete[selectedAthlete] ?? []} keyExtractor={(it)=>it.uri} renderItem={renderRow} contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }} />
+
+          <FlatList
+            data={Object.keys(athleteSportsMap[selectedAthlete] || {}).sort((a,b)=>a.localeCompare(b))}
+            keyExtractor={(s)=>s}
+            renderItem={({ item: sport }) => {
+              const list = athleteSportsMap[selectedAthlete]?.[sport] ?? [];
+              const count = list.length;
+              const last = list[0]?.mtime ? new Date(list[0].mtime!).toLocaleString() : '—';
+              const preview = list[0]?.thumbUri ?? null;
+
+              return (
+                <Pressable
+                  onPress={() => setSelectedSport(sport)}
+                  style={{
+                    padding: 12,
+                    marginHorizontal: 16,
+                    marginVertical: 8,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.12)',
+                    backgroundColor: 'rgba(255,255,255,0.06)',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                    {preview ? (
+                      <Image source={{ uri: preview }} style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+                    ) : (
+                      <View style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+                      </View>
+                    )}
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>{sport}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
+                        {count} {count === 1 ? 'video' : 'videos'} • last {last}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>›</Text>
+                </Pressable>
+              );
+            }}
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
+            ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No sports yet.</Text>}
+          />
         </View>
       )}
 
+      {/* ===== Athletes ➜ Sports ➜ Videos ===== */}
+      {view === 'athletes' && selectedAthlete != null && selectedSport != null && (
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
+            <TouchableOpacity onPress={() => setSelectedSport(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+              <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
+            </TouchableOpacity>
+            <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedAthlete} • {selectedSport}</Text>
+          </View>
+
+          <FlatList
+            data={athleteSportsMap[selectedAthlete]?.[selectedSport] ?? []}
+            keyExtractor={(it)=>it.uri}
+            renderItem={renderVideoRow}
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
+          />
+        </View>
+      )}
+
+      {/* ===== Sports tab (global) ===== */}
       {view === 'sports' && selectedSport == null && (
         <FlatList
           data={Object.keys(rowsBySport).sort((a,b)=>a.localeCompare(b))}
@@ -340,7 +499,7 @@ export default function LibraryScreen() {
             </TouchableOpacity>
             <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedSport}</Text>
           </View>
-          <FlatList data={rowsBySport[selectedSport] ?? []} keyExtractor={(it)=>it.uri} renderItem={renderRow} contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }} />
+          <FlatList data={rowsBySport[selectedSport] ?? []} keyExtractor={(it)=>it.uri} renderItem={renderVideoRow} contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }} />
         </View>
       )}
 
@@ -402,6 +561,8 @@ export default function LibraryScreen() {
     </View>
   );
 }
+
+
 
 
 
