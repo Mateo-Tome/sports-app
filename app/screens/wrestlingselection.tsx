@@ -1,39 +1,95 @@
 // app/screens/wrestlingselection.tsx
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function WrestlingSelection() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  // Read athlete from params (default to Unassigned)
+  const params = useLocalSearchParams<{ athlete?: string | string[] }>();
+  const athleteParam = Array.isArray(params.athlete) ? params.athlete[0] : params.athlete;
+  const athlete = (athleteParam ?? 'Unassigned').trim() || 'Unassigned';
 
   const go = (style: 'folkstyle' | 'freestyle' | 'greco') => {
-    router.push({ pathname: '/record/camera', params: { sport: 'wrestling', style } });
+    router.push({
+      pathname: '/record/camera',
+      params: { athlete, sport: 'wrestling', style },
+    });
   };
 
-  const Btn = ({ label, onPress }: { label: string; onPress: () => void }) => (
+  const CardBtn = ({
+    icon,
+    title,
+    subtitle,
+    onPress,
+  }: {
+    icon: string;
+    title: string;
+    subtitle?: string;
+    onPress: () => void;
+  }) => (
     <TouchableOpacity
       onPress={onPress}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       style={{
-        marginTop: 16,
-        padding: 16,
-        borderWidth: 2,
-        borderColor: '#ccc',
-        borderRadius: 8,
-        backgroundColor: 'white',
+        width: '88%',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 12,
       }}
     >
-      <Text style={{ fontSize: 18, color: 'red' }}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Text style={{ fontSize: 22 }}>{icon}</Text>
+        <View style={{ maxWidth: '82%' }}>
+          <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>{title}</Text>
+          {subtitle ? (
+            <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 2, fontSize: 13 }} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 22, marginLeft: 8 }}>›</Text>
     </TouchableOpacity>
   );
 
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <Text style={{ color: 'red', fontSize: 24 }}>wrestling styles</Text>
+    <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top + 16, alignItems: 'center' }}>
+      <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Choose wrestling style</Text>
+      <Text style={{ color: '#AAA', marginTop: 6, marginBottom: 10 }}>Recording — {athlete}</Text>
 
-      <Btn label="Folkstyle" onPress={() => go('folkstyle')} />
-      <Btn label="Freestyle" onPress={() => go('freestyle')} />
-      <Btn label="Greco-Roman" onPress={() => go('greco')} />
+      {/* 3 clean cards */}
+      <CardBtn
+        icon="🇺🇸"
+        title="Folkstyle"
+        subtitle="High school & college (US)"
+        onPress={() => go('folkstyle')}
+      />
+      <CardBtn
+        icon="🌍"
+        title="Freestyle"
+        subtitle="International rules"
+        onPress={() => go('freestyle')}
+      />
+      <CardBtn
+        icon="🛡️"
+        title="Greco-Roman"
+        subtitle="Upper-body only"
+        onPress={() => go('greco')}
+      />
     </View>
   );
 }
+
+
 
   

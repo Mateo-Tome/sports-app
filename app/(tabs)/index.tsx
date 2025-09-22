@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActionSheetIOS, // 👈 iOS-native sheet (more reliable than Alert)
+  ActionSheetIOS,
   Alert,
   FlatList,
   Image,
@@ -23,20 +23,14 @@ const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 type Athlete = { id: string; name: string; photoUri?: string | null };
 
-/** mediaTypes option that works across SDKs:
- *  - Newer SDKs: array of strings ['images'] (recommended)
- *  - Older SDKs: fallback to ImagePicker.MediaTypeOptions.Images
- */
 function imagesMediaTypes(): any {
   const MT = (ImagePicker as any).MediaType;
-  if (MT && typeof MT === 'object' && MT.images) return [MT.images]; // e.g., 'images'
+  if (MT && typeof MT === 'object' && MT.images) return [MT.images];
   const MTO = (ImagePicker as any).MediaTypeOptions;
-  if (MTO && MTO.Images) return MTO.Images; // legacy shape
-  return ['images']; // safest default on modern SDKs
+  if (MTO && MTO.Images) return MTO.Images;
+  return ['images'];
 }
-
 const wait = (ms = 160) => new Promise(res => setTimeout(res, ms));
-
 
 async function pickImageWithChoice(): Promise<string | null> {
   let cam = await ImagePicker.getCameraPermissionsAsync();
@@ -103,6 +97,7 @@ async function pickImageWithChoice(): Promise<string | null> {
     });
   }
 
+  // Android
   return new Promise((resolve) => {
     const defer = (fn: () => Promise<void>) => {
       requestAnimationFrame(() => {
@@ -207,13 +202,15 @@ export default function HomeAthletes() {
     }
   };
 
-  const recordNoAthlete = () => {
-    router.push(`/(tabs)/recordingScreen?sport=wrestling&style=folkstyle`);
+  const recordNoAthlete = async () => {
+    await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
+    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'wrestling', style: 'folkstyle' } });
   };
+
   const recordWithAthlete = async (name: string) => {
-    await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, name.trim());
-    const athleteParam = encodeURIComponent(name.trim());
-    router.push(`/(tabs)/recordingScreen?athlete=${athleteParam}&sport=wrestling&style=folkstyle`);
+    const clean = name.trim();
+    await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
+    router.push({ pathname: '/record/camera', params: { athlete: clean, sport: 'wrestling', style: 'folkstyle' } });
   };
 
   const AthleteCard = ({ a }: { a: Athlete }) => {
@@ -221,7 +218,11 @@ export default function HomeAthletes() {
     const [renameInput, setRenameInput] = useState(a.name);
 
     return (
-      <View style={{ padding: 12, marginHorizontal: 16, marginVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.05)', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={{
+        padding: 12, marginHorizontal: 16, marginVertical: 8,
+        borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: 'rgba(255,255,255,0.05)', flexDirection: 'row', alignItems: 'center', gap: 12
+      }}>
         {a.photoUri ? (
           <Image source={{ uri: a.photoUri }} style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)' }} />
         ) : (
@@ -252,7 +253,13 @@ export default function HomeAthletes() {
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
             <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
               <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Rename Athlete</Text>
-              <TextInput value={renameInput} onChangeText={setRenameInput} placeholder="Name" placeholderTextColor="rgba(255,255,255,0.4)" style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', color: 'white' }} />
+              <TextInput
+                value={renameInput}
+                onChangeText={setRenameInput}
+                placeholder="Name"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', color: 'white' }}
+              />
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
                 <TouchableOpacity onPress={() => setEditOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
                   <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
@@ -298,7 +305,6 @@ export default function HomeAthletes() {
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Add Athlete</Text>
             <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>Enter a name and (optionally) pick a photo.</Text>
             <TextInput value={nameInput} onChangeText={setNameInput} placeholder="e.g., Jordan" placeholderTextColor="rgba(255,255,255,0.4)" style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', color: 'white' }} />
-
             <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               {pendingPhoto ? (
                 <Image source={{ uri: pendingPhoto }} style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)' }} />
@@ -311,7 +317,6 @@ export default function HomeAthletes() {
                 <Text style={{ color: 'white', fontWeight: '800' }}>{pendingPhoto ? 'Change Photo' : 'Pick Photo'}</Text>
               </TouchableOpacity>
             </View>
-
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
               <TouchableOpacity onPress={() => { setAddOpen(false); setPendingPhoto(null); }} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
@@ -326,3 +331,6 @@ export default function HomeAthletes() {
     </View>
   );
 }
+
+
+
