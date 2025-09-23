@@ -45,6 +45,14 @@ export default function RecordingScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (initialAthlete && initialAthlete !== athlete) {
+      setAthlete(initialAthlete);
+    }
+  }, [initialAthlete, athlete]);
+
+  // ...rest of your component
+
   // ---------- Navigation helpers (always forward the athlete) ----------
   const toCam = (sportKey: string, styleKey: string) =>
     router.push({

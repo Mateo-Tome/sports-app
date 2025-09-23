@@ -13,7 +13,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
-const ATHLETES_KEY = 'athletes:list';
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 type VideoMeta = {
@@ -120,17 +119,10 @@ export default function CameraScreen() {
 
   // 🔵 current athlete (chip)
   const [athlete, setAthlete] = useState<string>('Unassigned');
-  const [athleteList, setAthleteList] = useState<{ id: string; name: string }[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [newName, setNewName] = useState('');
 
   // init athlete: route param wins; otherwise gently fall back to last chosen
   useEffect(() => {
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(ATHLETES_KEY);
-        setAthleteList(raw ? JSON.parse(raw) : []);
-      } catch {}
 
       if (athleteParamIncluded) {
         // Route param wins (from style picker / direct nav)

@@ -204,14 +204,22 @@ export default function HomeAthletes() {
 
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
-    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'wrestling', style: 'folkstyle' } });
+    router.push({
+      pathname: '/recordingScreen',             // 👈 go to your multi-sport picker
+      params: { athlete: 'Unassigned' },
+    });
   };
-
+  
   const recordWithAthlete = async (name: string) => {
     const clean = name.trim();
-    await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
-    router.push({ pathname: '/record/camera', params: { athlete: clean, sport: 'wrestling', style: 'folkstyle' } });
+    await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean); // ok to keep for your other flows
+    router.push({
+      pathname: '/recordingScreen',             // 👈 go to your multi-sport picker
+      params: { athlete: clean },
+    });
   };
+  
+  
 
   const AthleteCard = ({ a }: { a: Athlete }) => {
     const [editOpen, setEditOpen] = useState(false);
