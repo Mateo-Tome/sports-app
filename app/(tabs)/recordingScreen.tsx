@@ -34,6 +34,7 @@ export default function RecordingScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newName, setNewName] = useState('');
 
+  // Load athletes from storage once
   useEffect(() => {
     (async () => {
       try {
@@ -45,13 +46,12 @@ export default function RecordingScreen() {
     })();
   }, []);
 
+  // ✅ Only sync from route param when the param changes.
+  //    This won't fight with local "Change" picks anymore.
   useEffect(() => {
-    if (initialAthlete && initialAthlete !== athlete) {
-      setAthlete(initialAthlete);
-    }
-  }, [initialAthlete, athlete]);
-
-  // ...rest of your component
+    const nextFromParam = paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned';
+    setAthlete(nextFromParam);
+  }, [params.athlete]);
 
   // ---------- Navigation helpers (always forward the athlete) ----------
   const toCam = (sportKey: string, styleKey: string) =>
@@ -389,6 +389,7 @@ export default function RecordingScreen() {
     </SafeAreaView>
   );
 }
+
 
 
 

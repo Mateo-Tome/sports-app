@@ -1,5 +1,5 @@
 // app/screens/wrestlingselection.tsx
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -63,32 +63,53 @@ export default function WrestlingSelection() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top + 16, alignItems: 'center' }}>
-      <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Choose wrestling style</Text>
-      <Text style={{ color: '#AAA', marginTop: 6, marginBottom: 10 }}>Recording — {athlete}</Text>
+    <>
+      <Stack.Screen
+        options={{
+          title: '',
+          headerTitle: '',
+          headerTransparent: true,
+          headerShadowVisible: false,
+          headerTintColor: 'white',              // back chevron color
+          headerBackButtonDisplayMode: 'minimal' // hide back title text
+        }}
+      />
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'black',
+          paddingTop: insets.top + 16,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Choose wrestling style</Text>
+        <Text style={{ color: '#AAA', marginTop: 6, marginBottom: 10 }}>Recording — {athlete}</Text>
 
-      {/* 3 clean cards */}
-      <CardBtn
-        icon="🇺🇸"
-        title="Folkstyle"
-        subtitle="High school & college (US)"
-        onPress={() => go('folkstyle')}
-      />
-      <CardBtn
-        icon="🌍"
-        title="Freestyle"
-        subtitle="International rules"
-        onPress={() => go('freestyle')}
-      />
-      <CardBtn
-        icon="🛡️"
-        title="Greco-Roman"
-        subtitle="Upper-body only"
-        onPress={() => go('greco')}
-      />
-    </View>
+        {/* 3 clean cards */}
+        <CardBtn
+          icon="🇺🇸"
+          title="Folkstyle"
+          subtitle="High school & college (US)"
+          onPress={() => go('folkstyle')}
+        />
+        <CardBtn
+          icon="🌍"
+          title="Freestyle"
+          subtitle="International rules"
+          onPress={() => go('freestyle')}
+        />
+        <CardBtn
+          icon="🛡️"
+          title="Greco-Roman"
+          subtitle="Upper-body only"
+          onPress={() => go('greco')}
+        />
+      </View>
+    </>
   );
 }
+
+
 
 
 
