@@ -7,10 +7,14 @@ import { OverlayProps } from './types';
 export default function WrestlingFolkstyleOverlay({
   isRecording,
   onEvent,
+  // not used here; prefix to avoid lint warnings
+  getCurrentTSec: _getCurrentTSec,
+  sport: _sport,
+  style: _style,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
-  const isLandscape = dims.width > dims.height;
+  const { width: screenW } = dims;
 
   // ---- Layout paddings (keeps clear of Back + Start/Stop) ----
   const EDGE_L = insets.left + 10;
@@ -21,19 +25,13 @@ export default function WrestlingFolkstyleOverlay({
   // ---- Available vertical space for each side's column ----
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
 
-  // We want a 2x3 grid per side (6 buttons). Title takes ~28px.
+  // We want a 2x3 grid per side (up to 6 circles). Title takes ~28px.
   const TITLE_H = 28;
   const ROWS = 3;
   const GAP = 10;
 
   // Compute a circle size that guarantees all rows fit with no scroll:
-  // availableHeight >= TITLE_H + ROWS*SIZE + (ROWS-1)*GAP
-  const maxSize = Math.floor(
-    (availableHeight - TITLE_H - (ROWS - 1) * GAP)
-      / ROWS
-  );
-
-  // Clamp to a reasonable range (will shrink in landscape if needed)
+  const maxSize = Math.floor((availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS);
   const SIZE = Math.max(36, Math.min(60, maxSize));
 
   // 2 columns per side → fixed column width so right side can anchor to the edge
@@ -54,22 +52,140 @@ export default function WrestlingFolkstyleOverlay({
   const leftTitle  = myKidSide === 'left'  ? 'My Kid' : 'Opponent';
   const rightTitle = myKidSide === 'right' ? 'My Kid' : 'Opponent';
 
+  // Near-fall chooser state (which side requested it)
+  const [nfFor, setNfFor] = React.useState<null | 'left' | 'right'>(null);
+
+  const fire = (
+    actor: 'home' | 'opponent' | 'neutral',
+    key: string,
+    label: string,
+    value?: number
+  ) => {
+    if (!isRecording) return;
+    onEvent({ key, label, actor, value });
+  };
+
+  const openNF = (side: 'left' | 'right') => {
+    if (!isRecording) return;
+    setNfFor(side);
+  };
+
+  const NFChooserClose = ({ onClose }: { onClose: () => void }) => (
+    <TouchableOpacity
+      onPress={onClose}
+      style={{
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        marginRight: 6,
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+    </TouchableOpacity>
+  );
+
+  const NFSeparator = () => (
+    <View
+      style={{
+        width: 1,
+        height: 24,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        marginHorizontal: 6,
+      }}
+    />
+  );
+
+  const NFChooser = () => {
+    if (!nfFor) return null;
+    const actor = nfFor === 'left' ? leftActor : rightActor;
+    const color = nfFor === 'left' ? leftColor : rightColor;
+    const title = nfFor === 'left' ? leftTitle : rightTitle;
+
+    const Chip = ({ v }: { v: 2 | 3 | 4 }) => (
+      <TouchableOpacity
+        onPress={() => {
+          fire(actor as any, 'nearfall', `NF${v}`, v);
+          setNfFor(null);
+        }}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: color,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginHorizontal: 6,
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 },
+          shadowRadius: 3,
+          elevation: 2,
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '900' }}>{v}</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          // ⬇️ Keep it INSIDE the overlay container (no negative top)
+          top: 6,
+          // ⬇️ Respect safe-area edges so it never goes off-screen horizontally
+          left: EDGE_L,
+          right: EDGE_R,
+          alignItems: 'center',
+        }}
+      >
+        <View
+          style={{
+            maxWidth: screenW - (EDGE_L + EDGE_R),
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.25)',
+            borderRadius: 999,
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '800', marginRight: 8 }}>
+            {title}: NF points
+          </Text>
+          <NFChooserClose onClose={() => setNfFor(null)} />
+          <NFSeparator />
+          <Chip v={2} />
+          <Chip v={3} />
+          <Chip v={4} />
+        </View>
+      </View>
+    );
+  };
+
   const Circle = ({
     label,
     actor,
     keyName,
     value,
     bg,
+    onPressOverride,
   }: {
     label: string;
     actor: 'home' | 'opponent' | 'neutral';
     keyName: string;
     value?: number;
     bg: string;
+    onPressOverride?: () => void;
   }) => (
     <TouchableOpacity
       disabled={!isRecording}
-      onPress={() => onEvent({ key: keyName, label, actor, value })}
+      onPress={() => (onPressOverride ? onPressOverride() : fire(actor, keyName, label, value))}
       style={{
         width: SIZE,
         height: SIZE,
@@ -77,7 +193,6 @@ export default function WrestlingFolkstyleOverlay({
         backgroundColor: bg,
         alignItems: 'center',
         justifyContent: 'center',
-        // grid gaps are handled by the parent "gap"
         opacity: isRecording ? 1 : 0.55,
         shadowColor: '#000',
         shadowOpacity: 0.25,
@@ -86,9 +201,7 @@ export default function WrestlingFolkstyleOverlay({
         elevation: 2,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
-        {label}
-      </Text>
+      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </TouchableOpacity>
   );
 
@@ -120,22 +233,19 @@ export default function WrestlingFolkstyleOverlay({
         {leftTitle}
       </Text>
 
-      {/* 2x3 grid: gap handles both row & column space; no ScrollView = always visible */}
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          width: COL_W,
-          gap: GAP,
-        }}
-      >
-        {/* Folkstyle: TAKEDOWN is 3 points now (T3) */}
-        <Circle label="T3"  actor={leftActor as any}  keyName="takedown3" value={3} bg={leftColor} />
-        <Circle label="E1"  actor={leftActor as any}  keyName="escape1"   value={1} bg={leftColor} />
-        <Circle label="R2"  actor={leftActor as any}  keyName="reversal2" value={2} bg={leftColor} />
-        <Circle label="NF2" actor={leftActor as any}  keyName="nearfall2" value={2} bg={leftColor} />
-        <Circle label="NF3" actor={leftActor as any}  keyName="nearfall3" value={3} bg={leftColor} />
-        <Circle label="ST"  actor={leftActor as any}  keyName="stalling"         bg={leftColor} />
+      {/* Grid (T3 / E1 / R2 / NF / ST) */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
+        <Circle label="T3" actor={leftActor as any} keyName="takedown" value={3} bg={leftColor} />
+        <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
+        <Circle label="R2" actor={leftActor as any} keyName="reversal" value={2} bg={leftColor} />
+        <Circle
+          label="NF"
+          actor={leftActor as any}
+          keyName="nearfall"
+          bg={leftColor}
+          onPressOverride={() => openNF('left')}
+        />
+        <Circle label="ST" actor={leftActor as any} keyName="stalling" bg={leftColor} />
       </View>
     </View>
   );
@@ -168,7 +278,7 @@ export default function WrestlingFolkstyleOverlay({
         {rightTitle}
       </Text>
 
-      {/* mirrored 2x3 grid */}
+      {/* mirrored grid */}
       <View
         style={{
           flexDirection: 'row',
@@ -178,12 +288,17 @@ export default function WrestlingFolkstyleOverlay({
           justifyContent: 'flex-end',
         }}
       >
-        <Circle label="T3"  actor={rightActor as any} keyName="takedown3" value={3} bg={rightColor} />
-        <Circle label="E1"  actor={rightActor as any} keyName="escape1"   value={1} bg={rightColor} />
-        <Circle label="R2"  actor={rightActor as any} keyName="reversal2" value={2} bg={rightColor} />
-        <Circle label="NF2" actor={rightActor as any} keyName="nearfall2" value={2} bg={rightColor} />
-        <Circle label="NF3" actor={rightActor as any} keyName="nearfall3" value={3} bg={rightColor} />
-        <Circle label="ST"  actor={rightActor as any} keyName="stalling"        bg={rightColor} />
+        <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
+        <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
+        <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
+        <Circle
+          label="NF"
+          actor={rightActor as any}
+          keyName="nearfall"
+          bg={rightColor}
+          onPressOverride={() => openNF('right')}
+        />
+        <Circle label="ST" actor={rightActor as any} keyName="stalling" bg={rightColor} />
       </View>
     </View>
   );
@@ -219,11 +334,17 @@ export default function WrestlingFolkstyleOverlay({
         </TouchableOpacity>
       </View>
 
+      {/* NF chooser popover (centered, clamped to safe area) */}
+      <NFChooser />
+
       <LeftGrid />
       <RightGrid />
     </View>
   );
 }
+
+
+
 
 
 

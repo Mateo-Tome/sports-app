@@ -1,5 +1,5 @@
 // app/record/camera.tsx
-// Stable camera + overlay + Photos albums + quick-switch athlete chip (no sticky memory)
+// Stable camera + overlay + Photos albums + quick-switch athlete chip
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -19,7 +19,7 @@ type VideoMeta = {
   uri: string;
   displayName: string;
   athlete: string;
-  sport: string;
+  sport: string;   // you currently store sportKey here (e.g., "wrestling:folkstyle")
   createdAt: number;
   assetId?: string;
 };
@@ -77,6 +77,7 @@ async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: 
   } catch { return undefined; }
 }
 
+// Save the mp4 into app storage + update global index + optional Photos import
 const saveToAppStorage = async (srcUri?: string | null, athleteRaw?: string, sportRaw?: string) => {
   if (!srcUri) { Alert.alert('No video URI', 'Recording did not return a file path.'); return { appUri: null as string | null }; }
   const athlete = (athleteRaw || '').trim() || 'Unassigned';
@@ -93,15 +94,25 @@ const saveToAppStorage = async (srcUri?: string | null, athleteRaw?: string, spo
   return { appUri: destUri, assetId };
 };
 
+// ---------- Sidecar event capture ----------
+type Actor = 'home' | 'opponent' | 'neutral';
+type MatchEvent = {
+  t: number;                           // seconds since record start (with preroll)
+  kind: string;                        // normalized from overlay.key
+  points?: number;
+  actor: Actor;
+  meta?: Record<string, any>;
+};
+
 export default function CameraScreen() {
   // params
   const params = useLocalSearchParams<{ athlete?: string | string[]; sport?: string | string[]; style?: string | string[] }>();
 
-  // 🔁 Neutral defaults: only show overlays when passed in explicitly
+  // Defaults: only show overlays when passed explicitly
   const athleteParamIncluded = typeof params.athlete !== 'undefined';
   const athleteParam = paramToStr(params.athlete, 'Unassigned');
-  const sportParam = paramToStr(params.sport, 'plain'); // was 'wrestling'
-  const styleParam = paramToStr(params.style, 'none');  // was 'folkstyle'
+  const sportParam = paramToStr(params.sport, 'plain'); // e.g. "wrestling"
+  const styleParam = paramToStr(params.style, 'none');  // e.g. "folkstyle"
 
   const [permission, requestPermission] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
@@ -120,15 +131,15 @@ export default function CameraScreen() {
   // 🔵 current athlete (chip)
   const [athlete, setAthlete] = useState<string>('Unassigned');
 
-  // init athlete: route param wins; otherwise gently fall back to last chosen
+  // 🟢 captured events buffer
+  const [events, setEvents] = useState<MatchEvent[]>([]);
+
+  // init athlete: route param wins; otherwise last chosen
   useEffect(() => {
     (async () => {
-
       if (athleteParamIncluded) {
-        // Route param wins (from style picker / direct nav)
         setAthlete((athleteParam || '').trim() || 'Unassigned');
       } else {
-        // Safety net: if no param, use last chosen athlete from Home (if any)
         try {
           const last = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
           setAthlete((last || '').trim() || 'Unassigned');
@@ -156,26 +167,26 @@ export default function CameraScreen() {
     return () => { cancelled = true; interaction?.cancel?.(); };
   }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
 
+  // hide native header
   useEffect(() => {
     try { (navigation as any)?.setOptions?.({ headerShown: false }); } catch {}
     return () => { try { (navigation as any)?.setOptions?.({ headerShown: true }); } catch {} };
   }, [navigation]);
 
   // If screen loses focus while recording, stop cleanly
-useEffect(() => {
-  if (!isFocused && isRecording) {
-    try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
-    setIsRecording(false);
-  }
-}, [isFocused, isRecording]);
+  useEffect(() => {
+    if (!isFocused && isRecording) {
+      try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
+      setIsRecording(false);
+    }
+  }, [isFocused, isRecording]);
 
-// On unmount, ensure recording is stopped
-useEffect(() => {
-  return () => {
-    try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
-  };
-}, []);
-
+  // On unmount, ensure recording is stopped
+  useEffect(() => {
+    return () => {
+      try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
+    };
+  }, []);
 
   if (!permission) return <View style={{ flex: 1, backgroundColor: 'black' }} />;
   if (!permission.granted) {
@@ -190,16 +201,55 @@ useEffect(() => {
   }
 
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
-  const isFolkstyle = sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
+  const isFolkstyle =
+    sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
 
+  // ---- time helpers ----
+  const getCurrentTSec = () =>
+    Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3);
+
+  // ---- overlay event bridge ----
+  const handleOverlayEvent = (evt: OverlayEvent) => {
+    const t = getCurrentTSec();
+    const kind = String(evt.key ?? 'unknown');
+    const points = Number.isFinite(evt.value) ? Number(evt.value) : undefined;
+    const actor: 'home' | 'opponent' | 'neutral' =
+      evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
+
+    setEvents(prev => [...prev, { t, kind, points, actor, meta: evt as any }]);
+  };
+
+  // ---- write sidecar next to saved mp4 ----
+  const writeSidecarJson = async (appUri: string) => {
+    try {
+      const jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
+      const payload = {
+        athlete,
+        sport: sportParam,
+        style: styleParam,
+        createdAt: Date.now(),
+        events,
+        appVersion: 1,
+      };
+      await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload));
+      return jsonUri;
+    } catch {
+      return null;
+    }
+  };
+
+  // ---- record flow (CameraView) ----
   const handleStart = async () => {
     if (isRecording) return;
     if (!micPerm?.granted) {
       const r = await requestMicPerm();
       if (!r?.granted) { Alert.alert('Microphone needed', 'Enable microphone to record audio.'); return; }
     }
-    setStartMs(Date.now()); setIsRecording(true);
-  
+    // start-of-match: reset buffer & timer
+    setEvents([]);
+    setStartMs(Date.now());
+    setIsRecording(true);
+
     const cam: any = cameraRef.current;
     try {
       if (cam?.startRecording) {
@@ -208,28 +258,38 @@ useEffect(() => {
           onRecordingFinished: async (res: any) => {
             const uri = typeof res === 'string' ? res : res?.uri;
             if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
+
             const chosen = (athlete || '').trim() || 'Unassigned';
             const { appUri, assetId } = await saveToAppStorage(uri, chosen, sportKey);
-            Alert.alert('Recording saved', `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`);
+
+            if (appUri) await writeSidecarJson(appUri);
+
+            Alert.alert(
+              'Recording saved',
+              `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
+            );
             setIsRecording(false);
           },
           onRecordingError: (e: any) => {
-            console.log('startRecording error:', e);
             const msg = e instanceof Error ? e.message : String(e);
             Alert.alert('Recording error', msg);
             setIsRecording(false);
           },
         });
       } else if (cam?.recordAsync) {
+        // fallback (older API)
         cam.recordAsync({ mute: false }).then(async (res: any) => {
           const uri = typeof res === 'string' ? res : res?.uri;
           if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
           const chosen = (athlete || '').trim() || 'Unassigned';
           const { appUri, assetId } = await saveToAppStorage(uri, chosen, sportKey);
-          Alert.alert('Recording saved', `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`);
+          if (appUri) await writeSidecarJson(appUri);
+          Alert.alert(
+            'Recording saved',
+            `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
+          );
           setIsRecording(false);
         }).catch((e: any) => {
-          console.log('recordAsync error:', e);
           const msg = e instanceof Error ? e.message : String(e);
           Alert.alert('Recording error', msg);
           setIsRecording(false);
@@ -238,26 +298,24 @@ useEffect(() => {
         throw new Error('No recording API found on CameraView');
       }
     } catch (e: any) {
-      console.log('record start threw:', e);
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Recording error', msg);
       setIsRecording(false);
     }
   };
-  
-  const handleStop = async () => {
+
+  const handleStop = () => {
     if (!isRecording) return;
     const cam: any = cameraRef.current;
     try { cam?.stopRecording?.(); } catch {}
     setIsRecording(false);
   };
-  
 
-  // UI pieces
+  // UI: small badge
   const AthleteBadge = () => (
     <View
       style={{
-        paddingVertical: 4,              // slightly smaller
+        paddingVertical: 4,
         paddingHorizontal: 10,
         borderRadius: 999,
         backgroundColor: 'rgba(0,0,0,0.55)',
@@ -265,16 +323,11 @@ useEffect(() => {
         borderColor: 'rgba(255,255,255,0.35)',
       }}
     >
-      <Text
-        style={{ color: 'white', fontWeight: '800', fontSize: 13 }} // slightly smaller text
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
+      <Text style={{ color: 'white', fontWeight: '800', fontSize: 13 }} numberOfLines={1} ellipsizeMode="tail">
         Recording — {athlete || 'Unassigned'}
       </Text>
     </View>
   );
-  
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
@@ -293,15 +346,8 @@ useEffect(() => {
 
       {!isRecording && (
         <>
-          {/* Back button row (top-left) */}
-          <View
-            style={{
-              position: 'absolute',
-              top: insets.top + 8,
-              left: 12,
-              zIndex: 6, // keep above overlay
-            }}
-          >
+          {/* Back button */}
+          <View style={{ position: 'absolute', top: insets.top + 8, left: 12, zIndex: 6 }}>
             <TouchableOpacity
               onPress={() => (navigation as any)?.goBack?.()}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
@@ -318,11 +364,11 @@ useEffect(() => {
             </TouchableOpacity>
           </View>
 
-          {/* Athlete chip on its own line, centered, below overlay header row */}
+          {/* Athlete chip */}
           <View
             style={{
               position: 'absolute',
-              top: insets.top + 52, // push below your overlay's top buttons
+              top: insets.top + 52,
               left: 12,
               right: 12,
               alignItems: 'center',
@@ -339,8 +385,8 @@ useEffect(() => {
           {isFolkstyle ? (
             <WrestlingFolkstyleOverlay
               isRecording={isRecording}
-              onEvent={(evt: OverlayEvent) => {}}
-              getCurrentTSec={() => Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3)}
+              onEvent={handleOverlayEvent}
+              getCurrentTSec={getCurrentTSec}
               sport={sportParam}
               style={styleParam}
             />
@@ -352,7 +398,18 @@ useEffect(() => {
         </View>
       ) : null}
 
-      <View style={{ position: 'absolute', bottom: insets.bottom + 16, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 16 }}>
+      {/* Start/Stop */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: insets.bottom + 16,
+          left: 0,
+          right: 0,
+          flexDirection: 'row',
+          justifyContent: 'center',
+          gap: 16,
+        }}
+      >
         {!isRecording ? (
           <TouchableOpacity onPress={handleStart} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'red', borderRadius: 999 }}>
             <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
@@ -363,10 +420,9 @@ useEffect(() => {
           </TouchableOpacity>
         )}
       </View>
-
-      
     </View>
   );
 }
+
 
 
