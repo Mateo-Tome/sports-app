@@ -1,11 +1,10 @@
 // app/(tabs)/library.tsx
-// Library with segmented views + Edit Athlete (moves file + updates index + albums best-effort)
-// Now supports: Athletes ➜ Sports-for-athlete ➜ Videos-for-athlete+sport
+// Library: Athletes ➜ Sports ➜ Videos, with outcome/score chips and Playback routing
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { VideoView, useVideoPlayer } from 'expo-video';
+import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Image, Modal, Pressable, RefreshControl, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -24,6 +23,10 @@ type IndexMeta = {
   createdAt: number;
   assetId?: string;
 };
+
+type FinalScore = { home: number; opponent: number };
+type Outcome = 'W' | 'L' | 'T';
+
 type Row = {
   uri: string;
   displayName: string;
@@ -33,12 +36,20 @@ type Row = {
   mtime: number | null;
   thumbUri?: string | null;
   assetId?: string | undefined;
+
+  // NEW: scoring / outcome surfaced on Library cards
+  finalScore?: FinalScore | null;
+  homeIsAthlete?: boolean; // default true
+  outcome?: Outcome;       // W/L/T from athlete’s POV
+  myScore?: number | null;
+  oppScore?: number | null;
 };
 
 const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
 const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 const bytesToMB = (b?: number | null) => (b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB');
 
+// ---------- index helpers ----------
 async function readIndex(): Promise<IndexMeta[]> {
   try {
     const info = await FileSystem.getInfoAsync(INDEX_PATH);
@@ -55,6 +66,7 @@ async function writeIndexAtomic(list: IndexMeta[]) {
   await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
 }
 
+// ---------- thumbs ----------
 async function getOrCreateThumb(videoUri: string, fileName: string) {
   await ensureDir(THUMBS_DIR);
   const base = fileName.replace(/\.[^/.]+$/, '');
@@ -68,6 +80,76 @@ async function getOrCreateThumb(videoUri: string, fileName: string) {
   } catch { return null; }
 }
 
+// ---------- sidecar (score/outcome) ----------
+type Sidecar = {
+  events?: Array<{ t: number; points?: number; actor?: 'home' | 'opponent' | 'neutral' }>;
+  finalScore?: FinalScore;
+  homeIsAthlete?: boolean;
+};
+
+// robustly find and parse the sidecar, then derive final score/outcome
+async function readOutcomeFor(videoUri: string): Promise<{
+  finalScore: FinalScore | null;
+  homeIsAthlete: boolean;
+  outcome: Outcome | null;
+  myScore: number | null;
+  oppScore: number | null;
+}> {
+  try {
+    const lastSlash = videoUri.lastIndexOf('/');
+    const lastDot = videoUri.lastIndexOf('.');
+    const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
+    const guess = `${base}.json`;
+
+    const tryRead = async (p: string): Promise<Sidecar | null> => {
+      const info = await FileSystem.getInfoAsync(p);
+      if (!(info as any)?.exists) return null;
+      const txt = await FileSystem.readAsStringAsync(p);
+      return JSON.parse(txt || '{}');
+    };
+
+    let sc: Sidecar | null = await tryRead(guess);
+
+    // fallback: scan directory for same basename.json
+    if (!sc) {
+      try {
+        const dir = videoUri.slice(0, lastSlash + 1);
+        // @ts-ignore (Expo API available at runtime)
+        const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
+        const baseName = base.slice(lastSlash + 1);
+        const candidate = files.find(f => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
+        if (candidate) sc = await tryRead(dir + candidate);
+      } catch {}
+    }
+
+    if (!sc) return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null };
+
+    // compute score if missing
+    let finalScore: FinalScore | null = sc.finalScore ?? null;
+    if (!finalScore) {
+      let h = 0, o = 0;
+      for (const e of sc.events ?? []) {
+        const pts = typeof e.points === 'number' ? e.points : 0;
+        if (pts > 0) {
+          if (e.actor === 'home') h += pts;
+          else if (e.actor === 'opponent') o += pts;
+        }
+      }
+      finalScore = { home: h, opponent: o };
+    }
+
+    const homeIsAthlete = sc.homeIsAthlete !== false; // default true
+    const myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
+    const oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
+    const outcome: Outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+
+    return { finalScore, homeIsAthlete, outcome, myScore, oppScore };
+  } catch {
+    return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null };
+  }
+}
+
+// ---------- move video across athletes (kept same) ----------
 async function retagVideo(input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string }, newAthleteRaw: string) {
   const newAthlete = (newAthleteRaw || '').trim() || 'Unassigned';
   const oldA = (input.oldAthlete || '').trim() || 'Unassigned';
@@ -95,7 +177,7 @@ async function retagVideo(input: { uri: string; oldAthlete: string; sportKey: st
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted || !input.assetId) return;
 
-    const assetId = input.assetId; // use the id directly (more reliable)
+    const assetId = input.assetId;
     const athleteAlbumName = newAthlete;
     const sportAlbumName = `${newAthlete} — ${input.sportKey}`;
 
@@ -109,19 +191,13 @@ async function retagVideo(input: { uri: string; oldAthlete: string; sportKey: st
   } catch {}
 }
 
-function Player({ uri }: { uri: string }) {
-  const player = useVideoPlayer(uri, (p) => { p.loop = false; });
-  useEffect(() => { try { player.play(); } catch {} return () => {}; }, [player]);
-  return <VideoView key={uri} style={{ flex: 1 }} player={player} contentFit="contain" allowsFullscreen allowsPictureInPicture showsTimecodes />;
-}
-
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
+  const router = useRouter();
 
   const [rows, setRows] = useState<Row[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [playingUri, setPlayingUri] = useState<string | null>(null);
 
   const [athletePickerOpen, setAthletePickerOpen] = useState<null | Row>(null);
   const [athleteList, setAthleteList] = useState<{ id: string; name: string; photoUri?: string | null }[]>([]);
@@ -138,7 +214,10 @@ export default function LibraryScreen() {
     for (const meta of list) {
       const info = await FileSystem.getInfoAsync(meta.uri);
       if (!(info as any)?.exists) continue;
+
       const name = meta.uri.split('/').pop() || meta.displayName;
+      const scoreBits = await readOutcomeFor(meta.uri);
+
       built.push({
         uri: meta.uri,
         displayName: meta.displayName || name,
@@ -148,6 +227,13 @@ export default function LibraryScreen() {
         size: (info as any)?.size ?? null,
         mtime: (info as any)?.modificationTime ? Math.round(((info as any).modificationTime as number) * 1000) : meta.createdAt ?? null,
         thumbUri: await getOrCreateThumb(meta.uri, name),
+
+        // NEW: scores/outcomes from sidecar
+        finalScore: scoreBits.finalScore,
+        homeIsAthlete: scoreBits.homeIsAthlete,
+        outcome: scoreBits.outcome ?? undefined,
+        myScore: scoreBits.myScore,
+        oppScore: scoreBits.oppScore,
       });
     }
     built.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
@@ -205,7 +291,7 @@ export default function LibraryScreen() {
     return map;
   }, [allRows]);
 
-  // by sport (global, for the "Sports" tab)
+  // by sport (global)
   const rowsBySport = useMemo(() => {
     const map: Record<string, Row[]> = {};
     for (const r of allRows) { const k = r.sport || 'unknown'; (map[k] ||= []).push(r); }
@@ -222,7 +308,6 @@ export default function LibraryScreen() {
       (m[a][s] ||= []);
       m[a][s].push(r);
     }
-    // keep each inner list newest-first
     for (const a of Object.keys(m)) {
       for (const s of Object.keys(m[a])) {
         m[a][s].sort((x, y) => (y.mtime ?? 0) - (x.mtime ?? 0));
@@ -247,12 +332,39 @@ export default function LibraryScreen() {
   };
 
   // ====== RENDER HELPERS ======
+  const pushPlayback = (uri: string) => {
+    router.push({ pathname: '/screens/PlaybackScreen', params: { videoPath: uri } });
+  };
+
+  const outcomeColor = (o?: Outcome | null) =>
+    o === 'W' ? '#16a34a' : o === 'L' ? '#dc2626' : o === 'T' ? '#f59e0b' : 'rgba(255,255,255,0.25)';
+
   const renderVideoRow = ({ item }: { item: Row }) => {
     const dateStr = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
-    const subtitleBits = [item.athlete ? `👤 ${item.athlete}` : null, item.sport ? `🏷️ ${item.sport}` : null, `${bytesToMB(item.size)}`, dateStr].filter(Boolean);
+    const subtitleBits = [
+      item.athlete ? `👤 ${item.athlete}` : null,
+      item.sport ? `🏷️ ${item.sport}` : null,
+      `${bytesToMB(item.size)}`,
+      dateStr,
+    ].filter(Boolean);
+
+    const chip = item.outcome && item.myScore != null && item.oppScore != null
+      ? { text: `${item.outcome} ${item.myScore}–${item.oppScore}`, color: outcomeColor(item.outcome) }
+      : null;
 
     return (
-      <Pressable onPress={() => setPlayingUri(item.uri)} style={{ padding: 12, marginHorizontal: 16, marginVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)' }}>
+      <Pressable
+        onPress={() => pushPlayback(item.uri)}
+        style={{
+          padding: 12,
+          marginHorizontal: 16,
+          marginVertical: 8,
+          borderRadius: 12,
+          borderWidth: 2,
+          borderColor: outcomeColor(item.outcome),
+          backgroundColor: 'rgba(255,255,255,0.06)',
+        }}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           {item.thumbUri ? (
             <Image source={{ uri: item.thumbUri }} style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} resizeMode="cover" />
@@ -263,7 +375,15 @@ export default function LibraryScreen() {
           )}
 
           <View style={{ flex: 1 }}>
-            <Text style={{ color: 'white', fontWeight: '700' }} numberOfLines={2}>{item.displayName}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>{item.displayName}</Text>
+              {chip && (
+                <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: `${chip.color}22`, borderWidth: 1, borderColor: `${chip.color}66` }}>
+                  <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
+                </View>
+              )}
+            </View>
+
             <Text style={{ color: 'white', opacity: 0.7, marginTop: 4 }} numberOfLines={1}>{subtitleBits.join(' • ')}</Text>
 
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
@@ -271,7 +391,7 @@ export default function LibraryScreen() {
                 <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => setPlayingUri(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+              <TouchableOpacity onPress={() => pushPlayback(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
                 <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
               </TouchableOpacity>
 
@@ -503,18 +623,8 @@ export default function LibraryScreen() {
         </View>
       )}
 
-      {/* Full-screen player modal */}
-      <Modal visible={!!playingUri} animationType="slide" onRequestClose={() => setPlayingUri(null)}>
-        <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
-          <View style={{ position: 'absolute', top: insets.top + 12, left: 12, zIndex: 5 }}>
-            <TouchableOpacity onPress={() => setPlayingUri(null)} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
-            </TouchableOpacity>
-          </View>
-          {playingUri ? <Player uri={String(playingUri)} /> : null}
-        </View>
-      </Modal>
-
+      {/* Note: we removed the inline full-screen player modal; we route to Playback instead */}
+      <Modal visible={false} />
       {/* Edit Athlete modal */}
       <Modal visible={!!athletePickerOpen} transparent animationType="fade" onRequestClose={() => setAthletePickerOpen(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
@@ -561,6 +671,8 @@ export default function LibraryScreen() {
     </View>
   );
 }
+
+
 
 
 

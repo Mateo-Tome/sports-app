@@ -1,5 +1,5 @@
 // app/record/camera.tsx
-// Stable camera + overlay + Photos albums + quick-switch athlete chip
+// Stable camera + overlay + Photos albums + quick-switch athlete chip + live score
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -19,7 +19,7 @@ type VideoMeta = {
   uri: string;
   displayName: string;
   athlete: string;
-  sport: string;   // you currently store sportKey here (e.g., "wrestling:folkstyle")
+  sport: string;   // e.g., "wrestling:folkstyle"
   createdAt: number;
   assetId?: string;
 };
@@ -94,7 +94,7 @@ const saveToAppStorage = async (srcUri?: string | null, athleteRaw?: string, spo
   return { appUri: destUri, assetId };
 };
 
-// ---------- Sidecar event capture ----------
+// ---------- Sidecar event capture + scoring ----------
 type Actor = 'home' | 'opponent' | 'neutral';
 type MatchEvent = {
   t: number;                           // seconds since record start (with preroll)
@@ -102,13 +102,13 @@ type MatchEvent = {
   points?: number;
   actor: Actor;
   meta?: Record<string, any>;
+  scoreAfter?: { home: number; opponent: number }; // running total after this event
 };
 
 export default function CameraScreen() {
   // params
   const params = useLocalSearchParams<{ athlete?: string | string[]; sport?: string | string[]; style?: string | string[] }>();
 
-  // Defaults: only show overlays when passed explicitly
   const athleteParamIncluded = typeof params.athlete !== 'undefined';
   const athleteParam = paramToStr(params.athlete, 'Unassigned');
   const sportParam = paramToStr(params.sport, 'plain'); // e.g. "wrestling"
@@ -133,6 +133,11 @@ export default function CameraScreen() {
 
   // 🟢 captured events buffer
   const [events, setEvents] = useState<MatchEvent[]>([]);
+  const eventsRef = useRef<MatchEvent[]>([]); // authoritative buffer
+
+  // 🧮 running score
+  const [score, setScore] = useState<{ home: number; opponent: number }>({ home: 0, opponent: 0 });
+  const scoreRef = useRef<{ home: number; opponent: number }>({ home: 0, opponent: 0 });
 
   // init athlete: route param wins; otherwise last chosen
   useEffect(() => {
@@ -206,18 +211,39 @@ export default function CameraScreen() {
 
   // ---- time helpers ----
   const getCurrentTSec = () =>
-    Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3);
+    Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3); // -3s preroll
 
-  // ---- overlay event bridge ----
   const handleOverlayEvent = (evt: OverlayEvent) => {
+    if (!isRecording) return;
+  
     const t = getCurrentTSec();
     const kind = String(evt.key ?? 'unknown');
     const points = Number.isFinite(evt.value) ? Number(evt.value) : undefined;
     const actor: 'home' | 'opponent' | 'neutral' =
       evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
-
-    setEvents(prev => [...prev, { t, kind, points, actor, meta: evt as any }]);
+  
+    // Update running score
+    if (typeof points === 'number' && points > 0) {
+      if (actor === 'home') {
+        scoreRef.current = { ...scoreRef.current, home: scoreRef.current.home + points };
+      } else if (actor === 'opponent') {
+        scoreRef.current = { ...scoreRef.current, opponent: scoreRef.current.opponent + points };
+      }
+      setScore(scoreRef.current);
+    }
+  
+    // Keep events only in the ref (for sidecar / playback)
+    const item: MatchEvent = {
+      t,
+      kind,
+      points,
+      actor,
+      meta: evt as any,
+      scoreAfter: { ...scoreRef.current },
+    };
+    eventsRef.current = [...eventsRef.current, item];
   };
+  
 
   // ---- write sidecar next to saved mp4 ----
   const writeSidecarJson = async (appUri: string) => {
@@ -228,7 +254,9 @@ export default function CameraScreen() {
         sport: sportParam,
         style: styleParam,
         createdAt: Date.now(),
-        events,
+        events: eventsRef.current,               // events include scoreAfter
+        finalScore: { ...scoreRef.current },     // useful for Library/Playback summaries
+        homeIsAthlete: true,                     // explicit: "home" == my kid
         appVersion: 1,
       };
       await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload));
@@ -245,8 +273,11 @@ export default function CameraScreen() {
       const r = await requestMicPerm();
       if (!r?.granted) { Alert.alert('Microphone needed', 'Enable microphone to record audio.'); return; }
     }
-    // start-of-match: reset buffer & timer
+    // start-of-match: reset buffers & timer
+    eventsRef.current = [];
     setEvents([]);
+    scoreRef.current = { home: 0, opponent: 0 };
+    setScore(scoreRef.current);
     setStartMs(Date.now());
     setIsRecording(true);
 
@@ -277,7 +308,6 @@ export default function CameraScreen() {
           },
         });
       } else if (cam?.recordAsync) {
-        // fallback (older API)
         cam.recordAsync({ mute: false }).then(async (res: any) => {
           const uri = typeof res === 'string' ? res : res?.uri;
           if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
@@ -311,7 +341,7 @@ export default function CameraScreen() {
     setIsRecording(false);
   };
 
-  // UI: small badge
+  // UI: small badge + score HUD
   const AthleteBadge = () => (
     <View
       style={{
@@ -389,6 +419,7 @@ export default function CameraScreen() {
               getCurrentTSec={getCurrentTSec}
               sport={sportParam}
               style={styleParam}
+              score={score}
             />
           ) : (
             <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: 12 }}>
@@ -423,6 +454,4 @@ export default function CameraScreen() {
     </View>
   );
 }
-
-
 

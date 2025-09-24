@@ -1,4 +1,3 @@
-// app/components/overlays/WrestlingFolkstyleOverlay.tsx
 import React from 'react';
 import { Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,10 +6,10 @@ import { OverlayProps } from './types';
 export default function WrestlingFolkstyleOverlay({
   isRecording,
   onEvent,
-  // not used here; prefix to avoid lint warnings
   getCurrentTSec: _getCurrentTSec,
   sport: _sport,
   style: _style,
+  score, // ⬅️ NEW
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
@@ -25,7 +24,6 @@ export default function WrestlingFolkstyleOverlay({
   // ---- Available vertical space for each side's column ----
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
 
-  // We want a 2x3 grid per side (up to 6 circles). Title takes ~28px.
   const TITLE_H = 28;
   const ROWS = 3;
   const GAP = 10;
@@ -34,7 +32,6 @@ export default function WrestlingFolkstyleOverlay({
   const maxSize = Math.floor((availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS);
   const SIZE = Math.max(36, Math.min(60, maxSize));
 
-  // 2 columns per side → fixed column width so right side can anchor to the edge
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
@@ -51,6 +48,10 @@ export default function WrestlingFolkstyleOverlay({
   const rightColor = myKidSide === 'right' ? GREEN : RED;
   const leftTitle  = myKidSide === 'left'  ? 'My Kid' : 'Opponent';
   const rightTitle = myKidSide === 'right' ? 'My Kid' : 'Opponent';
+
+  // Live score mapped to each column
+  const leftScore  = leftActor  === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
+  const rightScore = rightActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
 
   // Near-fall chooser state (which side requested it)
   const [nfFor, setNfFor] = React.useState<null | 'left' | 'right'>(null);
@@ -132,9 +133,7 @@ export default function WrestlingFolkstyleOverlay({
         pointerEvents="box-none"
         style={{
           position: 'absolute',
-          // ⬇️ Keep it INSIDE the overlay container (no negative top)
           top: 6,
-          // ⬇️ Respect safe-area edges so it never goes off-screen horizontally
           left: EDGE_L,
           right: EDGE_R,
           alignItems: 'center',
@@ -205,6 +204,23 @@ export default function WrestlingFolkstyleOverlay({
     </TouchableOpacity>
   );
 
+  const ScorePill = ({ value, border }: { value: number; border: string }) => (
+    <View
+      style={{
+        marginTop: 10,
+        alignSelf: 'flex-start',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        borderWidth: 1,
+        borderColor: border,
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '900' }}>Score: {value}</Text>
+    </View>
+  );
+
   const LeftGrid = () => (
     <View
       pointerEvents="box-none"
@@ -247,6 +263,10 @@ export default function WrestlingFolkstyleOverlay({
         />
         <Circle label="ST" actor={leftActor as any} keyName="stalling" bg={leftColor} />
       </View>
+
+      {/* push the score to the bottom of the column */}
+      <View style={{ flex: 1 }} />
+      <ScorePill value={leftScore} border={leftColor} />
     </View>
   );
 
@@ -300,6 +320,9 @@ export default function WrestlingFolkstyleOverlay({
         />
         <Circle label="ST" actor={rightActor as any} keyName="stalling" bg={rightColor} />
       </View>
+
+      <View style={{ flex: 1 }} />
+      <ScorePill value={rightScore} border={rightColor} />
     </View>
   );
 
@@ -334,7 +357,7 @@ export default function WrestlingFolkstyleOverlay({
         </TouchableOpacity>
       </View>
 
-      {/* NF chooser popover (centered, clamped to safe area) */}
+      {/* NF chooser */}
       <NFChooser />
 
       <LeftGrid />
@@ -342,6 +365,7 @@ export default function WrestlingFolkstyleOverlay({
     </View>
   );
 }
+
 
 
 
