@@ -8,14 +8,28 @@
     "scheme": "sportapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-video",
+      "ffmpeg-kit-react-native"
+    ],
     "ios": {
+      "bundleIdentifier": "com.mateotome2133.sportapp",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
         "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
         "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
-      },
-      "bundleIdentifier": "com.mateotome2133.sportapp"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -30,19 +44,6 @@
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
-        }
-      ],
-      "expo-video"
-    ],
     "experiments": {
       "typedRoutes": true
     },
@@ -54,3 +55,6 @@
     }
   }
 }
+
+
+

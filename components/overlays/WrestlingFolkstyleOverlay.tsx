@@ -14,6 +14,7 @@ export default function WrestlingFolkstyleOverlay({
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW } = dims;
+  
 
   // ---- Layout paddings (keeps clear of Back + Start/Stop) ----
   const EDGE_L = insets.left + 10;

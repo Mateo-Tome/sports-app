@@ -16,7 +16,7 @@ export type OverlayProps = {
   getCurrentTSec: () => number;
   sport: string;
   style: string;
-
+  isPaused?: boolean;
   // NEW: live running score (from camera)
   score?: { home: number; opponent: number };
 };
