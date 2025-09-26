@@ -1,5 +1,5 @@
 // app/record/camera.tsx
-// Stable camera + overlay + Photos albums + quick-switch athlete chip + live score
+// Stable camera + overlay + Photos albums + quick-switch athlete chip + live score + PAUSE/RESUME
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -139,6 +139,11 @@ export default function CameraScreen() {
   const [score, setScore] = useState<{ home: number; opponent: number }>({ home: 0, opponent: 0 });
   const scoreRef = useRef<{ home: number; opponent: number }>({ home: 0, opponent: 0 });
 
+  // 🟠 soft pause bookkeeping
+  const [isPaused, setIsPaused] = useState(false);
+  const pauseStartedAtRef = useRef<number | null>(null);
+  const totalPausedMsRef = useRef(0);
+
   // init athlete: route param wins; otherwise last chosen
   useEffect(() => {
     (async () => {
@@ -183,6 +188,8 @@ export default function CameraScreen() {
     if (!isFocused && isRecording) {
       try { (cameraRef.current as any)?.stopRecording?.(); } catch {}
       setIsRecording(false);
+      setIsPaused(false);
+      pauseStartedAtRef.current = null;
     }
   }, [isFocused, isRecording]);
 
@@ -209,19 +216,23 @@ export default function CameraScreen() {
   const isFolkstyle =
     sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
 
-  // ---- time helpers ----
-  const getCurrentTSec = () =>
-    Math.max(0, Math.round(((Date.now() - (startMs ?? Date.now())) / 1000)) - 3); // -3s preroll
+  // ---- time helpers (paused-aware) ----
+  const getCurrentTSec = () => {
+    const start = startMs ?? Date.now();
+    const pausedNow = isPaused && pauseStartedAtRef.current ? (Date.now() - pauseStartedAtRef.current) : 0;
+    const effectiveElapsed = (Date.now() - start) - totalPausedMsRef.current - pausedNow;
+    return Math.max(0, Math.round(effectiveElapsed / 1000) - 3); // -3s preroll
+  };
 
   const handleOverlayEvent = (evt: OverlayEvent) => {
-    if (!isRecording) return;
-  
+    if (!isRecording || isPaused) return;
+
     const t = getCurrentTSec();
     const kind = String(evt.key ?? 'unknown');
     const points = Number.isFinite(evt.value) ? Number(evt.value) : undefined;
     const actor: 'home' | 'opponent' | 'neutral' =
       evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
-  
+
     // Update running score
     if (typeof points === 'number' && points > 0) {
       if (actor === 'home') {
@@ -231,7 +242,7 @@ export default function CameraScreen() {
       }
       setScore(scoreRef.current);
     }
-  
+
     // Keep events only in the ref (for sidecar / playback)
     const item: MatchEvent = {
       t,
@@ -243,7 +254,6 @@ export default function CameraScreen() {
     };
     eventsRef.current = [...eventsRef.current, item];
   };
-  
 
   // ---- write sidecar next to saved mp4 ----
   const writeSidecarJson = async (appUri: string) => {
@@ -273,13 +283,19 @@ export default function CameraScreen() {
       const r = await requestMicPerm();
       if (!r?.granted) { Alert.alert('Microphone needed', 'Enable microphone to record audio.'); return; }
     }
-    // start-of-match: reset buffers & timer
+    // start-of-match: reset buffers & timer & pause bookkeeping
     eventsRef.current = [];
     setEvents([]);
     scoreRef.current = { home: 0, opponent: 0 };
     setScore(scoreRef.current);
     setStartMs(Date.now());
+    totalPausedMsRef.current = 0;
+    pauseStartedAtRef.current = null;
+    setIsPaused(false);
     setIsRecording(true);
+
+    const chosen = (athlete || '').trim() || 'Unassigned';
+    try { await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, chosen); } catch {}
 
     const cam: any = cameraRef.current;
     try {
@@ -290,9 +306,7 @@ export default function CameraScreen() {
             const uri = typeof res === 'string' ? res : res?.uri;
             if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
 
-            const chosen = (athlete || '').trim() || 'Unassigned';
             const { appUri, assetId } = await saveToAppStorage(uri, chosen, sportKey);
-
             if (appUri) await writeSidecarJson(appUri);
 
             Alert.alert(
@@ -300,18 +314,19 @@ export default function CameraScreen() {
               `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
             );
             setIsRecording(false);
+            setIsPaused(false);
           },
           onRecordingError: (e: any) => {
             const msg = e instanceof Error ? e.message : String(e);
             Alert.alert('Recording error', msg);
             setIsRecording(false);
+            setIsPaused(false);
           },
         });
       } else if (cam?.recordAsync) {
         cam.recordAsync({ mute: false }).then(async (res: any) => {
           const uri = typeof res === 'string' ? res : res?.uri;
           if (!uri) { Alert.alert('No file created', 'Recording finished without a URI.'); setIsRecording(false); return; }
-          const chosen = (athlete || '').trim() || 'Unassigned';
           const { appUri, assetId } = await saveToAppStorage(uri, chosen, sportKey);
           if (appUri) await writeSidecarJson(appUri);
           Alert.alert(
@@ -319,10 +334,12 @@ export default function CameraScreen() {
             `Athlete: ${chosen}\nSport: ${sportKey}\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}\nFile: ${appUri ?? 'n/a'}`
           );
           setIsRecording(false);
+          setIsPaused(false);
         }).catch((e: any) => {
           const msg = e instanceof Error ? e.message : String(e);
           Alert.alert('Recording error', msg);
           setIsRecording(false);
+          setIsPaused(false);
         });
       } else {
         throw new Error('No recording API found on CameraView');
@@ -331,14 +348,37 @@ export default function CameraScreen() {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Recording error', msg);
       setIsRecording(false);
+      setIsPaused(false);
     }
   };
 
   const handleStop = () => {
     if (!isRecording) return;
+    // finalize any active pause
+    if (isPaused && pauseStartedAtRef.current) {
+      totalPausedMsRef.current += (Date.now() - pauseStartedAtRef.current);
+    }
+    pauseStartedAtRef.current = null;
+    setIsPaused(false);
+
     const cam: any = cameraRef.current;
     try { cam?.stopRecording?.(); } catch {}
     setIsRecording(false);
+  };
+
+  const handlePause = () => {
+    if (!isRecording || isPaused) return;
+    pauseStartedAtRef.current = Date.now();
+    setIsPaused(true);
+  };
+
+  const handleResume = () => {
+    if (!isRecording || !isPaused) return;
+    if (pauseStartedAtRef.current) {
+      totalPausedMsRef.current += (Date.now() - pauseStartedAtRef.current);
+    }
+    pauseStartedAtRef.current = null;
+    setIsPaused(false);
   };
 
   // UI: small badge + score HUD
@@ -354,7 +394,7 @@ export default function CameraScreen() {
       }}
     >
       <Text style={{ color: 'white', fontWeight: '800', fontSize: 13 }} numberOfLines={1} ellipsizeMode="tail">
-        Recording — {athlete || 'Unassigned'}
+        Recording — {athlete || 'Unassigned'} {isRecording && isPaused ? '(Paused)' : ''}
       </Text>
     </View>
   );
@@ -411,7 +451,11 @@ export default function CameraScreen() {
       )}
 
       {showOverlay ? (
-        <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, pointerEvents: 'box-none' as any }}>
+        <View
+          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
+          // Disable all overlay touches while paused (children also disabled)
+          pointerEvents={isPaused ? ('none' as any) : ('box-none' as any)}
+        >
           {isFolkstyle ? (
             <WrestlingFolkstyleOverlay
               isRecording={isRecording}
@@ -426,10 +470,18 @@ export default function CameraScreen() {
               {sportParam === 'plain' ? 'Plain camera (no overlay)' : `No overlay registered for ${sportParam}:${styleParam}`}
             </Text>
           )}
+
+          {isRecording && isPaused && (
+            <View style={{ position: 'absolute', top: insets.top + 12, left: 0, right: 0, alignItems: 'center' }}>
+              <Text style={{ color: 'white', fontWeight: '900', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 }}>
+                Paused
+              </Text>
+            </View>
+          )}
         </View>
       ) : null}
 
-      {/* Start/Stop */}
+      {/* Start / Pause / Resume / Stop */}
       <View
         style={{
           position: 'absolute',
@@ -438,7 +490,7 @@ export default function CameraScreen() {
           right: 0,
           flexDirection: 'row',
           justifyContent: 'center',
-          gap: 16,
+          gap: 12,
         }}
       >
         {!isRecording ? (
@@ -446,12 +498,25 @@ export default function CameraScreen() {
             <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={handleStop} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}>
-            <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
-          </TouchableOpacity>
+          <>
+            {!isPaused ? (
+              <TouchableOpacity onPress={handlePause} style={{ paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white', borderRadius: 999 }}>
+                <Text style={{ color: 'white', fontWeight: '700' }}>Pause</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={handleResume} style={{ paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'white', borderRadius: 999 }}>
+                <Text style={{ color: 'black', fontWeight: '800' }}>Resume</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity onPress={handleStop} style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}>
+              <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
+            </TouchableOpacity>
+          </>
         )}
       </View>
     </View>
   );
 }
+
 

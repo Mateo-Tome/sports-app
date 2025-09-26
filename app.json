@@ -12,9 +12,10 @@
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
-          "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
+        "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
         "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
-      }
+      },
+      "bundleIdentifier": "com.mateotome2133.sportapp"
     },
     "android": {
       "adaptiveIcon": {
