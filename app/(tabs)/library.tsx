@@ -1,13 +1,27 @@
 // app/(tabs)/library.tsx
-// Library: Athletes ➜ Sports ➜ Videos, with outcome/score chips and Playback routing
+// Library: Athletes ➜ Sports ➜ Videos, with outcome/score chips, PIN gold highlight, and Playback routing
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as FileSystem from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Image, Modal, Pressable, RefreshControl, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DIR = FileSystem.documentDirectory + 'videos/';
@@ -37,14 +51,17 @@ type Row = {
   thumbUri?: string | null;
   assetId?: string | undefined;
 
-  // NEW: scoring / outcome surfaced on Library cards
   finalScore?: FinalScore | null;
   homeIsAthlete?: boolean; // default true
-  outcome?: Outcome;       // W/L/T from athlete’s POV
+  outcome?: Outcome;       // W/L/T from athlete’s POV (forced to W on PIN)
   myScore?: number | null;
   oppScore?: number | null;
+
+  // Gold highlight when athlete wins by pin
+  highlightGold?: boolean;
 };
 
+// ---------- small utils ----------
 const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
 const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 const bytesToMB = (b?: number | null) => (b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB');
@@ -80,20 +97,30 @@ async function getOrCreateThumb(videoUri: string, fileName: string) {
   } catch { return null; }
 }
 
-// ---------- sidecar (score/outcome) ----------
+// ---------- sidecar (score/outcome + gold) ----------
+type SidecarEvent = {
+  t: number;
+  points?: number;
+  actor?: 'home' | 'opponent' | 'neutral';
+  key?: string;
+  label?: string;
+  kind?: string;
+  meta?: Record<string, any>;
+};
 type Sidecar = {
-  events?: Array<{ t: number; points?: number; actor?: 'home' | 'opponent' | 'neutral' }>;
+  events?: SidecarEvent[];
   finalScore?: FinalScore;
   homeIsAthlete?: boolean;
 };
 
-// robustly find and parse the sidecar, then derive final score/outcome
+// robustly find and parse the sidecar, then derive final score/outcome and gold
 async function readOutcomeFor(videoUri: string): Promise<{
   finalScore: FinalScore | null;
   homeIsAthlete: boolean;
   outcome: Outcome | null;
   myScore: number | null;
   oppScore: number | null;
+  highlightGold: boolean;
 }> {
   try {
     const lastSlash = videoUri.lastIndexOf('/');
@@ -114,7 +141,7 @@ async function readOutcomeFor(videoUri: string): Promise<{
     if (!sc) {
       try {
         const dir = videoUri.slice(0, lastSlash + 1);
-        // @ts-ignore (Expo API available at runtime)
+        // @ts-ignore
         const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
         const baseName = base.slice(lastSlash + 1);
         const candidate = files.find(f => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
@@ -122,7 +149,7 @@ async function readOutcomeFor(videoUri: string): Promise<{
       } catch {}
     }
 
-    if (!sc) return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null };
+    if (!sc) return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
 
     // compute score if missing
     let finalScore: FinalScore | null = sc.finalScore ?? null;
@@ -141,15 +168,45 @@ async function readOutcomeFor(videoUri: string): Promise<{
     const homeIsAthlete = sc.homeIsAthlete !== false; // default true
     const myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
     const oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
-    const outcome: Outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
 
-    return { finalScore, homeIsAthlete, outcome, myScore, oppScore };
+    // ==== PIN detection (robust across key/label/kind/meta.winBy; also allow "fall") ====
+    const ev = sc.events ?? [];
+    const pinEv = ev.find((e: SidecarEvent) => {
+      const key = String(e?.key ?? '').toLowerCase();
+      const label = String(e?.label ?? '').toLowerCase();
+      const kind = String(e?.kind ?? '').toLowerCase();
+      const winBy = String(e?.meta?.winBy ?? '').toLowerCase();
+      return (
+        key === 'pin' ||
+        kind === 'pin' ||
+        label.includes('pin') ||
+        winBy === 'pin' ||
+        kind === 'fall' || label.includes('fall')
+      );
+    });
+
+    let highlightGold = false;
+    let outcome: Outcome | null;
+
+    if (pinEv && (pinEv.actor === 'home' || pinEv.actor === 'opponent')) {
+      const athletePinned =
+        (homeIsAthlete && pinEv.actor === 'home') ||
+        (!homeIsAthlete && pinEv.actor === 'opponent');
+      highlightGold = !!athletePinned;
+      // force outcome on a pin
+      outcome = athletePinned ? 'W' : 'L';
+    } else {
+      // fall back to points
+      outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+    }
+
+    return { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
   } catch {
-    return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null };
+    return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
   }
 }
 
-// ---------- move video across athletes (kept same) ----------
+// ---------- move video across athletes ----------
 async function retagVideo(input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string }, newAthleteRaw: string) {
   const newAthlete = (newAthleteRaw || '').trim() || 'Unassigned';
   const oldA = (input.oldAthlete || '').trim() || 'Unassigned';
@@ -228,12 +285,15 @@ export default function LibraryScreen() {
         mtime: (info as any)?.modificationTime ? Math.round(((info as any).modificationTime as number) * 1000) : meta.createdAt ?? null,
         thumbUri: await getOrCreateThumb(meta.uri, name),
 
-        // NEW: scores/outcomes from sidecar
+        // scores/outcomes
         finalScore: scoreBits.finalScore,
         homeIsAthlete: scoreBits.homeIsAthlete,
         outcome: scoreBits.outcome ?? undefined,
         myScore: scoreBits.myScore,
         oppScore: scoreBits.oppScore,
+
+        // gold highlight on PIN
+        highlightGold: scoreBits.highlightGold,
       });
     }
     built.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
@@ -248,7 +308,10 @@ export default function LibraryScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onRefresh = useCallback(async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } }, [load]);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await load(); } finally { setRefreshing(false); }
+  }, [load]);
 
   const removeVideo = useCallback(async (row: Row) => {
     try {
@@ -356,52 +419,74 @@ export default function LibraryScreen() {
       <Pressable
         onPress={() => pushPlayback(item.uri)}
         style={{
-          padding: 12,
+          padding: 0,
           marginHorizontal: 16,
           marginVertical: 8,
           borderRadius: 12,
-          borderWidth: 2,
-          borderColor: outcomeColor(item.outcome),
-          backgroundColor: 'rgba(255,255,255,0.06)',
+          overflow: 'hidden',
+          borderWidth: item.highlightGold ? 0 : 2,
+          borderColor: item.highlightGold ? 'transparent' : outcomeColor(item.outcome),
+          backgroundColor: item.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {item.thumbUri ? (
-            <Image source={{ uri: item.thumbUri }} style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} resizeMode="cover" />
-          ) : (
-            <View style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
-            </View>
-          )}
+        {/* Gold gradient background when highlighted */}
+        {item.highlightGold && (
+          <>
+            <LinearGradient
+              colors={['#f7d774', '#d4a017', '#b88912']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            />
+            {/* subtle dark veil to keep white text readable */}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.08)' }} />
+          </>
+        )}
 
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>{item.displayName}</Text>
-              {chip && (
-                <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: `${chip.color}22`, borderWidth: 1, borderColor: `${chip.color}66` }}>
-                  <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
-                </View>
-              )}
-            </View>
+        <View style={{ padding: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {item.thumbUri ? (
+              <Image source={{ uri: item.thumbUri }} style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} resizeMode="cover" />
+            ) : (
+              <View style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+              </View>
+            )}
 
-            <Text style={{ color: 'white', opacity: 0.7, marginTop: 4 }} numberOfLines={1}>{subtitleBits.join(' • ')}</Text>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>{item.displayName}</Text>
+                {chip && (
+                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: `${chip.color}22`, borderWidth: 1, borderColor: `${chip.color}66` }}>
+                    <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
+                  </View>
+                )}
+                {item.highlightGold && (
+                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: '#00000033', borderWidth: 1, borderColor: '#ffffff55' }}>
+                    <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
+                  </View>
+                )}
+              </View>
 
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-              <TouchableOpacity onPress={() => saveToPhotos(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}>
-                <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
-              </TouchableOpacity>
+              <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>{subtitleBits.join(' • ')}</Text>
 
-              <TouchableOpacity onPress={() => pushPlayback(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
-                <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+                <TouchableOpacity onPress={() => saveToPhotos(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}>
+                  <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => removeVideo(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}>
-                <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
-              </TouchableOpacity>
+                <TouchableOpacity onPress={() => pushPlayback(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+                  <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => setAthletePickerOpen(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
-                <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
-              </TouchableOpacity>
+                <TouchableOpacity onPress={() => removeVideo(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}>
+                  <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setAthletePickerOpen(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+                  <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -412,8 +497,21 @@ export default function LibraryScreen() {
   const Segmented = () => (
     <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: insets.top + 4, paddingBottom: 8 }}>
       {(['all', 'athletes', 'sports'] as const).map(k => (
-        <TouchableOpacity key={k} onPress={() => { setView(k); setSelectedAthlete(null); setSelectedSport(null); }} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
-          <Text style={{ color: view === k ? 'black' : 'white', fontWeight: '800' }}>{k === 'all' ? 'All' : k[0].toUpperCase()+k.slice(1)}</Text>
+        <TouchableOpacity
+          key={k}
+          onPress={() => { setView(k); setSelectedAthlete(null); setSelectedSport(null); }}
+          style={{
+            paddingVertical: 8,
+            paddingHorizontal: 12,
+            borderRadius: 999,
+            backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
+            borderWidth: 1,
+            borderColor: 'white'
+          }}
+        >
+          <Text style={{ color: view === k ? 'black' : 'white', fontWeight: '800' }}>
+            {k === 'all' ? 'All' : k[0].toUpperCase()+k.slice(1)}
+          </Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -455,7 +553,7 @@ export default function LibraryScreen() {
             const photoUri = photoFor(name);
             const videos = rowsByAthlete[name];
             const count = videos.length;
-            const last = videos?.[0]?.mtime ? new Date(videos[0].mtime).toLocaleString() : '—';
+            const last = videos?.[0]?.mtime ? new Date(videos[0].mtime!).toLocaleString() : '—';
 
             return (
               <Pressable
@@ -625,6 +723,7 @@ export default function LibraryScreen() {
 
       {/* Note: we removed the inline full-screen player modal; we route to Playback instead */}
       <Modal visible={false} />
+
       {/* Edit Athlete modal */}
       <Modal visible={!!athletePickerOpen} transparent animationType="fade" onRequestClose={() => setAthletePickerOpen(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
@@ -644,7 +743,13 @@ export default function LibraryScreen() {
             <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 12 }} />
 
             <Text style={{ color: 'white', opacity: 0.8, marginBottom: 6 }}>New athlete</Text>
-            <TextInput placeholder="Enter new name" placeholderTextColor="rgba(255,255,255,0.4)" value={newName} onChangeText={setNewName} style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }} />
+            <TextInput
+              placeholder="Enter new name"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              value={newName}
+              onChangeText={setNewName}
+              style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }}
+            />
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
               <TouchableOpacity onPress={() => setAthletePickerOpen(null)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
@@ -671,6 +776,12 @@ export default function LibraryScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({});
+
+
+
+
 
 
 

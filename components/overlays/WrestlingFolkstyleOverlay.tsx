@@ -9,12 +9,11 @@ export default function WrestlingFolkstyleOverlay({
   getCurrentTSec: _getCurrentTSec,
   sport: _sport,
   style: _style,
-  score, // ⬅️ NEW
+  score,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW } = dims;
-  
 
   // ---- Layout paddings (keeps clear of Back + Start/Stop) ----
   const EDGE_L = insets.left + 10;
@@ -39,6 +38,7 @@ export default function WrestlingFolkstyleOverlay({
   // Colors (green = "my kid", red = opponent)
   const GREEN = '#22c55e';
   const RED = '#ef4444';
+  const GOLD = '#d4a017';
 
   // Flip which side is "my kid"
   const [myKidSide, setMyKidSide] = React.useState<'left' | 'right'>('left');
@@ -54,23 +54,30 @@ export default function WrestlingFolkstyleOverlay({
   const leftScore  = leftActor  === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
   const rightScore = rightActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
 
-  // Near-fall chooser state (which side requested it)
+  // Near-fall chooser
   const [nfFor, setNfFor] = React.useState<null | 'left' | 'right'>(null);
+
+  // Stalling/Caution chooser & counters
+  const [scFor, setScFor] = React.useState<null | 'left' | 'right'>(null);
+  const [stallCount, setStallCount] = React.useState<{ left: number; right: number }>({ left: 0, right: 0 });
+  const [cautionCount, setCautionCount] = React.useState<{ left: number; right: number }>({ left: 0, right: 0 });
+
+  // NEW: Pin confirmation
+  const [pinFor, setPinFor] = React.useState<null | 'left' | 'right'>(null);
 
   const fire = (
     actor: 'home' | 'opponent' | 'neutral',
     key: string,
     label: string,
-    value?: number
+    value?: number,
+    meta?: Record<string, any>
   ) => {
     if (!isRecording) return;
-    onEvent({ key, label, actor, value });
+    onEvent({ key, label, actor, value, meta });
   };
 
-  const openNF = (side: 'left' | 'right') => {
-    if (!isRecording) return;
-    setNfFor(side);
-  };
+  const openNF = (side: 'left' | 'right') => { if (!isRecording) return; setNfFor(side); };
+  const openSC = (side: 'left' | 'right') => { if (!isRecording) return; setScFor(side); };
 
   const NFChooserClose = ({ onClose }: { onClose: () => void }) => (
     <TouchableOpacity
@@ -130,16 +137,7 @@ export default function WrestlingFolkstyleOverlay({
     );
 
     return (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          top: 6,
-          left: EDGE_L,
-          right: EDGE_R,
-          alignItems: 'center',
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
         <View
           style={{
             maxWidth: screenW - (EDGE_L + EDGE_R),
@@ -155,14 +153,133 @@ export default function WrestlingFolkstyleOverlay({
             paddingHorizontal: 10,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '800', marginRight: 8 }}>
-            {title}: NF points
-          </Text>
+          <Text style={{ color: 'white', fontWeight: '800', marginRight: 8 }}>{title}: NF points</Text>
           <NFChooserClose onClose={() => setNfFor(null)} />
           <NFSeparator />
           <Chip v={2} />
           <Chip v={3} />
           <Chip v={4} />
+        </View>
+      </View>
+    );
+  };
+
+  // ====== S/C Chooser ======
+  const SCCooser = () => {
+    if (!scFor) return null;
+
+    const offenderSide = scFor;
+    const offenderActor = offenderSide === 'left' ? leftActor : rightActor;
+    const offenderTitle = offenderSide === 'left' ? leftTitle : rightTitle;
+    const offenderColor = offenderSide === 'left' ? leftColor : rightColor;
+    const receiverActor: 'home' | 'opponent' = offenderActor === 'home' ? 'opponent' : 'home';
+
+    const bumpStall = (kind: 'warn' | '+1' | '+2') => {
+      setStallCount((prev) => {
+        const current = prev[offenderSide];
+        let nextBase = current;
+        if (kind === 'warn') nextBase = Math.max(current, 0);
+        if (kind === '+1')  nextBase = Math.max(current, 1);
+        if (kind === '+2')  nextBase = Math.max(current, 3);
+        return { ...prev, [offenderSide]: nextBase + 1 };
+      });
+    };
+    const bumpCaution = (kind: 'warn' | '+1') => {
+      setCautionCount((prev) => {
+        const current = prev[offenderSide];
+        let nextBase = current;
+        if (kind === 'warn') nextBase = Math.max(current, 0);
+        if (kind === '+1')  nextBase = Math.max(current, 2);
+        return { ...prev, [offenderSide]: nextBase + 1 };
+      });
+    };
+
+    const stc = stallCount[offenderSide];
+    const stNext = stc <= 0 ? 'Warn' : stc === 1 || stc === 2 ? '+1' : '+2';
+
+    const cc = cautionCount[offenderSide];
+    const cNext = cc <= 1 ? 'Warn' : '+1';
+
+    const Tag = ({ text }: { text: string }) => (
+      <View style={{ marginLeft: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}>
+        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>Next: {text}</Text>
+      </View>
+    );
+
+    const ChipBtn = ({ label, onPress }: { label: string; onPress: () => void }) => (
+      <TouchableOpacity
+        onPress={() => { onPress(); setScFor(null); }}
+        style={{
+          height: 36, paddingHorizontal: 12, borderRadius: 999,
+          backgroundColor: offenderColor, alignItems: 'center', justifyContent: 'center',
+          marginHorizontal: 6, marginVertical: 4, shadowColor: '#000', shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 }, shadowRadius: 3, elevation: 2,
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
+        <View style={{ maxWidth: screenW - (EDGE_L + EDGE_R), backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>{offenderTitle}: S/C</Text>
+            <NFChooserClose onClose={() => setScFor(null)} />
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+            <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Caution</Text>
+            <Tag text={cNext} />
+            <ChipBtn label="Warn" onPress={() => { bumpCaution('warn'); fire('neutral', 'caution', 'CAUTION WARN', 0, { offender: offenderActor }); }} />
+            <ChipBtn label="+1"   onPress={() => { bumpCaution('+1');  fire(receiverActor, 'caution', 'CAUTION +1', 1, { offender: offenderActor }); }} />
+          </View>
+
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+            <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Stalling</Text>
+            <Tag text={stNext} />
+            <ChipBtn label="Warn" onPress={() => { bumpStall('warn'); fire('neutral', 'stalling', 'ST WARN', 0, { offender: offenderActor }); }} />
+            <ChipBtn label="+1"   onPress={() => { bumpStall('+1');  fire(receiverActor, 'stalling', 'ST +1', 1, { offender: offenderActor }); }} />
+            <ChipBtn label="+2"   onPress={() => { bumpStall('+2');  fire(receiverActor, 'stalling', 'ST +2', 2, { offender: offenderActor, note: 'Stoppage/choice' }); }} />
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // ====== PIN Confirm ======
+  const PinConfirm = () => {
+    if (!pinFor) return null;
+    const actor = pinFor === 'left' ? leftActor : rightActor;
+    const title = pinFor === 'left' ? leftTitle : rightTitle;
+    const color = pinFor === 'left' ? leftColor : rightColor;
+
+    return (
+      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
+        <View style={{ maxWidth: screenW - (EDGE_L + EDGE_R), backgroundColor: 'rgba(0,0,0,0.75)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 16, paddingVertical: 12, paddingHorizontal: 14 }}>
+          <Text style={{ color: 'white', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
+            Confirm PIN for {title}?
+          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
+            <TouchableOpacity
+              onPress={() => setPinFor(null)}
+              style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}
+            >
+              <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                // Emit a PIN event; value 0 (no points), but marks a definitive win
+                fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', myKidSide });
+                setPinFor(null);
+              }}
+              style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}
+            >
+              <Text style={{ color: '#111', fontWeight: '900' }}>Confirm</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -223,103 +340,42 @@ export default function WrestlingFolkstyleOverlay({
   );
 
   const LeftGrid = () => (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: EDGE_L,
-        top: 0,
-        bottom: 0,
-        alignItems: 'flex-start',
-        width: COL_W,
-      }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, alignItems: 'flex-start', width: COL_W }}>
       {/* Title pill */}
-      <Text
-        style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: leftColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
-        }}
-      >
+      <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: leftColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
         {leftTitle}
       </Text>
 
-      {/* Grid (T3 / E1 / R2 / NF / ST) */}
+      {/* Grid (T3 / E1 / R2 / NF / S/C / PIN) */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle label="T3" actor={leftActor as any} keyName="takedown" value={3} bg={leftColor} />
         <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
         <Circle label="R2" actor={leftActor as any} keyName="reversal" value={2} bg={leftColor} />
-        <Circle
-          label="NF"
-          actor={leftActor as any}
-          keyName="nearfall"
-          bg={leftColor}
-          onPressOverride={() => openNF('left')}
-        />
-        <Circle label="ST" actor={leftActor as any} keyName="stalling" bg={leftColor} />
+        <Circle label="NF" actor={leftActor as any} keyName="nearfall" bg={leftColor} onPressOverride={() => openNF('left')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => openSC('left')} />
+        <Circle label="PIN" actor={'neutral'} keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
       </View>
 
-      {/* push the score to the bottom of the column */}
       <View style={{ flex: 1 }} />
       <ScorePill value={leftScore} border={leftColor} />
     </View>
   );
 
   const RightGrid = () => (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        right: EDGE_R,
-        top: 0,
-        bottom: 0,
-        alignItems: 'flex-end',
-        width: COL_W,
-      }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, alignItems: 'flex-end', width: COL_W }}>
       {/* Title pill */}
-      <Text
-        style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: rightColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
-        }}
-      >
+      <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: rightColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
         {rightTitle}
       </Text>
 
       {/* mirrored grid */}
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          width: COL_W,
-          gap: GAP,
-          justifyContent: 'flex-end',
-        }}
-      >
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
         <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
-        <Circle
-          label="NF"
-          actor={rightActor as any}
-          keyName="nearfall"
-          bg={rightColor}
-          onPressOverride={() => openNF('right')}
-        />
-        <Circle label="ST" actor={rightActor as any} keyName="stalling" bg={rightColor} />
+        <Circle label="NF" actor={rightActor as any} keyName="nearfall" bg={rightColor} onPressOverride={() => openNF('right')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => openSC('right')} />
+        <Circle label="PIN" actor={'neutral'} keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
       </View>
 
       <View style={{ flex: 1 }} />
@@ -328,44 +384,30 @@ export default function WrestlingFolkstyleOverlay({
   );
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
-    >
-      {/* Flip sides control (centered above columns) */}
-      <View
-        style={{
-          position: 'absolute',
-          top: -36,
-          left: 0,
-          right: 0,
-          alignItems: 'center',
-        }}
-        pointerEvents="box-none"
-      >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
+      {/* Flip sides control */}
+      <View style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
         <TouchableOpacity
           onPress={() => setMyKidSide((s) => (s === 'left' ? 'right' : 'left'))}
-          style={{
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderRadius: 999,
-            backgroundColor: 'rgba(0,0,0,0.55)',
-          }}
+          style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
         >
-          <Text style={{ color: 'white', fontWeight: '700' }}>
-            Flip Sides (My Kid: {myKidSide.toUpperCase()})
-          </Text>
+          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Sides (My Kid: {myKidSide.toUpperCase()})</Text>
         </TouchableOpacity>
       </View>
 
-      {/* NF chooser */}
+      {/* Choosers */}
       <NFChooser />
+      <SCCooser />
+      <PinConfirm />
 
       <LeftGrid />
       <RightGrid />
     </View>
   );
 }
+
+
+
 
 
 

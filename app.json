@@ -19,8 +19,7 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-video",
-      "ffmpeg-kit-react-native"
+      "expo-video"
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
@@ -55,6 +54,7 @@
     }
   }
 }
+
 
 
 
