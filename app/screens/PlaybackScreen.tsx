@@ -3,13 +3,7 @@ import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Dimensions,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { Dimensions, Pressable, ScrollView, Text, View } from 'react-native';
 import {
   GestureHandlerRootView,
   PanGestureHandler,
@@ -55,6 +49,8 @@ const fmt = (sec: number) => {
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
+
+// broader mapping so caution/stall look consistent
 const abbrKind = (k?: string) => {
   if (!k) return 'EV';
   switch ((k || '').toLowerCase()) {
@@ -62,10 +58,15 @@ const abbrKind = (k?: string) => {
     case 'escape':    return 'E';
     case 'reversal':  return 'R';
     case 'nearfall':  return 'NF';
+    case 'stall':
     case 'stalling':  return 'ST';
+    case 'caution':   return 'C';
+    case 'penalty':   return 'P';
+    case 'warning':   return 'W';
     default:          return k.slice(0, 2).toUpperCase();
   }
 };
+
 function hexToRgba(hex: string, alpha: number) {
   const clean = hex.replace('#', '');
   const r = parseInt(clean.slice(0, 2), 16);
@@ -74,7 +75,68 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/* ==================== bottom event belt (fixed; pills don’t shrink) ==================== */
+/* ===== normalize actor so ST/CAUTION don't end up neutral ===== */
+const PENALTYISH = new Set(['stall', 'stalling', 'caution', 'penalty', 'warning']);
+
+function normSideToken(v: any, homeIsAthlete: boolean): 'home'|'opponent'|null {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+  if (['home', 'h'].includes(s)) return 'home';
+  if (['opponent', 'opp', 'o'].includes(s)) return 'opponent';
+  if (['athlete', 'me', 'us', 'our'].includes(s)) return homeIsAthlete ? 'home' : 'opponent';
+  if (['them', 'their', 'away', 'visitor'].includes(s)) return homeIsAthlete ? 'opponent' : 'home';
+  if (['green'].includes(s)) return 'home';
+  if (['red'].includes(s)) return 'opponent';
+  return null;
+}
+
+function inferActor(e: EventRow, homeIsAthlete: boolean): 'home'|'opponent'|'neutral' {
+  if (e.actor === 'home' || e.actor === 'opponent') return e.actor;
+
+  const kind = String(e.kind || '').toLowerCase();
+  const penaltyish = PENALTYISH.has(kind);
+  const m = e.meta ?? {};
+
+  // explicit "awarded to" fields — scorer/points receiver
+  const to =
+    normSideToken(m.to, homeIsAthlete) ??
+    normSideToken(m.toSide, homeIsAthlete) ??
+    normSideToken(m.scorer, homeIsAthlete) ??
+    normSideToken(m.awardedTo, homeIsAthlete) ??
+    normSideToken(m.pointTo, homeIsAthlete) ??
+    normSideToken(m.benefit, homeIsAthlete) ??
+    null;
+  if (to) return to;
+
+  // if called AGAINST X, award goes to the other side
+  const against =
+    normSideToken(m.against, homeIsAthlete) ??
+    normSideToken(m.on, homeIsAthlete) ??
+    normSideToken(m.calledOn, homeIsAthlete) ??
+    normSideToken(m.penalized, homeIsAthlete) ??
+    normSideToken(m.who, homeIsAthlete) ??
+    normSideToken(m.side, homeIsAthlete) ??
+    null;
+  if (against === 'home') return 'opponent';
+  if (against === 'opponent') return 'home';
+
+  // if we have points and it's a penalty-ish event, give pill to the side who *received* the point.
+  if (penaltyish && typeof e.points === 'number' && e.points > 0) {
+    // no meta? assume points went to "athlete"
+    return homeIsAthlete ? 'home' : 'opponent';
+  }
+
+  // LAST resort — never leave stalling/caution neutral
+  if (penaltyish) return homeIsAthlete ? 'home' : 'opponent';
+
+  return 'neutral';
+}
+
+function normalizeEvents(evts: EventRow[], homeIsAthlete: boolean): EventRow[] {
+  return evts.map(e => ({ ...e, actor: inferActor(e, homeIsAthlete) }));
+}
+
+/* ==================== bottom event belt (anti-overlap, 2 lanes) ==================== */
 function EventBelt({
   duration,
   current,
@@ -92,12 +154,47 @@ function EventBelt({
 
   const PILL_W = 64;
   const PILL_H = 28;
-  const PX_PER_SEC = 10; // time → x mapping for belt
+  const PX_PER_SEC = 10; // time → x mapping
+  const MIN_GAP = 8;     // strictly no touching
 
-  const ordered = useMemo(() => [...events].sort((a, b) => a.t - b.t), [events]);
-  const isPast = (t: number) => t <= current;
-  const maxTime = Math.max(duration || 0, ordered.length ? ordered[ordered.length - 1].t : 0);
-  const contentW = Math.max(screenW, maxTime * PX_PER_SEC + 24);
+  // only 2 lanes: home (top) and opponent (bottom)
+  const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
+
+  const colorFor = (actor?: string) => (actor === 'home' ? GREEN : RED);
+
+  // pre-compute layout and push pills forward within each lane to avoid overlap
+  const layout = useMemo(() => {
+    // force any "neutral" items onto opponent lane to keep exactly two rows (optional choice)
+    const twoLane = events.map(e => (e.actor === 'home' || e.actor === 'opponent') ? e : { ...e, actor: 'opponent' as const });
+
+    // stable order by time, then by original index (keep "first pressed first")
+    const indexed = twoLane.map((e, i) => ({ e, i }));
+    indexed.sort((a, b) => (a.e.t - b.e.t) || (a.i - b.i));
+
+    const lastLeft: Record<'home'|'opponent', number> = { home: -Infinity, opponent: -Infinity };
+    const items: Array<{ e: EventRow; x: number; y: number; c: string }> = [];
+
+    for (const { e } of indexed) {
+      const lane = (e.actor === 'home' ? 'home' : 'opponent') as 'home'|'opponent';
+      const desiredX = e.t * PX_PER_SEC;
+      const desiredLeft = desiredX - PILL_W / 2;
+
+      const prevLeft = lastLeft[lane];
+      const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP);
+      lastLeft[lane] = placedLeft;
+
+      items.push({
+        e,
+        x: placedLeft + PILL_W / 2,
+        y: rowY(lane),
+        c: colorFor(lane),
+      });
+    }
+
+    const maxCenter = items.length ? Math.max(...items.map(it => it.x)) : 0;
+    const contentW = Math.max(screenW, maxCenter + PILL_W / 2 + 24);
+    return { items, contentW };
+  }, [events, screenW]);
 
   const scrollRef = useRef<ScrollView>(null);
   const userScrolling = useRef(false);
@@ -115,12 +212,6 @@ function EventBelt({
     }
   }, [current, duration, screenW]);
 
-  const colorFor = (actor?: string) =>
-    actor === 'home' ? GREEN : actor === 'opponent' ? RED : GREY;
-
-  const rowY = (actor?: string) =>
-    actor === 'home' ? 10 : actor === 'opponent' ? 40 : 25;
-
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: bottomInset + 4 }}>
       <ScrollView
@@ -131,10 +222,10 @@ function EventBelt({
         onScrollEndDrag={() => (userScrolling.current = false)}
         onMomentumScrollBegin={() => (userScrolling.current = true)}
         onMomentumScrollEnd={() => (userScrolling.current = false)}
-        contentContainerStyle={{ height: BELT_H, paddingHorizontal: 8, width: contentW }}
+        contentContainerStyle={{ height: BELT_H, paddingHorizontal: 8, width: layout.contentW }}
       >
-        <View style={{ width: contentW, height: BELT_H }}>
-          {/* visual reference track */}
+        <View style={{ width: layout.contentW, height: BELT_H }}>
+          {/* center reference track */}
           <View
             style={{
               position: 'absolute',
@@ -146,38 +237,34 @@ function EventBelt({
               backgroundColor: 'rgba(255,255,255,0.22)',
             }}
           />
+
           {/* pills */}
-          {ordered.map((e, i) => {
-            const x = e.t * PX_PER_SEC;
-            const y = rowY(e.actor);
-            const c = colorFor(e.actor);
-            const label = `${abbrKind(e.kind)}${typeof e.points === 'number' && e.points > 0 ? `+${e.points}` : ''}`;
-            const bg = hexToRgba(c, 0.75);
-            const opacity = isPast(e.t) ? 0.75 : 1;
+          {layout.items.map((it, i) => {
+            const isPassed = current >= it.e.t; // fully opaque until passed
             return (
               <Pressable
-                key={`${e.t}-${i}`}
-                onPress={() => onSeek(e.t)}
+                key={`${it.e.t}-${i}`}
+                onPress={() => onSeek(it.e.t)}
                 style={{
                   position: 'absolute',
-                  left: x - PILL_W / 2,
-                  top: y,
+                  left: it.x - PILL_W / 2,
+                  top: it.y,
                   width: PILL_W,
                   height: PILL_H,
                   borderRadius: 999,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: bg,
+                  backgroundColor: it.c,
                   borderWidth: 1,
-                  borderColor: c,
-                  opacity,
+                  borderColor: it.c,
+                  opacity: isPassed ? 0.45 : 1,
                 }}
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
-                  {label}
+                  {`${abbrKind(it.e.kind)}${typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''}`}
                 </Text>
-                <Text style={{ color: 'white', opacity: 0.85, fontSize: 9, marginTop: 1 }}>
-                  {fmt(e.t)}
+                <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>
+                  {fmt(it.e.t)}
                 </Text>
               </Pressable>
             );
@@ -201,7 +288,7 @@ function TopScrubber({
   duration: number;
   onSeek: (sec: number) => void;
   insets: { top: number; right: number; bottom: number; left: number };
-  visible: boolean;               // chromeVisible
+  visible: boolean;
   onInteracting?: (active: boolean) => void;
 }) {
   const screenW = Dimensions.get('window').width;
@@ -209,13 +296,10 @@ function TopScrubber({
   const MAX_W = 520;
   const width = Math.min(MAX_W, screenW - insets.left - insets.right - H_MARG * 2);
 
-  // below back/toggle/outcome row
   const TOP = insets.top + 86;
-
   const TRACK_H = 8;
   const THUMB_D = 28;
 
-  const [dragging, setDragging] = useState(false);
   const [localSec, setLocalSec] = useState<number | null>(null);
   const [bubble, setBubble] = useState<{ x: number; t: number } | null>(null);
 
@@ -251,9 +335,8 @@ function TopScrubber({
     }
   }, [flushSeek]);
 
-  const begin = () => { setDragging(true); onInteracting?.(true); };
+  const begin = () => { onInteracting?.(true); };
   const end = () => {
-    setDragging(false);
     onInteracting?.(false);
     setTimeout(() => setBubble(null), 300);
     if (rafRef.current == null && pendingSecRef.current != null) flushSeek();
@@ -280,7 +363,6 @@ function TopScrubber({
 
   return (
     <View
-      // keep touchable even when faded
       pointerEvents="auto"
       style={{
         position: 'absolute',
@@ -296,26 +378,15 @@ function TopScrubber({
         onGestureEvent={onGestureEvent}
         onHandlerStateChange={onStateChange}
         hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-        activeOffsetX={[-3, 3]}   // start only on horizontal movement
+        activeOffsetX={[-3, 3]}
       >
         <View
           onLayout={(e) => {
             layoutWRef.current = Math.max(1, e.nativeEvent.layout.width);
           }}
-          style={{
-            height: 48, // comfy hit target
-            justifyContent: 'center',
-          }}
+          style={{ height: 48, justifyContent: 'center' }}
         >
-          {/* track */}
-          <View
-            style={{
-              height: TRACK_H,
-              borderRadius: TRACK_H / 2,
-              backgroundColor: 'rgba(255,255,255,0.22)',
-            }}
-          />
-          {/* progress */}
+          <View style={{ height: TRACK_H, borderRadius: TRACK_H / 2, backgroundColor: 'rgba(255,255,255,0.22)' }} />
           <View
             style={{
               position: 'absolute',
@@ -326,7 +397,6 @@ function TopScrubber({
               backgroundColor: 'rgba(255,255,255,0.9)',
             }}
           />
-          {/* thumb */}
           <View
             style={{
               position: 'absolute',
@@ -344,7 +414,6 @@ function TopScrubber({
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>↔︎</Text>
           </View>
 
-          {/* time bubble while dragging */}
           {bubble && (
             <View
               pointerEvents="none"
@@ -373,15 +442,20 @@ function TopScrubber({
 export default function PlaybackScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { videoPath: rawVideoPath } = useLocalSearchParams();
+
+  // params
+  const { videoPath: rawVideoPath, athlete: athleteParam } = useLocalSearchParams();
   const videoPath = Array.isArray(rawVideoPath) ? rawVideoPath[0] : (rawVideoPath || '');
+
+  // athlete display name (param wins; sidecar fallback)
+  const [athleteName, setAthleteName] = useState<string>('Athlete');
+  const athleteParamStr = typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
+  const displayAthlete = (athleteParamStr?.trim() || athleteName);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [debugMsg, setDebugMsg] = useState<string>('');
-  const [sidecarPath, setSidecarPath] = useState<string>('');
   const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | null>(null);
   const [homeIsAthlete, setHomeIsAthlete] = useState<boolean>(true);
-  const [athleteName, setAthleteName] = useState<string>('Athlete');
 
   const [overlayOn, setOverlayOn] = useState(true);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -507,18 +581,20 @@ export default function PlaybackScreen() {
       if (!parsed) parsed = await tryDirectorySearch();
 
       if (!parsed) {
-        setSidecarPath(guessSidecar);
         setEvents([]);
         setFinalScore(null);
         setDebugMsg(`No sidecar found. Looked for:\n${guessSidecar}`);
         return;
       }
 
-      setSidecarPath(guessSidecar);
+      const hiA = parsed.homeIsAthlete !== false; // default true
+      setHomeIsAthlete(hiA);
       setAthleteName(parsed.athlete?.trim() || 'Athlete');
-      setHomeIsAthlete(parsed.homeIsAthlete !== false); // default true
-      const evts = Array.isArray(parsed.events) ? parsed.events : [];
-      const ordered = [...evts].sort((a, b) => a.t - b.t);
+
+      // normalize so penalty events go to the correct lane (and never neutral)
+      const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
+      const normalized = normalizeEvents(rawEvts, hiA);
+      const ordered = [...normalized].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
       setEvents(withScores);
 
@@ -612,7 +688,6 @@ export default function PlaybackScreen() {
     }
   };
 
-  // keep the tap zones well below the scrubber so they never intercept it
   const SCRUB_RESERVED_TOP = insets.top + 140;
   const tapZoneBottomGap = (overlayOn ? BELT_H : 0) + insets.bottom;
 
@@ -729,7 +804,7 @@ export default function PlaybackScreen() {
         {/* LIVE score — left (athlete) / right (opponent) */}
         <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 50, left: 8, right: 8 }}>
           <View style={{ position: 'absolute', left: 0, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: hexToRgba(GREEN, 0.22), borderWidth: 1, borderColor: hexToRgba(GREEN, 0.4) }}>
-            <Text style={{ color: 'white', fontWeight: '900' }}>{athleteName} • {myScore}</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>{displayAthlete} • {myScore}</Text>
           </View>
           <View style={{ position: 'absolute', right: 0, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: hexToRgba(RED, 0.22), borderWidth: 1, borderColor: hexToRgba(RED, 0.4) }}>
             <Text style={{ color: 'white', fontWeight: '900' }}>Opponent • {oppScore}</Text>
@@ -784,4 +859,8 @@ export default function PlaybackScreen() {
     </GestureHandlerRootView>
   );
 }
+
+
+
+
 
