@@ -1,7 +1,69 @@
 import React from 'react';
-import { Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Animated, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayProps } from './types';
+
+/**
+ * Tiny visual confirmation toast (no haptics).
+ * Fades in/out automatically, then calls onDone to clear itself.
+ */
+function FlashToast({
+  text,
+  tint,
+  top,
+  center = true,
+  onDone,
+}: {
+  text: string;
+  tint: string;   // border color
+  top: number;    // absolute top offset within the overlay container
+  center?: boolean;
+  onDone?: () => void;
+}) {
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  const translateY = React.useRef(new Animated.Value(6)).current;
+
+  React.useEffect(() => {
+    const animIn = Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 120, useNativeDriver: true }),
+    ]);
+    const animOut = Animated.parallel([
+      Animated.timing(opacity, { toValue: 0, duration: 150, delay: 750, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: -6, duration: 150, delay: 750, useNativeDriver: true }),
+    ]);
+
+    animIn.start(() => {
+      animOut.start(({ finished }) => {
+        if (finished) onDone?.();
+      });
+    });
+  }, [opacity, translateY, onDone]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top,
+        left: center ? undefined : 12,
+        right: center ? undefined : 12,
+        alignSelf: center ? 'center' : 'auto',
+        opacity,
+        transform: [{ translateY }],
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderWidth: 1,
+        borderColor: tint,
+        zIndex: 100,
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '900' }}>{text}</Text>
+    </Animated.View>
+  );
+}
 
 export default function WrestlingFolkstyleOverlay({
   isRecording,
@@ -13,7 +75,8 @@ export default function WrestlingFolkstyleOverlay({
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
-  const { width: screenW } = dims;
+  const { width: screenW, height: screenH } = dims;
+  const isPortrait = screenH >= screenW;
 
   // ---- Layout paddings (keeps clear of Back + Start/Stop) ----
   const EDGE_L = insets.left + 10;
@@ -62,8 +125,15 @@ export default function WrestlingFolkstyleOverlay({
   const [stallCount, setStallCount] = React.useState<{ left: number; right: number }>({ left: 0, right: 0 });
   const [cautionCount, setCautionCount] = React.useState<{ left: number; right: number }>({ left: 0, right: 0 });
 
-  // NEW: Pin confirmation
+  // PIN confirmation
   const [pinFor, setPinFor] = React.useState<null | 'left' | 'right'>(null);
+
+  // Visual confirmation toast
+  const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
+  const showToast = (text: string, tint: string) => setToast({ text, tint });
+
+  // Where the choosers appear: push further down in portrait so they’re not under the first row.
+  const CHOOSER_TOP = isPortrait ? 140 : 6;
 
   const fire = (
     actor: 'home' | 'opponent' | 'neutral',
@@ -116,20 +186,14 @@ export default function WrestlingFolkstyleOverlay({
         onPress={() => {
           fire(actor as any, 'nearfall', `NF${v}`, v);
           setNfFor(null);
+          // show confirmation ONLY after picking a value
+          showToast(`${title}: NF${v}`, color);
         }}
         style={{
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: color,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginHorizontal: 6,
-          shadowColor: '#000',
-          shadowOpacity: 0.25,
-          shadowOffset: { width: 0, height: 2 },
-          shadowRadius: 3,
-          elevation: 2,
+          width: 40, height: 40, borderRadius: 20,
+          backgroundColor: color, alignItems: 'center', justifyContent: 'center',
+          marginHorizontal: 6, shadowColor: '#000', shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 }, shadowRadius: 3, elevation: 2,
         }}
       >
         <Text style={{ color: 'white', fontWeight: '900' }}>{v}</Text>
@@ -137,23 +201,20 @@ export default function WrestlingFolkstyleOverlay({
     );
 
     return (
-      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: CHOOSER_TOP, left: EDGE_L, right: EDGE_R, alignItems: 'center', zIndex: 50 }}
+      >
         <View
           style={{
             maxWidth: screenW - (EDGE_L + EDGE_R),
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(0,0,0,0.65)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.25)',
-            borderRadius: 999,
-            paddingVertical: 6,
-            paddingHorizontal: 10,
+            flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.70)',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+            borderRadius: 16, paddingVertical: 8, paddingHorizontal: 10,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '800', marginRight: 8 }}>{title}: NF points</Text>
+          <Text style={{ color: 'white', fontWeight: '900', marginRight: 8 }}>{title}: NF points</Text>
           <NFChooserClose onClose={() => setNfFor(null)} />
           <NFSeparator />
           <Chip v={2} />
@@ -206,9 +267,9 @@ export default function WrestlingFolkstyleOverlay({
       </View>
     );
 
-    const ChipBtn = ({ label, onPress }: { label: string; onPress: () => void }) => (
+    const ChipBtn = ({ label, onPress, toastText }: { label: string; onPress: () => void; toastText: string }) => (
       <TouchableOpacity
-        onPress={() => { onPress(); setScFor(null); }}
+        onPress={() => { onPress(); setScFor(null); showToast(`${offenderTitle}: ${toastText}`, offenderColor); }}
         style={{
           height: 36, paddingHorizontal: 12, borderRadius: 999,
           backgroundColor: offenderColor, alignItems: 'center', justifyContent: 'center',
@@ -221,8 +282,11 @@ export default function WrestlingFolkstyleOverlay({
     );
 
     return (
-      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
-        <View style={{ maxWidth: screenW - (EDGE_L + EDGE_R), backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: CHOOSER_TOP, left: EDGE_L, right: EDGE_R, alignItems: 'center', zIndex: 50 }}
+      >
+        <View style={{ maxWidth: screenW - (EDGE_L + EDGE_R), backgroundColor: 'rgba(0,0,0,0.70)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
             <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>{offenderTitle}: S/C</Text>
             <NFChooserClose onClose={() => setScFor(null)} />
@@ -231,8 +295,16 @@ export default function WrestlingFolkstyleOverlay({
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
             <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Caution</Text>
             <Tag text={cNext} />
-            <ChipBtn label="Warn" onPress={() => { bumpCaution('warn'); fire('neutral', 'caution', 'CAUTION WARN', 0, { offender: offenderActor }); }} />
-            <ChipBtn label="+1"   onPress={() => { bumpCaution('+1');  fire(receiverActor, 'caution', 'CAUTION +1', 1, { offender: offenderActor }); }} />
+            <ChipBtn
+              label="Warn"
+              toastText="Caution Warn"
+              onPress={() => { bumpCaution('warn'); fire('neutral', 'caution', 'CAUTION WARN', 0, { offender: offenderActor }); }}
+            />
+            <ChipBtn
+              label="+1"
+              toastText="Caution +1"
+              onPress={() => { bumpCaution('+1');  fire(receiverActor, 'caution', 'CAUTION +1', 1, { offender: offenderActor }); }}
+            />
           </View>
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
@@ -240,9 +312,21 @@ export default function WrestlingFolkstyleOverlay({
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
             <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Stalling</Text>
             <Tag text={stNext} />
-            <ChipBtn label="Warn" onPress={() => { bumpStall('warn'); fire('neutral', 'stalling', 'ST WARN', 0, { offender: offenderActor }); }} />
-            <ChipBtn label="+1"   onPress={() => { bumpStall('+1');  fire(receiverActor, 'stalling', 'ST +1', 1, { offender: offenderActor }); }} />
-            <ChipBtn label="+2"   onPress={() => { bumpStall('+2');  fire(receiverActor, 'stalling', 'ST +2', 2, { offender: offenderActor, note: 'Stoppage/choice' }); }} />
+            <ChipBtn
+              label="Warn"
+              toastText="Stall Warn"
+              onPress={() => { bumpStall('warn'); fire('neutral', 'stalling', 'ST WARN', 0, { offender: offenderActor }); }}
+            />
+            <ChipBtn
+              label="+1"
+              toastText="Stall +1"
+              onPress={() => { bumpStall('+1');  fire(receiverActor, 'stalling', 'ST +1', 1, { offender: offenderActor }); }}
+            />
+            <ChipBtn
+              label="+2"
+              toastText="Stall +2"
+              onPress={() => { bumpStall('+2');  fire(receiverActor, 'stalling', 'ST +2', 2, { offender: offenderActor, note: 'Stoppage/choice' }); }}
+            />
           </View>
         </View>
       </View>
@@ -257,7 +341,10 @@ export default function WrestlingFolkstyleOverlay({
     const color = pinFor === 'left' ? leftColor : rightColor;
 
     return (
-      <View pointerEvents="box-none" style={{ position: 'absolute', top: 6, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}>
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: CHOOSER_TOP, left: EDGE_L, right: EDGE_R, alignItems: 'center', zIndex: 50 }}
+      >
         <View style={{ maxWidth: screenW - (EDGE_L + EDGE_R), backgroundColor: 'rgba(0,0,0,0.75)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 16, paddingVertical: 12, paddingHorizontal: 14 }}>
           <Text style={{ color: 'white', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
             Confirm PIN for {title}?
@@ -271,9 +358,9 @@ export default function WrestlingFolkstyleOverlay({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
-                // Emit a PIN event; value 0 (no points), but marks a definitive win
                 fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', myKidSide });
                 setPinFor(null);
+                showToast(`${title}: PIN`, GOLD);
               }}
               style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}
             >
@@ -302,20 +389,23 @@ export default function WrestlingFolkstyleOverlay({
   }) => (
     <TouchableOpacity
       disabled={!isRecording}
-      onPress={() => (onPressOverride ? onPressOverride() : fire(actor, keyName, label, value))}
+      onPress={() => {
+        if (!isRecording) return;
+        if (onPressOverride) {
+          onPressOverride();
+        } else {
+          fire(actor, keyName, label, value);
+          // confirmation for simple, direct-scoring buttons only
+          if (actor === 'home') showToast(`My Kid: ${label}`, bg);
+          else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
+          else showToast(label, bg);
+        }
+      }}
       style={{
-        width: SIZE,
-        height: SIZE,
-        borderRadius: SIZE / 2,
-        backgroundColor: bg,
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: SIZE, height: SIZE, borderRadius: SIZE / 2, backgroundColor: bg,
+        alignItems: 'center', justifyContent: 'center',
         opacity: isRecording ? 1 : 0.55,
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3,
-        elevation: 2,
+        shadowColor: '#000', shadowOpacity: 0.25, shadowOffset: { width: 0, height: 2 }, shadowRadius: 3, elevation: 2,
       }}
     >
       <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
@@ -341,7 +431,6 @@ export default function WrestlingFolkstyleOverlay({
 
   const LeftGrid = () => (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, alignItems: 'flex-start', width: COL_W }}>
-      {/* Title pill */}
       <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: leftColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
         {leftTitle}
       </Text>
@@ -363,12 +452,10 @@ export default function WrestlingFolkstyleOverlay({
 
   const RightGrid = () => (
     <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, alignItems: 'flex-end', width: COL_W }}>
-      {/* Title pill */}
       <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: rightColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
         {rightTitle}
       </Text>
 
-      {/* mirrored grid */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
@@ -400,21 +487,22 @@ export default function WrestlingFolkstyleOverlay({
       <SCCooser />
       <PinConfirm />
 
+      {/* Visual confirmation (centered near top of the overlay container) */}
+      {toast ? (
+        <FlashToast
+          text={toast.text}
+          tint={toast.tint}
+          top={isPortrait ? 80 : 40}
+          center
+          onDone={() => setToast(null)}
+        />
+      ) : null}
+
       <LeftGrid />
       <RightGrid />
     </View>
   );
 }
-
-
-
-
-
-
-
-
-
-
 
 
 

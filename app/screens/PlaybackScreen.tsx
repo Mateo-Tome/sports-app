@@ -1,4 +1,3 @@
-// app/screens/PlaybackScreen.tsx
 import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -13,20 +12,27 @@ import {
 } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+// Overlay used in Edit/Add mode
+import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
+import type { OverlayEvent } from '../../components/overlays/types';
+
 /* === colors === */
 const GREEN = '#16a34a';
 const RED   = '#dc2626';
 const GREY  = '#9ca3af';
 
-const SKIP_SEC = 10;        // double-tap skip
+const SKIP_SEC = 5;         // double-tap skip (5s per your request)
 const BELT_H   = 76;        // event belt height
 
 /* ==================== types ==================== */
+type Actor = 'home' | 'opponent' | 'neutral';
+
 type EventRow = {
+  _id?: string; // local id for edits
   t: number;
   kind: string;
   points?: number;
-  actor?: 'home' | 'opponent' | 'neutral';
+  actor?: Actor;
   meta?: any;
   scoreAfter?: { home: number; opponent: number };
 };
@@ -37,7 +43,7 @@ type Sidecar = {
   style?: string;
   createdAt?: number;
   events?: EventRow[];
-  finalScore?: { home: number; opponent: number };
+  finalScore?: { home: number; opponent: number }; // keep defined/undefined (not null)
   homeIsAthlete?: boolean;
   appVersion?: number;
 };
@@ -50,7 +56,6 @@ const fmt = (sec: number) => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
-// broader mapping so caution/stall look consistent
 const abbrKind = (k?: string) => {
   if (!k) return 'EV';
   switch ((k || '').toLowerCase()) {
@@ -63,6 +68,7 @@ const abbrKind = (k?: string) => {
     case 'caution':   return 'C';
     case 'penalty':   return 'P';
     case 'warning':   return 'W';
+    case 'pin':       return 'PIN';
     default:          return k.slice(0, 2).toUpperCase();
   }
 };
@@ -75,7 +81,6 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/* ===== normalize actor so ST/CAUTION don't end up neutral ===== */
 const PENALTYISH = new Set(['stall', 'stalling', 'caution', 'penalty', 'warning']);
 
 function normSideToken(v: any, homeIsAthlete: boolean): 'home'|'opponent'|null {
@@ -90,14 +95,13 @@ function normSideToken(v: any, homeIsAthlete: boolean): 'home'|'opponent'|null {
   return null;
 }
 
-function inferActor(e: EventRow, homeIsAthlete: boolean): 'home'|'opponent'|'neutral' {
-  if (e.actor === 'home' || e.actor === 'opponent') return e.actor;
+function inferActor(e: EventRow, homeIsAthlete: boolean): Actor {
+  if (e.actor === 'home' || e.actor === 'opponent' || e.actor === 'neutral') return e.actor;
 
   const kind = String(e.kind || '').toLowerCase();
   const penaltyish = PENALTYISH.has(kind);
   const m = e.meta ?? {};
 
-  // explicit "awarded to" fields — scorer/points receiver
   const to =
     normSideToken(m.to, homeIsAthlete) ??
     normSideToken(m.toSide, homeIsAthlete) ??
@@ -108,7 +112,6 @@ function inferActor(e: EventRow, homeIsAthlete: boolean): 'home'|'opponent'|'neu
     null;
   if (to) return to;
 
-  // if called AGAINST X, award goes to the other side
   const against =
     normSideToken(m.against, homeIsAthlete) ??
     normSideToken(m.on, homeIsAthlete) ??
@@ -120,13 +123,9 @@ function inferActor(e: EventRow, homeIsAthlete: boolean): 'home'|'opponent'|'neu
   if (against === 'home') return 'opponent';
   if (against === 'opponent') return 'home';
 
-  // if we have points and it's a penalty-ish event, give pill to the side who *received* the point.
   if (penaltyish && typeof e.points === 'number' && e.points > 0) {
-    // no meta? assume points went to "athlete"
     return homeIsAthlete ? 'home' : 'opponent';
   }
-
-  // LAST resort — never leave stalling/caution neutral
   if (penaltyish) return homeIsAthlete ? 'home' : 'opponent';
 
   return 'neutral';
@@ -136,38 +135,43 @@ function normalizeEvents(evts: EventRow[], homeIsAthlete: boolean): EventRow[] {
   return evts.map(e => ({ ...e, actor: inferActor(e, homeIsAthlete) }));
 }
 
-/* ==================== bottom event belt (anti-overlap, 2 lanes) ==================== */
+const assignIds = (list: EventRow[]) =>
+  list.map((e, i) => (e._id ? e : { ...e, _id: `${Math.round(e.t * 1000)}_${i}` }));
+
+const toActor = (a: any): Actor =>
+  a === 'home' || a === 'opponent' || a === 'neutral' ? a : 'neutral';
+
+/* ==================== bottom event belt (2 lanes + long press) ==================== */
 function EventBelt({
   duration,
   current,
   events,
   onSeek,
   bottomInset,
+  onPillLongPress,
 }: {
   duration: number;
   current: number;
   events: EventRow[];
   onSeek: (sec: number) => void;
   bottomInset: number;
+  onPillLongPress?: (ev: EventRow) => void;
 }) {
   const screenW = Dimensions.get('window').width;
 
   const PILL_W = 64;
   const PILL_H = 28;
-  const PX_PER_SEC = 10; // time → x mapping
-  const MIN_GAP = 8;     // strictly no touching
+  const PX_PER_SEC = 10;
+  const MIN_GAP = 8;
 
-  // only 2 lanes: home (top) and opponent (bottom)
   const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
-
   const colorFor = (actor?: string) => (actor === 'home' ? GREEN : RED);
 
-  // pre-compute layout and push pills forward within each lane to avoid overlap
   const layout = useMemo(() => {
-    // force any "neutral" items onto opponent lane to keep exactly two rows (optional choice)
-    const twoLane = events.map(e => (e.actor === 'home' || e.actor === 'opponent') ? e : { ...e, actor: 'opponent' as const });
+    const twoLane = events.map(e =>
+      e.actor === 'home' || e.actor === 'opponent' ? e : { ...e, actor: 'opponent' as const }
+    );
 
-    // stable order by time, then by original index (keep "first pressed first")
     const indexed = twoLane.map((e, i) => ({ e, i }));
     indexed.sort((a, b) => (a.e.t - b.e.t) || (a.i - b.i));
 
@@ -178,17 +182,11 @@ function EventBelt({
       const lane = (e.actor === 'home' ? 'home' : 'opponent') as 'home'|'opponent';
       const desiredX = e.t * PX_PER_SEC;
       const desiredLeft = desiredX - PILL_W / 2;
-
       const prevLeft = lastLeft[lane];
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP);
       lastLeft[lane] = placedLeft;
 
-      items.push({
-        e,
-        x: placedLeft + PILL_W / 2,
-        y: rowY(lane),
-        c: colorFor(lane),
-      });
+      items.push({ e, x: placedLeft + PILL_W / 2, y: rowY(lane), c: colorFor(lane) });
     }
 
     const maxCenter = items.length ? Math.max(...items.map(it => it.x)) : 0;
@@ -240,17 +238,19 @@ function EventBelt({
 
           {/* pills */}
           {layout.items.map((it, i) => {
-            const isPassed = current >= it.e.t; // fully opaque until passed
+            const isPassed = current >= it.e.t;
             return (
               <Pressable
-                key={`${it.e.t}-${i}`}
+                key={`${it.e._id ?? 'n'}-${i}`}
                 onPress={() => onSeek(it.e.t)}
+                onLongPress={() => onPillLongPress?.(it.e)}
+                delayLongPress={260}
                 style={{
                   position: 'absolute',
-                  left: it.x - PILL_W / 2,
+                  left: it.x - 64 / 2,
                   top: it.y,
-                  width: PILL_W,
-                  height: PILL_H,
+                  width: 64,
+                  height: 28,
                   borderRadius: 999,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -296,7 +296,7 @@ function TopScrubber({
   const MAX_W = 520;
   const width = Math.min(MAX_W, screenW - insets.left - insets.right - H_MARG * 2);
 
-  const TOP = insets.top + 86;
+  const TOP = insets.top + 96;  // moved up a bit so it clears top score
   const TRACK_H = 8;
   const THUMB_D = 28;
 
@@ -344,7 +344,7 @@ function TopScrubber({
   };
 
   const onGestureEvent = (e: PanGestureHandlerGestureEvent) => {
-    if (!(duration > 0)) return; // ignore until duration known
+    if (!(duration > 0)) return;
     const x = clamp(e.nativeEvent.x, 0, getW());
     const sec = xToSec(x);
     setLocalSec(sec);
@@ -381,8 +381,8 @@ function TopScrubber({
         activeOffsetX={[-3, 3]}
       >
         <View
-          onLayout={(e) => {
-            layoutWRef.current = Math.max(1, e.nativeEvent.layout.width);
+          onLayout={(ev) => {
+            layoutWRef.current = Math.max(1, ev.nativeEvent.layout.width);
           }}
           style={{ height: 48, justifyContent: 'center' }}
         >
@@ -400,7 +400,7 @@ function TopScrubber({
           <View
             style={{
               position: 'absolute',
-              left: clamp(thumbX - THUMB_D / 2, 0, width - THUMB_D),
+              left: Math.max(0, Math.min(width - THUMB_D, thumbX - THUMB_D / 2)),
               width: THUMB_D,
               height: THUMB_D,
               borderRadius: THUMB_D / 2,
@@ -419,7 +419,7 @@ function TopScrubber({
               pointerEvents="none"
               style={{
                 position: 'absolute',
-                left: clamp(bubble.x - 28, 0, width - 56),
+                left: Math.max(0, Math.min(width - 56, bubble.x - 28)),
                 bottom: THUMB_D + 6,
                 paddingHorizontal: 8,
                 paddingVertical: 4,
@@ -438,6 +438,67 @@ function TopScrubber({
   );
 }
 
+/* ==================== Quick Edit sheet (Replace/Delete) ==================== */
+function QuickEditSheet({
+  visible,
+  event,
+  onReplace,
+  onDelete,
+  onCancel,
+  insets,
+}: {
+  visible: boolean;
+  event: EventRow | null;
+  onReplace: () => void;
+  onDelete: () => void;
+  onCancel: () => void;
+  insets: { top: number; right: number; bottom: number; left: number };
+}) {
+  if (!visible || !event) return null;
+  return (
+    <View
+      pointerEvents="auto"
+      style={{
+        position: 'absolute',
+        left: 12,
+        right: 12,
+        bottom: insets.bottom + 16 + BELT_H + 8,
+        borderRadius: 16,
+        backgroundColor: 'rgba(0,0,0,0.75)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+        padding: 12,
+        zIndex: 60,
+      }}
+    >
+      <Text style={{ color: '#fff', fontWeight: '900', marginBottom: 8 }}>
+        Edit {abbrKind(event.kind)}{event.points ? `+${event.points}` : ''} @ {fmt(event.t)}
+      </Text>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+        <Pressable
+          onPress={onReplace}
+          style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: '#2563eb' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>Replace…</Text>
+        </Pressable>
+        <Pressable
+          onPress={onDelete}
+          style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: '#dc2626' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>Delete</Text>
+        </Pressable>
+        <Pressable
+          onPress={onCancel}
+          style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 /* ==================== screen ==================== */
 export default function PlaybackScreen() {
   const router = useRouter();
@@ -447,17 +508,16 @@ export default function PlaybackScreen() {
   const { videoPath: rawVideoPath, athlete: athleteParam } = useLocalSearchParams();
   const videoPath = Array.isArray(rawVideoPath) ? rawVideoPath[0] : (rawVideoPath || '');
 
-  // athlete display name (param wins; sidecar fallback)
   const [athleteName, setAthleteName] = useState<string>('Athlete');
   const athleteParamStr = typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
   const displayAthlete = (athleteParamStr?.trim() || athleteName);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [debugMsg, setDebugMsg] = useState<string>('');
-  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | null>(null);
+  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(undefined);
   const [homeIsAthlete, setHomeIsAthlete] = useState<boolean>(true);
 
-  const [overlayOn, setOverlayOn] = useState(true);
+  const [overlayOn, setOverlayOn] = useState(true); // bottom belt visibility
   const [isScrubbing, setIsScrubbing] = useState(false);
 
   const [skipHUD, setSkipHUD] = useState<{ side: 'left'|'right'; total: number; shownAt: number } | null>(null);
@@ -524,12 +584,13 @@ export default function PlaybackScreen() {
     } catch {}
   };
 
-  const onTogglePlay = () => {
+  const onPlayPause = () => {
     try {
       isPlaying ? (player as any)?.pause?.() : (player as any)?.play?.();
     } catch {}
   };
 
+  // accumulate and produce running score
   const accumulate = (evts: EventRow[]) => {
     let h = 0, o = 0;
     return evts.map(e => {
@@ -542,6 +603,36 @@ export default function PlaybackScreen() {
     });
   };
 
+  // === sidecar IO ===
+  const sidecarPathRef = useRef<string | null>(null);
+
+  const saveSidecar = async (next: EventRow[]) => {
+    try {
+      const path = sidecarPathRef.current;
+      if (!path) return;
+
+      const ordered = [...next].sort((a, b) => a.t - b.t);
+      const withScores = accumulate(ordered);
+      // compute final score
+      const last = withScores[withScores.length - 1]?.scoreAfter ?? { home: 0, opponent: 0 };
+      setFinalScore(last);
+
+      const payload: Sidecar = {
+        athlete: athleteName,
+        sport: sidecarMeta.current.sport,
+        style: sidecarMeta.current.style,
+        createdAt: sidecarMeta.current.createdAt,
+        events: withScores,
+        finalScore: last,
+        homeIsAthlete,
+        appVersion: 1,
+      };
+      await FileSystem.writeAsStringAsync(path, JSON.stringify(payload));
+    } catch {}
+  };
+
+  const sidecarMeta = useRef<{ sport?: string; style?: string; createdAt?: number }>({});
+
   useEffect(() => {
     if (!videoPath) {
       setDebugMsg('No video path provided.');
@@ -550,7 +641,7 @@ export default function PlaybackScreen() {
     }
     const lastSlash = videoPath.lastIndexOf('/');
     const lastDot = videoPath.lastIndexOf('.');
-    const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
+       const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
     const guessSidecar = `${base}.json`;
 
     const tryReadSidecar = async (p: string) => {
@@ -577,35 +668,51 @@ export default function PlaybackScreen() {
 
     (async () => {
       setDebugMsg('Loading sidecar…');
+      let usedPath: string | null = guessSidecar;
+
       let parsed = await tryReadSidecar(guessSidecar);
-      if (!parsed) parsed = await tryDirectorySearch();
+      if (!parsed) {
+        parsed = await tryDirectorySearch();
+        if (parsed) {
+          usedPath = `${videoPath.slice(0, lastSlash + 1)}${base.slice(lastSlash + 1)}.json`;
+        }
+      }
+
+      sidecarPathRef.current = usedPath;
 
       if (!parsed) {
         setEvents([]);
-        setFinalScore(null);
+        setFinalScore(undefined);
         setDebugMsg(`No sidecar found. Looked for:\n${guessSidecar}`);
+        sidecarMeta.current = {};
         return;
       }
 
       const hiA = parsed.homeIsAthlete !== false; // default true
       setHomeIsAthlete(hiA);
       setAthleteName(parsed.athlete?.trim() || 'Athlete');
+      sidecarMeta.current = {
+        sport: parsed.sport,
+        style: parsed.style,
+        createdAt: parsed.createdAt,
+      };
 
-      // normalize so penalty events go to the correct lane (and never neutral)
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
       const normalized = normalizeEvents(rawEvts, hiA);
-      const ordered = [...normalized].sort((a, b) => a.t - b.t);
+      const withIds = assignIds(normalized);
+      const ordered = [...withIds].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
       setEvents(withScores);
 
       const fs = parsed.finalScore ?? (withScores.length
-        ? withScores[withScores.length - 1].scoreAfter ?? null
-        : null);
-      setFinalScore(fs ?? null);
+        ? withScores[withScores.length - 1].scoreAfter
+        : { home: 0, opponent: 0 });
+      setFinalScore(fs);
       setDebugMsg(withScores.length ? '' : 'Sidecar loaded but no events.');
     })();
   }, [videoPath]);
 
+  // live score
   const liveScore = useMemo(() => {
     if (!events.length) return { home: 0, opponent: 0 };
     let s = { home: 0, opponent: 0 };
@@ -629,9 +736,10 @@ export default function PlaybackScreen() {
     return { out, a, b, color };
   }, [finalScore, homeIsAthlete]);
 
+  // chrome show/hide
   const [chromeVisible, setChromeVisible] = useState(true);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const HIDE_AFTER_MS = 2200;
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearHideTimer = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } };
   const showChrome = useCallback(() => {
     setChromeVisible(true);
@@ -644,10 +752,9 @@ export default function PlaybackScreen() {
     return clearHideTimer;
   }, [isPlaying, showChrome]);
 
+  // Tap zones: single tap only shows chrome; double tap seeks by 5s
   const lastTapLeft = useRef(0);
   const lastTapRight = useRef(0);
-  const singleTimerLeft = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const singleTimerRight = useRef<ReturnType<typeof setTimeout> | null>(null);
   const DOUBLE_MS = 260;
 
   const onSeekRelative = (delta: number) => onSeek((now || 0) + delta);
@@ -655,48 +762,119 @@ export default function PlaybackScreen() {
   const handleLeftTap = () => {
     const nowMs = Date.now();
     if (nowMs - lastTapLeft.current < DOUBLE_MS) {
-      if (singleTimerLeft.current) { clearTimeout(singleTimerLeft.current); singleTimerLeft.current = null; }
       lastTapLeft.current = 0;
       onSeekRelative(-SKIP_SEC);
       showSkipHud('left', SKIP_SEC);
       showChrome();
     } else {
       lastTapLeft.current = nowMs;
-      singleTimerLeft.current = setTimeout(() => {
-        onTogglePlay();
-        showChrome();
-        singleTimerLeft.current = null;
-      }, DOUBLE_MS + 20);
+      // Single tap: just reveal chrome, no play/pause
+      setTimeout(() => showChrome(), DOUBLE_MS + 20);
     }
   };
 
   const handleRightTap = () => {
     const nowMs = Date.now();
     if (nowMs - lastTapRight.current < DOUBLE_MS) {
-      if (singleTimerRight.current) { clearTimeout(singleTimerRight.current); singleTimerRight.current = null; }
       lastTapRight.current = 0;
       onSeekRelative(+SKIP_SEC);
       showSkipHud('right', SKIP_SEC);
       showChrome();
     } else {
       lastTapRight.current = nowMs;
-      singleTimerRight.current = setTimeout(() => {
-        onTogglePlay();
-        showChrome();
-        singleTimerRight.current = null;
-      }, DOUBLE_MS + 20);
+      setTimeout(() => showChrome(), DOUBLE_MS + 20);
     }
   };
 
-  const SCRUB_RESERVED_TOP = insets.top + 140;
+  const SCRUB_RESERVED_TOP = insets.top + 150; // leave room for scrubber/score
   const tapZoneBottomGap = (overlayOn ? BELT_H : 0) + insets.bottom;
+
+  /* ====== Edit/Add state ====== */
+  const [editMode, setEditMode] = useState(false);
+  const [editSubmode, setEditSubmode] = useState<'add'|'replace'|null>(null);
+  const [editAnchorSec, setEditAnchorSec] = useState<number>(0);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
+
+  const genId = () => Math.random().toString(36).slice(2, 9);
+
+  const enterAddMode = () => {
+    setEditMode(true);
+    setEditSubmode('add');
+    setEditAnchorSec(now || 0);
+    setEditTargetId(null);
+    setOverlayOn(true);
+    showChrome(); // reveal UI
+  };
+
+  const enterReplaceMode = (ev: EventRow) => {
+    setEditMode(true);
+    setEditSubmode('replace');
+    setEditTargetId(ev._id ?? genId());
+    setOverlayOn(true);
+    showChrome();
+  };
+
+  const exitEditMode = () => {
+    setEditMode(false);
+    setEditSubmode(null);
+    setEditTargetId(null);
+    setQuickEditFor(null);
+    // keep overlayOn as-is (belt toggle)
+    showChrome();
+  };
+
+  // Handle selection from sport overlay during Edit/Add
+  const handleEditOverlayEvent = (evt: OverlayEvent) => {
+    const actor: Actor = toActor(evt.actor);
+    const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
+    const points = typeof evt.value === 'number' ? evt.value : undefined;
+
+    if (editSubmode === 'add') {
+      const t = Math.max(0, Math.min(getLiveDuration(), editAnchorSec || 0));
+      const newEvt: EventRow = { _id: genId(), t, kind, points, actor, meta: evt as any };
+      const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
+      setEvents(next);
+      saveSidecar(next);
+      exitEditMode();
+      return;
+    }
+
+    if (editSubmode === 'replace' && editTargetId) {
+      const nextBase: EventRow[] = events.map(e =>
+        e._id === editTargetId
+          ? ({ ...e, kind, points, actor, meta: evt as any } as EventRow)
+          : e
+      );
+      const next: EventRow[] = accumulate(nextBase);
+      setEvents(next);
+      saveSidecar(next);
+      exitEditMode();
+      return;
+    }
+
+    exitEditMode();
+  };
+
+  // Which overlay to show while editing — expand later for more sports
+  const renderEditOverlay = () => {
+    // For now always Folkstyle; later switch by sidecarMeta.current.sport/style
+    return (
+      <WrestlingFolkstyleOverlay
+        isRecording={true}
+        onEvent={handleEditOverlayEvent}
+        getCurrentTSec={() => Math.round(editAnchorSec)}
+        sport="wrestling"
+        style="folkstyle"
+        score={{ home: 0, opponent: 0 }}
+      />
+    );
+  };
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
-      {/* hide expo-router header */}
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* full-screen video */}
       <View style={{ flex: 1 }}>
         <VideoView
           player={player}
@@ -742,7 +920,7 @@ export default function PlaybackScreen() {
           <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
         </Pressable>
 
-        {/* overlay toggle (TOP-RIGHT) */}
+        {/* overlay toggle (top-right) */}
         <Pressable
           onPress={() => setOverlayOn((v) => !v)}
           style={{
@@ -764,32 +942,6 @@ export default function PlaybackScreen() {
           </Text>
         </Pressable>
 
-        {/* Play button — visible only when paused */}
-        {!isPlaying && (
-          <Pressable
-            onPress={() => { onTogglePlay(); showChrome(); }}
-            style={{
-              position: 'absolute',
-              left: 0, right: 0,
-              bottom: (overlayOn ? (BELT_H + 28) : 24) + insets.bottom,
-              alignItems: 'center',
-            }}
-          >
-            <View
-              style={{
-                width: 56, height: 56, borderRadius: 28,
-                backgroundColor: 'rgba(0,0,0,0.55)',
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-                alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>
-                ▶︎
-              </Text>
-            </View>
-          </Pressable>
-        )}
-
         {/* FINAL outcome chip centered at top */}
         {outcomeChip && (
           <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, alignItems: 'center' }}>
@@ -804,14 +956,14 @@ export default function PlaybackScreen() {
         {/* LIVE score — left (athlete) / right (opponent) */}
         <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 50, left: 8, right: 8 }}>
           <View style={{ position: 'absolute', left: 0, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: hexToRgba(GREEN, 0.22), borderWidth: 1, borderColor: hexToRgba(GREEN, 0.4) }}>
-            <Text style={{ color: 'white', fontWeight: '900' }}>{displayAthlete} • {myScore}</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>{displayAthlete} • {homeIsAthlete ? myScore : oppScore}</Text>
           </View>
           <View style={{ position: 'absolute', right: 0, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: hexToRgba(RED, 0.22), borderWidth: 1, borderColor: hexToRgba(RED, 0.4) }}>
-            <Text style={{ color: 'white', fontWeight: '900' }}>Opponent • {oppScore}</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>Opponent • {homeIsAthlete ? oppScore : myScore}</Text>
           </View>
         </View>
 
-        {/* Top scrub bar (RNGH) */}
+        {/* Top scrub bar */}
         <TopScrubber
           current={now}
           duration={dur}
@@ -821,7 +973,7 @@ export default function PlaybackScreen() {
           onInteracting={setIsScrubbing}
         />
 
-        {/* YouTube-style skip overlay */}
+        {/* YouTube-style skip overlay (5s) */}
         {skipHUD && (
           <View
             pointerEvents="none"
@@ -845,7 +997,7 @@ export default function PlaybackScreen() {
           </View>
         )}
 
-        {/* bottom event belt (buttons) */}
+        {/* bottom event belt */}
         {overlayOn && (
           <EventBelt
             duration={dur}
@@ -853,14 +1005,107 @@ export default function PlaybackScreen() {
             events={events}
             onSeek={onSeek}
             bottomInset={insets.bottom}
+            onPillLongPress={(ev) => setQuickEditFor(ev)}
           />
+        )}
+
+        {/* Edit/Add (bottom-left) */}
+        <Pressable
+          onPress={enterAddMode}
+          style={{
+            position: 'absolute',
+            left: 12,
+            bottom: insets.bottom + (overlayOn ? BELT_H + 20 : 16),
+            paddingVertical: 10,
+            paddingHorizontal: 14,
+            borderRadius: 999,
+            backgroundColor: 'white',
+            opacity: chromeVisible ? 1 : 0,
+          }}
+          pointerEvents={chromeVisible ? 'auto' : 'none'}
+        >
+          <Text style={{ color: '#111', fontWeight: '900' }}>Edit / Add</Text>
+        </Pressable>
+
+        {/* Play/Pause (bottom-right) — only via button */}
+        <Pressable
+          onPress={() => { onPlayPause(); showChrome(); }}
+          style={{
+            position: 'absolute',
+            right: 12,
+            bottom: insets.bottom + (overlayOn ? BELT_H + 20 : 16),
+            paddingVertical: 10,
+            paddingHorizontal: 14,
+            borderRadius: 999,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.25)',
+            opacity: chromeVisible ? 1 : 0,
+          }}
+          pointerEvents={chromeVisible ? 'auto' : 'none'}
+        >
+          <Text style={{ color: 'white', fontWeight: '900' }}>{isPlaying ? 'Pause' : 'Play'}</Text>
+        </Pressable>
+
+        {/* Quick Edit (Replace/Delete) on pill long-press */}
+        <QuickEditSheet
+          visible={!!quickEditFor}
+          event={quickEditFor}
+          insets={insets}
+          onCancel={() => setQuickEditFor(null)}
+          onDelete={() => {
+            if (!quickEditFor) return;
+            const next: EventRow[] = accumulate(events.filter(e => e._id !== quickEditFor._id));
+            setEvents(next);
+            saveSidecar(next);
+            setQuickEditFor(null);
+          }}
+          onReplace={() => {
+            if (!quickEditFor) return;
+            enterReplaceMode(quickEditFor);
+            setQuickEditFor(null);
+          }}
+        />
+
+        {/* ========== EDIT OVERLAY (full screen over video; scrub still works) ========== */}
+        {editMode && (
+          <View
+            pointerEvents="box-none"
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+          >
+            {/* sport overlay consumes touches only on its own buttons */}
+            <View pointerEvents="auto" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+              {renderEditOverlay()}
+            </View>
+
+            {/* Mid-screen hint */}
+            <View pointerEvents="none" style={{ position: 'absolute', top: Dimensions.get('window').height * 0.25, left: 0, right: 0, alignItems: 'center' }}>
+              <View style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(245,158,11,0.25)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.5)' }}>
+                <Text style={{ color: '#fff', fontWeight: '900' }}>
+                  {editSubmode === 'add'
+                    ? `Add @ ${fmt(editAnchorSec)} — tap a button`
+                    : `Replace — tap a button`}
+                </Text>
+              </View>
+            </View>
+
+            {/* Tap to exit (center) */}
+            <Pressable
+              onPress={exitEditMode}
+              style={{
+                position: 'absolute',
+                left: 0, right: 0,
+                top: Dimensions.get('window').height * 0.40,
+                alignItems: 'center',
+              }}
+            >
+              <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f59e0b' }}>
+                <Text style={{ color: '#111', fontWeight: '900' }}>Tap to exit Edit/Add</Text>
+              </View>
+            </Pressable>
+          </View>
         )}
       </View>
     </GestureHandlerRootView>
   );
 }
-
-
-
-
-
