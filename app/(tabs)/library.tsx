@@ -1,17 +1,20 @@
-// Library: Athletes ➜ Sports ➜ Videos, with outcome/score chips, PIN gold highlight, and Playback routing
+// app/(tabs)/library.tsx
+// Library: optimized load + fast row patching
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  DeviceEventEmitter,
   FlatList,
-  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -20,9 +23,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const BLUR_HASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
 const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
@@ -31,8 +36,8 @@ const ATHLETES_KEY = 'athletes:list';
 type IndexMeta = {
   uri: string;
   displayName: string;
-  athlete: string;   // 'Unassigned' allowed
-  sport: string;     // e.g. "wrestling:folkstyle"
+  athlete: string;
+  sport: string;
   createdAt: number;
   assetId?: string;
 };
@@ -51,12 +56,11 @@ type Row = {
   assetId?: string | undefined;
 
   finalScore?: FinalScore | null;
-  homeIsAthlete?: boolean; // default true
-  outcome?: Outcome;       // W/L/T from athlete’s POV (forced to W on PIN)
+  homeIsAthlete?: boolean;
+  outcome?: Outcome;
   myScore?: number | null;
   oppScore?: number | null;
 
-  // Gold highlight when athlete wins by pin
   highlightGold?: boolean;
 };
 
@@ -64,6 +68,21 @@ type Row = {
 const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
 const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 const bytesToMB = (b?: number | null) => (b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB');
+
+// ----- bounded concurrency helper -----
+async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) break;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 // extra helpers for robust move/rename
 async function pathExists(p: string) {
@@ -74,7 +93,6 @@ async function pathExists(p: string) {
   } catch { return false; }
 }
 async function pickUniqueDest(dir: string, baseName: string, extWithDot: string) {
-  // returns a free path inside dir; tries baseName.ext, baseName-1.ext, baseName-2.ext ...
   let n = 0;
   while (true) {
     const name = n === 0 ? `${baseName}${extWithDot}` : `${baseName}-${n}${extWithDot}`;
@@ -83,7 +101,6 @@ async function pickUniqueDest(dir: string, baseName: string, extWithDot: string)
     n++;
   }
 }
-// Try to re-locate a file by filename under videos/<athlete>/<sport>/*
 async function findByFilename(fileName: string): Promise<string | null> {
   try {
     // @ts-ignore
@@ -107,7 +124,6 @@ async function findByFilename(fileName: string): Promise<string | null> {
   } catch {}
   return null;
 }
-
 async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promise<string | null> {
   try {
     // @ts-ignore
@@ -124,7 +140,7 @@ async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promi
             const files: string[] = await (FileSystem as any).readDirectoryAsync(sDir);
             const cand = files.find(f =>
               (f === `${baseNoExt}${extWithDot}`) ||
-              (f.startsWith(`${baseNoExt}-`) && f.endsWith(extWithDot)) // handles filename-1.mp4
+              (f.startsWith(`${baseNoExt}-`) && f.endsWith(extWithDot))
             );
             if (cand) return sDir + cand;
           } catch {}
@@ -134,7 +150,6 @@ async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promi
   } catch {}
   return null;
 }
-
 
 // ---------- index helpers ----------
 async function readIndex(): Promise<IndexMeta[]> {
@@ -161,7 +176,8 @@ async function getOrCreateThumb(videoUri: string, fileName: string) {
   const info = await FileSystem.getInfoAsync(dest);
   if ((info as any)?.exists) return dest;
   try {
-    const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000, quality: 0.6 });
+    // lighter & faster thumbnails
+    const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000, quality: 0.4 });
     try { await FileSystem.copyAsync({ from: uri, to: dest }); } catch {}
     return dest;
   } catch { return null; }
@@ -183,9 +199,15 @@ type Sidecar = {
   events?: SidecarEvent[];
   finalScore?: FinalScore;
   homeIsAthlete?: boolean;
+
+  outcome?: 'W'|'L'|'T';
+  winner?: 'home'|'opponent'|null;
+  endedBy?: 'pin'|'decision'|null;
+  athletePinned?: boolean;
+  athleteWasPinned?: boolean;
+  modifiedAt?: number;
 };
 
-// robustly find and parse the sidecar, then derive final score/outcome and gold
 async function readOutcomeFor(videoUri: string): Promise<{
   finalScore: FinalScore | null;
   homeIsAthlete: boolean;
@@ -208,8 +230,6 @@ async function readOutcomeFor(videoUri: string): Promise<{
     };
 
     let sc: Sidecar | null = await tryRead(guess);
-
-    // fallback: scan directory for same basename.json
     if (!sc) {
       try {
         const dir = videoUri.slice(0, lastSlash + 1);
@@ -223,7 +243,6 @@ async function readOutcomeFor(videoUri: string): Promise<{
 
     if (!sc) return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
 
-    // compute score if missing
     let finalScore: FinalScore | null = sc.finalScore ?? null;
     if (!finalScore) {
       let h = 0, o = 0;
@@ -237,39 +256,38 @@ async function readOutcomeFor(videoUri: string): Promise<{
       finalScore = { home: h, opponent: o };
     }
 
-    const homeIsAthlete = sc.homeIsAthlete !== false; // default true
+    const homeIsAthlete = sc.homeIsAthlete !== false;
     const myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
     const oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
 
-    // ==== PIN detection (robust across key/label/kind/meta.winBy; also allow "fall") ====
-    const ev = sc.events ?? [];
-    const pinEv = ev.find((e: SidecarEvent) => {
-      const key = String(e?.key ?? '').toLowerCase();
-      const label = String(e?.label ?? '').toLowerCase();
-      const kind = String(e?.kind ?? '').toLowerCase();
-      const winBy = String(e?.meta?.winBy ?? '').toLowerCase();
-      return (
-        key === 'pin' ||
-        kind === 'pin' ||
-        label.includes('pin') ||
-        winBy === 'pin' ||
-        kind === 'fall' || label.includes('fall')
-      );
-    });
+    let outcome: Outcome | null = sc.outcome ?? null;
+    let highlightGold = sc.endedBy === 'pin' ? !!sc.athletePinned : false;
 
-    let highlightGold = false;
-    let outcome: Outcome | null;
+    if (outcome == null) {
+      const ev = sc.events ?? [];
+      const pinEv = ev.find((e: SidecarEvent) => {
+        const key = String(e?.key ?? '').toLowerCase();
+        const label = String(e?.label ?? '').toLowerCase();
+        const kind = String(e?.kind ?? '').toLowerCase();
+        const winBy = String(e?.meta?.winBy ?? '').toLowerCase();
+        return (
+          key === 'pin' ||
+          kind === 'pin' ||
+          label.includes('pin') ||
+          winBy === 'pin' ||
+          kind === 'fall' || label.includes('fall')
+        );
+      });
 
-    if (pinEv && (pinEv.actor === 'home' || pinEv.actor === 'opponent')) {
-      const athletePinned =
-        (homeIsAthlete && pinEv.actor === 'home') ||
-        (!homeIsAthlete && pinEv.actor === 'opponent');
-      highlightGold = !!athletePinned;
-      // force outcome on a pin
-      outcome = athletePinned ? 'W' : 'L';
-    } else {
-      // fall back to points
-      outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+      if (pinEv && (pinEv.actor === 'home' || pinEv.actor === 'opponent')) {
+        const athletePinned =
+          (homeIsAthlete && pinEv.actor === 'home') ||
+          (!homeIsAthlete && pinEv.actor === 'opponent');
+        highlightGold = !!athletePinned;
+        outcome = athletePinned ? 'W' : 'L';
+      } else {
+        outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+      }
     }
 
     return { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
@@ -278,43 +296,38 @@ async function readOutcomeFor(videoUri: string): Promise<{
   }
 }
 
-// ---------- move video across athletes (ROBUST + patch sidecar) ----------
+// ---------- retag / move ----------
 async function retagVideo(
   input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string },
   newAthleteRaw: string
 ) {
   const newAthlete = (newAthleteRaw || '').trim() || 'Unassigned';
   const oldA = (input.oldAthlete || '').trim() || 'Unassigned';
-  if (newAthlete === oldA) return; // nothing to do
+  if (newAthlete === oldA) return;
 
-    // re-resolve source by filename if missing
-    let sourceUri = input.uri;
-    if (!(await pathExists(sourceUri))) {
-      const fileName = (input.uri.split('/').pop() || '');
-      const dot = fileName.lastIndexOf('.');
-      const baseNoExt = dot > 0 ? fileName.slice(0, dot) : fileName;
-      const ext = dot > 0 ? fileName.slice(dot) : '.mp4';
-  
-      // 1) exact filename under videos/
-      let found = fileName ? await findByFilename(fileName) : null;
-  
-      // 2) loose match (handles filename-1.mp4 after prior collision/move)
-      if (!found) found = await findByLooseBasename(baseNoExt, ext);
-  
-      // 3) last-resort: look up by assetId from index
-      if (!found && input.assetId) {
-        const list = await readIndex();
-        const hit = list.find(m => m.assetId === input.assetId);
-        if (hit && await pathExists(hit.uri)) found = hit.uri;
-      }
-  
-      if (found) {
-        sourceUri = found;
-      } else {
-        throw new Error('Original file not found. Tap Refresh; the index may be stale.');
-      }
+  // re-resolve source by filename if missing
+  let sourceUri = input.uri;
+  if (!(await pathExists(sourceUri))) {
+    const fileName = (input.uri.split('/').pop() || '');
+    const dot = fileName.lastIndexOf('.');
+    const baseNoExt = dot > 0 ? fileName.slice(0, dot) : fileName;
+    const ext = dot > 0 ? fileName.slice(dot) : '.mp4';
+
+    let found = fileName ? await findByFilename(fileName) : null;
+    if (!found) found = await findByLooseBasename(baseNoExt, ext);
+
+    if (!found && input.assetId) {
+      const list = await readIndex();
+      const hit = list.find(m => m.assetId === input.assetId);
+      if (hit && await pathExists(hit.uri)) found = hit.uri;
     }
-  
+
+    if (found) {
+      sourceUri = found;
+    } else {
+      throw new Error('Original file not found. Tap Refresh; the index may be stale.');
+    }
+  }
 
   // Ensure destination directory exists
   const athleteSlug = slug(newAthlete);
@@ -328,12 +341,11 @@ async function retagVideo(
   const srcName = sourceUri.split('/').pop() || `retag_${Date.now()}.mp4`;
   const dot = srcName.lastIndexOf('.');
   const base = dot > 0 ? srcName.slice(0, dot) : srcName;
-  const ext = dot > 0 ? srcName.slice(dot) : '.mp4'; // keep original ext
+  const ext = dot > 0 ? srcName.slice(dot) : '.mp4';
 
-  // Pick a unique destination to avoid collisions
   const { dest: newVideoUri, filename: newFileName } = await pickUniqueDest(newDir, base, ext);
 
-  // Find matching sidecar (same basename .json) at source, if any
+  // Sidecar move
   const lastSlash = sourceUri.lastIndexOf('/');
   const srcDir = sourceUri.slice(0, lastSlash + 1);
   const sidecarSrcGuess = `${srcDir}${base}.json`;
@@ -350,10 +362,8 @@ async function retagVideo(
     } catch {}
   }
 
-  // Move the video first
   await FileSystem.moveAsync({ from: sourceUri, to: newVideoUri });
 
-  // Move (or create) sidecar and patch athlete
   const newBase = newFileName.replace(/\.[^/.]+$/, '');
   let sidecarDest = `${newDir}${newBase}.json`;
 
@@ -362,30 +372,24 @@ async function retagVideo(
       if (await pathExists(sidecarDest)) sidecarDest = `${newDir}${newBase}-${Date.now()}.json`;
       await FileSystem.moveAsync({ from: sidecarFrom, to: sidecarDest });
     } else {
-      // no sidecar existed — create a minimal one so Playback sees the right athlete
-      const minimal: Sidecar = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
+      const minimal = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
       await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(minimal));
     }
   } catch {
-    // ensure a sidecar exists even if move failed
     try {
-      const minimal: Sidecar = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
+      const minimal = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
       await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(minimal));
     } catch {}
   }
 
-  // Patch athlete inside sidecar JSON (now at destination)
   try {
     const txt = await FileSystem.readAsStringAsync(sidecarDest);
-    const sc = (txt ? JSON.parse(txt) : {}) as Sidecar;
+    const sc = (txt ? JSON.parse(txt) : {}) as any;
     sc.athlete = newAthlete;
     if (!sc.sport) sc.sport = input.sportKey;
     await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(sc));
-  } catch (e) {
-    console.log('sidecar patch error:', e);
-  }
+  } catch (e) { console.log('sidecar patch error:', e); }
 
-  // Update index.json
   const list = await readIndex();
   const updated: IndexMeta[] = list.map(e =>
     e.uri === input.uri || e.uri === sourceUri
@@ -393,14 +397,12 @@ async function retagVideo(
           ...e,
           uri: newVideoUri,
           athlete: newAthlete,
-          // keep sport; change displayName to reflect athlete
           displayName: `${newAthlete} — ${e.sport} — ${new Date(e.createdAt).toLocaleString()}`
         }
       : e
   );
   await writeIndexAtomic(updated);
 
-  // Photos app best-effort album management
   try {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted || !input.assetId) return;
@@ -436,48 +438,144 @@ export default function LibraryScreen() {
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const list: IndexMeta[] = await readIndex();
-    const built: Row[] = [];
-    for (const meta of list) {
-      const info = await FileSystem.getInfoAsync(meta.uri);
-      if (!(info as any)?.exists) continue;
+  const loadingRef = useRef(false);
 
-      const name = meta.uri.split('/').pop() || meta.displayName;
-      const scoreBits = await readOutcomeFor(meta.uri);
+  // ---------- build 1 row ----------
+  const buildRow = useCallback(async (meta: IndexMeta, eagerThumb: boolean): Promise<Row | null> => {
+    const info = await FileSystem.getInfoAsync(meta.uri);
+    if (!(info as any)?.exists) return null;
 
-      built.push({
-        uri: meta.uri,
-        displayName: meta.displayName || name,
-        athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
-        sport: (meta.sport || 'unknown').trim() || 'unknown',
-        assetId: meta.assetId,
-        size: (info as any)?.size ?? null,
-        mtime: (info as any)?.modificationTime ? Math.round(((info as any).modificationTime as number) * 1000) : meta.createdAt ?? null,
-        thumbUri: await getOrCreateThumb(meta.uri, name),
+    const name = meta.uri.split('/').pop() || meta.displayName;
+    const scoreBits = await readOutcomeFor(meta.uri);
+    const thumb = eagerThumb ? await getOrCreateThumb(meta.uri, name) : null;
 
-        // scores/outcomes
-        finalScore: scoreBits.finalScore,
-        homeIsAthlete: scoreBits.homeIsAthlete,
-        outcome: scoreBits.outcome ?? undefined,
-        myScore: scoreBits.myScore,
-        oppScore: scoreBits.oppScore,
+    return {
+      uri: meta.uri,
+      displayName: meta.displayName || name,
+      athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
+      sport: (meta.sport || 'unknown').trim() || 'unknown',
+      assetId: meta.assetId,
+      size: (info as any)?.size ?? null,
+      mtime: (info as any)?.modificationTime ? Math.round(((info as any).modificationTime as number) * 1000) : meta.createdAt ?? null,
+      thumbUri: thumb,
 
-        // gold highlight on PIN
-        highlightGold: scoreBits.highlightGold,
-      });
-    }
-    built.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
-    setRows(built);
-
-    // load athlete list (with photos) from Home screen storage
-    try {
-      const raw = await AsyncStorage.getItem(ATHLETES_KEY);
-      setAthleteList(raw ? JSON.parse(raw) : []);
-    } catch { setAthleteList([]); }
+      finalScore: scoreBits.finalScore,
+      homeIsAthlete: scoreBits.homeIsAthlete,
+      outcome: scoreBits.outcome ?? undefined,
+      myScore: scoreBits.myScore,
+      oppScore: scoreBits.oppScore,
+      highlightGold: scoreBits.highlightGold,
+    };
   }, []);
 
+  // Prefetch any missing thumbs in background (after first render)
+  const prefetchAllThumbs = useCallback(async (list: Row[]) => {
+    const toMake = list.filter(r => !r.thumbUri).map(r => r.uri);
+    if (!toMake.length) return;
+
+    const updated = await mapLimit(toMake, 2, async (uri) => {
+      const fileName = uri.split('/').pop() || 'video.mp4';
+      const thumb = await getOrCreateThumb(uri, fileName);
+      return { uri, thumb };
+    });
+
+    setRows(prev =>
+      prev.map(r => {
+        const hit = updated.find(u => u.uri === r.uri);
+        return hit ? { ...r, thumbUri: hit.thumb } : r;
+      })
+    );
+  }, []);
+
+  // ---------- initial load with bounded concurrency & eager thumbs for first 12 ----------
+  const load = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    try {
+      const list: IndexMeta[] = await readIndex();
+      const sorted = [...list].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+      const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => {
+        return await buildRow(meta, i < 12);
+      });
+
+      const filtered = rowsBuilt.filter(Boolean) as Row[];
+      filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+      setRows(filtered);
+
+      // warm remaining thumbs shortly after first paint
+      setTimeout(() => prefetchAllThumbs(filtered), 300);
+
+      try {
+        const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+        setAthleteList(raw ? JSON.parse(raw) : []);
+      } catch { setAthleteList([]); }
+    } finally {
+      loadingRef.current = false;
+    }
+  }, [buildRow, prefetchAllThumbs]);
+
+  // initial + focus refresh
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // ----- FAST PATH: patch only the edited row on sidecarUpdated -----
+  const patchRowFromSidecarPayload = useCallback(async (uri: string, sc?: any) => {
+    let nextBits: { finalScore: FinalScore | null; homeIsAthlete: boolean; outcome: Outcome | null; myScore: number | null; oppScore: number | null; highlightGold: boolean } | null = null;
+
+    if (sc) {
+      try {
+        const homeIsAthlete = sc.homeIsAthlete !== false;
+        const finalScore: FinalScore | null = sc.finalScore ?? null;
+        let myScore: number | null = null, oppScore: number | null = null, outcome: Outcome | null = sc.outcome ?? null, highlightGold = false;
+
+        if (finalScore) {
+          myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
+          oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
+        }
+
+        if (sc.endedBy === 'pin') highlightGold = !!sc.athletePinned;
+        if (!outcome && finalScore) {
+          outcome = (myScore! > oppScore!) ? 'W' : (myScore! < oppScore!) ? 'L' : 'T';
+        }
+
+        nextBits = { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
+      } catch { nextBits = null; }
+    }
+
+    if (!nextBits) {
+      const b = await readOutcomeFor(uri);
+      nextBits = {
+        finalScore: b.finalScore, homeIsAthlete: b.homeIsAthlete, outcome: b.outcome,
+        myScore: b.myScore, oppScore: b.oppScore, highlightGold: b.highlightGold
+      };
+    }
+
+    setRows(prev =>
+      prev.map(r =>
+        r.uri === uri
+          ? {
+              ...r,
+              finalScore: nextBits!.finalScore,
+              homeIsAthlete: nextBits!.homeIsAthlete,
+              outcome: nextBits!.outcome ?? undefined,
+              myScore: nextBits!.myScore,
+              oppScore: nextBits!.oppScore,
+              highlightGold: nextBits!.highlightGold,
+            }
+          : r
+      )
+    );
+  }, []);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
+      const uri = evt?.uri as string | undefined;
+      if (!uri) return;
+      await patchRowFromSidecarPayload(uri, evt?.sidecar);
+    });
+    return () => sub.remove();
+  }, [patchRowFromSidecarPayload]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -494,9 +592,7 @@ export default function LibraryScreen() {
       if (row.assetId) {
         try {
           const { granted } = await MediaLibrary.requestPermissionsAsync();
-          if (granted) {
-            await MediaLibrary.deleteAssetsAsync([row.assetId]);
-          }
+          if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
         } catch {}
       }
 
@@ -515,37 +611,51 @@ export default function LibraryScreen() {
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  // 👉 Push params so Playback shows correct identity immediately
-  const pushPlayback = (row: Row) => {
+  const routerPushPlayback = useCallback((row: Row) => {
     router.push({
       pathname: '/screens/PlaybackScreen',
-      params: {
-        videoPath: row.uri,
-        athlete: row.athlete,
-        sport: row.sport,
-        displayName: row.displayName,
-      },
+      params: { videoPath: row.uri, athlete: row.athlete, sport: row.sport, displayName: row.displayName },
     });
-  };
+  }, [router]);
+
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // FIX: define doEditAthlete used by the modal
+  const doEditAthlete = useCallback(
+    async (row: Row, newAthlete: string) => {
+      try {
+        await retagVideo(
+          { uri: row.uri, oldAthlete: row.athlete, sportKey: row.sport, assetId: row.assetId },
+          newAthlete
+        );
+        await load(); // refresh list after retag
+      } catch (e: any) {
+        console.log('retag error', e);
+        const msg = e?.message || String(e);
+        Alert.alert(
+          'Update failed',
+          msg.includes('Original file not found') ? `${msg}\n\nTap Refresh and try again.` : msg
+        );
+      }
+    },
+    [load]
+  );
+  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
   // ====== GROUPINGS ======
   const allRows = useMemo(() => [...rows].sort((a,b)=>(b.mtime ?? 0)-(a.mtime ?? 0)), [rows]);
 
-  // by athlete
   const rowsByAthlete = useMemo(() => {
     const map: Record<string, Row[]> = {};
     for (const r of allRows) { const k = r.athlete || 'Unassigned'; (map[k] ||= []).push(r); }
     return map;
   }, [allRows]);
 
-  // by sport (global)
   const rowsBySport = useMemo(() => {
     const map: Record<string, Row[]> = {};
     for (const r of allRows) { const k = r.sport || 'unknown'; (map[k] ||= []).push(r); }
     return map;
   }, [allRows]);
 
-  // athlete -> sport -> rows (for drill-down in Athletes tab)
   const athleteSportsMap = useMemo(() => {
     const m: Record<string, Record<string, Row[]>> = {};
     for (const r of allRows) {
@@ -568,27 +678,11 @@ export default function LibraryScreen() {
     [athleteList]
   );
 
-  const doEditAthlete = async (row: Row, newAthlete: string) => {
-    try {
-      await retagVideo({ uri: row.uri, oldAthlete: row.athlete, sportKey: row.sport, assetId: row.assetId }, newAthlete);
-      await load();
-    } catch (e: any) {
-      console.log('retag error', e);
-      const msg = e?.message || String(e);
-      Alert.alert('Update failed', msg.includes('Original file not found') ? `${msg}\n\nTap Refresh and try again.` : msg);
-    }
-  };
-
-  // ====== RENDER HELPERS ======
-  const pushPlaybackByUri = (uri: string) => {
-    const row = rows.find(r => r.uri === uri);
-    if (row) pushPlayback(row);
-  };
-
+  // ====== FlatList helpers ======
   const outcomeColor = (o?: Outcome | null) =>
     o === 'W' ? '#16a34a' : o === 'L' ? '#dc2626' : o === 'T' ? '#f59e0b' : 'rgba(255,255,255,0.25)';
 
-  const renderVideoRow = ({ item }: { item: Row }) => {
+  const renderVideoRow = useCallback(({ item }: { item: Row }) => {
     const dateStr = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
     const subtitleBits = [
       item.athlete ? `👤 ${item.athlete}` : null,
@@ -603,7 +697,7 @@ export default function LibraryScreen() {
 
     return (
       <Pressable
-        onPress={() => pushPlayback(item)}
+        onPress={() => routerPushPlayback(item)}
         style={{
           padding: 0,
           marginHorizontal: 16,
@@ -615,7 +709,6 @@ export default function LibraryScreen() {
           backgroundColor: item.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
         }}
       >
-        {/* Gold gradient background when highlighted */}
         {item.highlightGold && (
           <>
             <LinearGradient
@@ -624,20 +717,21 @@ export default function LibraryScreen() {
               end={{ x: 1, y: 1 }}
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
             />
-            {/* subtle dark veil to keep white text readable */}
             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.08)' }} />
           </>
         )}
 
         <View style={{ padding: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            {item.thumbUri ? (
-              <Image source={{ uri: item.thumbUri }} style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} resizeMode="cover" />
-            ) : (
-              <View style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
-                <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
-              </View>
-            )}
+            {/* Thumbnail with placeholder & fade */}
+            <Image
+              source={item.thumbUri ? { uri: item.thumbUri } : undefined}
+              style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              placeholder={BLUR_HASH}
+              transition={200}
+            />
 
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -661,7 +755,7 @@ export default function LibraryScreen() {
                   <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => pushPlayback(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+                <TouchableOpacity onPress={() => routerPushPlayback(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
                   <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
                 </TouchableOpacity>
 
@@ -678,30 +772,39 @@ export default function LibraryScreen() {
         </View>
       </Pressable>
     );
-  };
+  }, [routerPushPlayback, saveToPhotos, removeVideo]);
 
-  const Segmented = () => (
-    <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: insets.top + 4, paddingBottom: 8 }}>
-      {(['all', 'athletes', 'sports'] as const).map(k => (
-        <TouchableOpacity
-          key={k}
-          onPress={() => { setView(k); setSelectedAthlete(null); setSelectedSport(null); }}
-          style={{
-            paddingVertical: 8,
-            paddingHorizontal: 12,
-            borderRadius: 999,
-            backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
-            borderWidth: 1,
-            borderColor: 'white'
-          }}
-        >
-          <Text style={{ color: view === k ? 'black' : 'white', fontWeight: '800' }}>
-            {k === 'all' ? 'All' : k[0].toUpperCase()+k.slice(1)}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
+  // Lazy thumbnails for viewable rows
+  const thumbQueueRef = useRef<Set<string>>(new Set());
+  const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
+    const toFetch: string[] = [];
+    changed.forEach(vt => {
+      const row = vt.item as Row;
+      if (!row?.uri) return;
+      if (vt.isViewable && !row.thumbUri && !thumbQueueRef.current.has(row.uri)) {
+        thumbQueueRef.current.add(row.uri);
+        toFetch.push(row.uri);
+      }
+    });
+    if (!toFetch.length) return;
+
+    (async () => {
+      const updated: { uri: string; thumb: string | null }[] = await mapLimit(toFetch, 3, async (uri) => {
+        const fileName = uri.split('/').pop() || 'video.mp4';
+        const thumb = await getOrCreateThumb(uri, fileName);
+        return { uri, thumb };
+      });
+      setRows(prev =>
+        prev.map(r => {
+          const hit = updated.find(u => u.uri === r.uri);
+          return hit ? { ...r, thumbUri: hit.thumb } : r;
+        })
+      );
+      updated.forEach(u => thumbQueueRef.current.delete(u.uri));
+    })();
+  }).current;
+
+  const viewConfigRef = useRef({ itemVisiblePercentThreshold: 40 });
 
   // ====== UI ======
   return (
@@ -712,9 +815,30 @@ export default function LibraryScreen() {
           <Text style={{ color: 'white', fontWeight: '800' }}>Refresh</Text>
         </TouchableOpacity>
       </View>
-      <Segmented />
 
-      {/* ===== All Videos ===== */}
+      {/* segmented */}
+      <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 }}>
+        {(['all', 'athletes', 'sports'] as const).map(k => (
+          <TouchableOpacity
+            key={k}
+            onPress={() => { setView(k); setSelectedAthlete(null); setSelectedSport(null); }}
+            style={{
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
+              borderWidth: 1,
+              borderColor: 'white'
+            }}
+          >
+            <Text style={{ color: view === k ? 'black' : 'white', fontWeight: '800' }}>
+              {k === 'all' ? 'All' : k[0].toUpperCase()+k.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* All Videos */}
       {view === 'all' && (
         <FlatList
           data={allRows}
@@ -723,10 +847,20 @@ export default function LibraryScreen() {
           contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
           ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No recordings yet. Record a match, then come back.</Text>}
+
+          // performance tuning
+          initialNumToRender={6}
+          windowSize={7}
+          maxToRenderPerBatch={8}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews
+
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewConfigRef.current}
         />
       )}
 
-      {/* ===== Athletes root ===== */}
+      {/* Athletes root */}
       {view === 'athletes' && selectedAthlete == null && (
         <FlatList
           data={Object.keys(rowsByAthlete).sort((a, b) => {
@@ -763,6 +897,10 @@ export default function LibraryScreen() {
                     <Image
                       source={{ uri: photoUri }}
                       style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      placeholder={BLUR_HASH}
+                      transition={200}
                     />
                   ) : (
                     <View
@@ -798,7 +936,7 @@ export default function LibraryScreen() {
         />
       )}
 
-      {/* ===== Athletes ➜ Sports ===== */}
+      {/* Athletes ➜ Sports */}
       {view === 'athletes' && selectedAthlete != null && selectedSport == null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
@@ -835,13 +973,14 @@ export default function LibraryScreen() {
                   }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-                    {preview ? (
-                      <Image source={{ uri: preview }} style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }} />
-                    ) : (
-                      <View style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
-                      </View>
-                    )}
+                    <Image
+                      source={preview ? { uri: preview } : undefined}
+                      style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)' }}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      placeholder={BLUR_HASH}
+                      transition={200}
+                    />
 
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>{sport}</Text>
@@ -860,7 +999,7 @@ export default function LibraryScreen() {
         </View>
       )}
 
-      {/* ===== Athletes ➜ Sports ➜ Videos ===== */}
+      {/* Athletes ➜ Sports ➜ Videos */}
       {view === 'athletes' && selectedAthlete != null && selectedSport != null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
@@ -875,11 +1014,18 @@ export default function LibraryScreen() {
             keyExtractor={(it)=>it.uri}
             renderItem={renderVideoRow}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
+            initialNumToRender={6}
+            windowSize={7}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={50}
+            removeClippedSubviews
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewConfigRef.current}
           />
         </View>
       )}
 
-      {/* ===== Sports tab (global) ===== */}
+      {/* Sports tab (global) */}
       {view === 'sports' && selectedSport == null && (
         <FlatList
           data={Object.keys(rowsBySport).sort((a,b)=>a.localeCompare(b))}
@@ -902,11 +1048,22 @@ export default function LibraryScreen() {
             </TouchableOpacity>
             <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedSport}</Text>
           </View>
-          <FlatList data={rowsBySport[selectedSport] ?? []} keyExtractor={(it)=>it.uri} renderItem={renderVideoRow} contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }} />
+          <FlatList
+            data={rowsBySport[selectedSport] ?? []}
+            keyExtractor={(it)=>it.uri}
+            renderItem={renderVideoRow}
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
+            initialNumToRender={6}
+            windowSize={7}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={50}
+            removeClippedSubviews
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewConfigRef.current}
+          />
         </View>
       )}
 
-      {/* Note: we removed the inline full-screen player modal; we route to Playback instead */}
       <Modal visible={false} />
 
       {/* Edit Athlete modal */}
@@ -963,17 +1120,3 @@ export default function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
