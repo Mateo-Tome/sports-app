@@ -1,5 +1,5 @@
 // app/(tabs)/library.tsx
-// Library: optimized load + fast row patching
+// Library: optimized load + fast row patching + safe FS ops + thumb cleanup
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -27,7 +27,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const BLUR_HASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
 const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
@@ -68,6 +67,12 @@ type Row = {
 const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
 const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 const bytesToMB = (b?: number | null) => (b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB');
+const baseNameNoExt = (p: string) => {
+  const name = (p.split('/').pop() || '');
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(0, i) : name;
+};
+const thumbPathFor = (videoUri: string) => `${THUMBS_DIR}${baseNameNoExt(videoUri)}.jpg`;
 
 // ----- bounded concurrency helper -----
 async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: number) => Promise<R>): Promise<R[]> {
@@ -82,6 +87,14 @@ async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: nu
   });
   await Promise.all(workers);
   return results;
+}
+
+// ----- tiny FS queue (mutex) to avoid concurrent writes/moves -----
+let __fsQueue: Promise<any> = Promise.resolve();
+function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
+  const task = __fsQueue.then(fn, fn);
+  __fsQueue = task.then(() => undefined, () => undefined);
+  return task;
 }
 
 // extra helpers for robust move/rename
@@ -176,11 +189,36 @@ async function getOrCreateThumb(videoUri: string, fileName: string) {
   const info = await FileSystem.getInfoAsync(dest);
   if ((info as any)?.exists) return dest;
   try {
-    // lighter & faster thumbnails
-    const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000, quality: 0.4 });
+    const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000, quality: 0.6 });
     try { await FileSystem.copyAsync({ from: uri, to: dest }); } catch {}
     return dest;
   } catch { return null; }
+}
+
+// sweep orphaned thumbs (no corresponding video in current index)
+async function sweepOrphanThumbs(indexUris?: string[]) {
+  try {
+    await ensureDir(THUMBS_DIR);
+    // @ts-ignore
+    const files: string[] = await (FileSystem as any).readDirectoryAsync(THUMBS_DIR);
+    if (!files?.length) return 0;
+
+    const allowed = new Set(
+      (indexUris ?? (await readIndex()).map(m => m.uri)).map(u => baseNameNoExt(u).toLowerCase())
+    );
+
+    let removed = 0;
+    await mapLimit(files.filter(f => f.toLowerCase().endsWith('.jpg')), 4, async (f) => {
+      const base = f.slice(0, -4).toLowerCase();
+      if (!allowed.has(base)) {
+        try {
+          await FileSystem.deleteAsync(`${THUMBS_DIR}${f}`, { idempotent: true });
+          removed++;
+        } catch {}
+      }
+    });
+    return removed;
+  } catch { return 0; }
 }
 
 // ---------- sidecar (score/outcome + gold) ----------
@@ -297,7 +335,7 @@ async function readOutcomeFor(videoUri: string): Promise<{
 }
 
 // ---------- retag / move ----------
-async function retagVideo(
+async function _retagVideo(
   input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string },
   newAthleteRaw: string
 ) {
@@ -420,6 +458,10 @@ async function retagVideo(
     else await MediaLibrary.addAssetsToAlbumAsync([assetId], s, false);
   } catch {}
 }
+// safe wrapper (serialized with the FS queue)
+function retagVideo(input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string }, newAthlete: string) {
+  return enqueueFs(() => _retagVideo(input, newAthlete));
+}
 
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
@@ -468,25 +510,6 @@ export default function LibraryScreen() {
     };
   }, []);
 
-  // Prefetch any missing thumbs in background (after first render)
-  const prefetchAllThumbs = useCallback(async (list: Row[]) => {
-    const toMake = list.filter(r => !r.thumbUri).map(r => r.uri);
-    if (!toMake.length) return;
-
-    const updated = await mapLimit(toMake, 2, async (uri) => {
-      const fileName = uri.split('/').pop() || 'video.mp4';
-      const thumb = await getOrCreateThumb(uri, fileName);
-      return { uri, thumb };
-    });
-
-    setRows(prev =>
-      prev.map(r => {
-        const hit = updated.find(u => u.uri === r.uri);
-        return hit ? { ...r, thumbUri: hit.thumb } : r;
-      })
-    );
-  }, []);
-
   // ---------- initial load with bounded concurrency & eager thumbs for first 12 ----------
   const load = useCallback(async () => {
     if (loadingRef.current) return;
@@ -503,17 +526,17 @@ export default function LibraryScreen() {
       filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
       setRows(filtered);
 
-      // warm remaining thumbs shortly after first paint
-      setTimeout(() => prefetchAllThumbs(filtered), 300);
-
       try {
         const raw = await AsyncStorage.getItem(ATHLETES_KEY);
         setAthleteList(raw ? JSON.parse(raw) : []);
       } catch { setAthleteList([]); }
+
+      // opportunistically sweep orphan thumbs (quietly)
+      try { await sweepOrphanThumbs(sorted.map(m => m.uri)); } catch {}
     } finally {
       loadingRef.current = false;
     }
-  }, [buildRow, prefetchAllThumbs]);
+  }, [buildRow]);
 
   // initial + focus refresh
   useEffect(() => { load(); }, [load]);
@@ -577,31 +600,64 @@ export default function LibraryScreen() {
     return () => sub.remove();
   }, [patchRowFromSidecarPayload]);
 
+  // confirm-before-delete
+  const confirmRemove = useCallback((row: Row) => {
+    Alert.alert(
+      'Delete this video?',
+      'This removes the file, its index entry, and its cached thumbnail.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
+      ]
+    );
+  }, []); // removeVideo is stable enough below, no hard dep to avoid cycle
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    try { await load(); } finally { setRefreshing(false); }
+    try {
+      await load();
+      // sweep orphans again on explicit refresh
+      try { await sweepOrphanThumbs(); } catch {}
+    } finally {
+      setRefreshing(false);
+    }
   }, [load]);
 
+  // delete handler (serialized through FS queue) + thumb cleanup
   const removeVideo = useCallback(async (row: Row) => {
-    try {
-      try { await FileSystem.deleteAsync(row.uri, { idempotent: true }); } catch {}
-      const current = await readIndex();
-      const updated = current.filter(e => e.uri !== row.uri);
-      await writeIndexAtomic(updated);
+    await enqueueFs(async () => {
+      try {
+        // delete the video file
+        try { await FileSystem.deleteAsync(row.uri, { idempotent: true }); } catch {}
 
-      if (row.assetId) {
+        // delete the cached thumbnail (if present)
         try {
-          const { granted } = await MediaLibrary.requestPermissionsAsync();
-          if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
+          const t = thumbPathFor(row.uri);
+          const info = await FileSystem.getInfoAsync(t);
+          // @ts-ignore
+          if ((info as any)?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
         } catch {}
-      }
 
-      Alert.alert('Deleted', 'Video removed.');
-      await load();
-    } catch (e: any) {
-      console.log('delete error:', e);
-      Alert.alert('Delete failed', String(e?.message ?? e));
-    }
+        // drop from index
+        const current = await readIndex();
+        const updated = current.filter(e => e.uri !== row.uri);
+        await writeIndexAtomic(updated);
+
+        // delete from Photos (if it was saved there)
+        if (row.assetId) {
+          try {
+            const { granted } = await MediaLibrary.requestPermissionsAsync();
+            if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
+          } catch {}
+        }
+
+        Alert.alert('Deleted', 'Video removed.');
+        await load();
+      } catch (e: any) {
+        console.log('delete error:', e);
+        Alert.alert('Delete failed', String(e?.message ?? e));
+      }
+    });
   }, [load]);
 
   const saveToPhotos = useCallback(async (uri: string) => {
@@ -618,8 +674,7 @@ export default function LibraryScreen() {
     });
   }, [router]);
 
-  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-  // FIX: define doEditAthlete used by the modal
+  // >>> define doEditAthlete used by the modal (serialized) <<<
   const doEditAthlete = useCallback(
     async (row: Row, newAthlete: string) => {
       try {
@@ -639,7 +694,6 @@ export default function LibraryScreen() {
     },
     [load]
   );
-  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
   // ====== GROUPINGS ======
   const allRows = useMemo(() => [...rows].sort((a,b)=>(b.mtime ?? 0)-(a.mtime ?? 0)), [rows]);
@@ -723,15 +777,18 @@ export default function LibraryScreen() {
 
         <View style={{ padding: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            {/* Thumbnail with placeholder & fade */}
-            <Image
-              source={item.thumbUri ? { uri: item.thumbUri } : undefined}
-              style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              placeholder={BLUR_HASH}
-              transition={200}
-            />
+            {item.thumbUri ? (
+              <Image
+                source={{ uri: item.thumbUri }}
+                style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                contentFit="cover"
+                transition={100}
+              />
+            ) : (
+              <View style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+              </View>
+            )}
 
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -759,7 +816,7 @@ export default function LibraryScreen() {
                   <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => removeVideo(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}>
+                <TouchableOpacity onPress={() => confirmRemove(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}>
                   <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
                 </TouchableOpacity>
 
@@ -772,7 +829,7 @@ export default function LibraryScreen() {
         </View>
       </Pressable>
     );
-  }, [routerPushPlayback, saveToPhotos, removeVideo]);
+  }, [routerPushPlayback, saveToPhotos, confirmRemove]);
 
   // Lazy thumbnails for viewable rows
   const thumbQueueRef = useRef<Set<string>>(new Set());
@@ -849,9 +906,9 @@ export default function LibraryScreen() {
           ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No recordings yet. Record a match, then come back.</Text>}
 
           // performance tuning
-          initialNumToRender={6}
+          initialNumToRender={10}
           windowSize={7}
-          maxToRenderPerBatch={8}
+          maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
           removeClippedSubviews
 
@@ -898,9 +955,7 @@ export default function LibraryScreen() {
                       source={{ uri: photoUri }}
                       style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.1)' }}
                       contentFit="cover"
-                      cachePolicy="memory-disk"
-                      placeholder={BLUR_HASH}
-                      transition={200}
+                      transition={100}
                     />
                   ) : (
                     <View
@@ -973,14 +1028,18 @@ export default function LibraryScreen() {
                   }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-                    <Image
-                      source={preview ? { uri: preview } : undefined}
-                      style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)' }}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                      placeholder={BLUR_HASH}
-                      transition={200}
-                    />
+                    {preview ? (
+                      <Image
+                        source={{ uri: preview }}
+                        style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                        contentFit="cover"
+                        transition={100}
+                      />
+                    ) : (
+                      <View style={{ width: 72, height: 40, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+                      </View>
+                    )}
 
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>{sport}</Text>
@@ -1014,9 +1073,9 @@ export default function LibraryScreen() {
             keyExtractor={(it)=>it.uri}
             renderItem={renderVideoRow}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
-            initialNumToRender={6}
+            initialNumToRender={8}
             windowSize={7}
-            maxToRenderPerBatch={8}
+            maxToRenderPerBatch={10}
             updateCellsBatchingPeriod={50}
             removeClippedSubviews
             onViewableItemsChanged={onViewableItemsChanged}
@@ -1053,9 +1112,9 @@ export default function LibraryScreen() {
             keyExtractor={(it)=>it.uri}
             renderItem={renderVideoRow}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
-            initialNumToRender={6}
+            initialNumToRender={8}
             windowSize={7}
-            maxToRenderPerBatch={8}
+            maxToRenderPerBatch={10}
             updateCellsBatchingPeriod={50}
             removeClippedSubviews
             onViewableItemsChanged={onViewableItemsChanged}

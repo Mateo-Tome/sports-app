@@ -50,7 +50,8 @@
     "react-native-stack": "^1.0.0-alpha11",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5",
-    "expo-linear-gradient": "~14.1.5"
+    "expo-linear-gradient": "~14.1.5",
+    "sentry-expo": "~7.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

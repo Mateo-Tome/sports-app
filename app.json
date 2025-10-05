@@ -19,7 +19,8 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-video"
+      "expo-video",
+      "sentry-expo"
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
@@ -54,7 +55,3 @@
     }
   }
 }
-
-
-
-
