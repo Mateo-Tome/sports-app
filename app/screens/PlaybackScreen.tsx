@@ -1,8 +1,7 @@
-// app/screens/PlaybackScreen.tsx
 import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Dimensions, Pressable, ScrollView, Text, View } from 'react-native';
 import {
   GestureHandlerRootView,
@@ -213,7 +212,7 @@ function deriveOutcome(
   const winner: Winner =
     outcome === 'T'
       ? null
-      : (h > o ? 'home' : 'opponent');
+      : ((h > o ? 'home' : 'opponent') as 'home' | 'opponent');
 
   return { finalScore, outcome, winner, endedBy, athletePinned, athleteWasPinned };
 }
@@ -245,7 +244,7 @@ function EventBelt({
   const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
   const colorFor = (actor?: string) => (actor === 'home' ? GREEN : RED);
 
-  const layout = useMemo(() => {
+  const layout = React.useMemo(() => {
     const twoLane = events.map(e =>
       e.actor === 'home' || e.actor === 'opponent' ? e : { ...e, actor: 'opponent' as const }
     );
@@ -283,7 +282,7 @@ function EventBelt({
   useEffect(() => {
     if (!duration) return;
     if (userScrolling.current) return;
-    const playheadX = current * PX_PER_SEC;
+    const playheadX = current * 10; // PX_PER_SEC
     {
       const targetX = Math.max(0, playheadX - screenW * 0.5);
       const now = Date.now();
@@ -331,10 +330,10 @@ function EventBelt({
                 delayLongPress={260}
                 style={{
                   position: 'absolute',
-                  left: it.x - PILL_W / 2,
+                  left: it.x - 64 / 2, // PILL_W / 2
                   top: it.y,
-                  width: PILL_W,
-                  height: PILL_H,
+                  width: 64,
+                  height: 28,
                   borderRadius: 999,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -380,7 +379,7 @@ function TopScrubber({
   const MAX_W = 520;
   const width = Math.min(MAX_W, screenW - insets.left - insets.right - H_MARG * 2);
 
-  const TOP = insets.top + 96;  // moved up a bit so it clears top score
+  const TOP = insets.top + 96;
   const TRACK_H = 8;
   const THUMB_D = 28;
 
@@ -420,6 +419,8 @@ function TopScrubber({
   }, [flushSeek]);
 
   const begin = () => { onInteracting?.(true); };
+  theend: {
+  }
   const end = () => {
     onInteracting?.(false);
     setTimeout(() => setBubble(null), 300);
@@ -543,7 +544,7 @@ function QuickEditSheet({
 }) {
   if (!visible || !event) return null;
   const screenW = Dimensions.get('window').width;
-  const BOX_W = Math.min(screenW * 0.75, 520); // ~25% smaller than full-width
+  const BOX_W = Math.min(screenW * 0.75, 520);
   return (
     <View
       pointerEvents="auto"
@@ -565,16 +566,10 @@ function QuickEditSheet({
       </Text>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-        <Pressable
-          onPress={onReplace}
-          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}
-        >
+        <Pressable onPress={onReplace} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}>
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Replace…</Text>
         </Pressable>
-        <Pressable
-          onPress={onDelete}
-          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}
-        >
+        <Pressable onPress={onDelete} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}>
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Delete</Text>
         </Pressable>
         <Pressable
@@ -609,7 +604,7 @@ export default function PlaybackScreen() {
   const [overlayOn, setOverlayOn] = useState(true); // bottom belt visibility
   const [isScrubbing, setIsScrubbing] = useState(false);
 
-  // ====== Edit/Add state (declare BEFORE effects that depend on it) ======
+  // ====== Edit/Add state ======
   const [editMode, setEditMode] = useState(false);
   const [editSubmode, setEditSubmode] = useState<'add'|'replace'|null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
@@ -703,6 +698,7 @@ export default function PlaybackScreen() {
 
   // === sidecar IO ===
   const sidecarPathRef = useRef<string | null>(null);
+  const sidecarMeta = useRef<{ sport?: string; style?: string; createdAt?: number }>({});
 
   const saveSidecar = async (next: EventRow[]) => {
     try {
@@ -727,7 +723,7 @@ export default function PlaybackScreen() {
         homeIsAthlete,
         appVersion: 1,
 
-        // explicit fields for Library
+        // explicit for Library
         outcome: o.outcome,
         winner: o.winner,
         endedBy: o.endedBy,
@@ -735,14 +731,17 @@ export default function PlaybackScreen() {
         athleteWasPinned: o.athleteWasPinned,
         modifiedAt: Date.now(),
       };
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(payload));
 
-      // 🔔 notify Library to refresh
-      try { DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath }); } catch {}
+      // 🔒 Atomic write: tmp → move
+      const tmp = `${path}.tmp`;
+      await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload));
+      try { await FileSystem.deleteAsync(path, { idempotent: true }); } catch {}
+      await FileSystem.moveAsync({ from: tmp, to: path });
+
+      // 🔔 notify Library with payload to patch just this row
+      try { DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload }); } catch {}
     } catch {}
   };
-
-  const sidecarMeta = useRef<{ sport?: string; style?: string; createdAt?: number }>({});
 
   useEffect(() => {
     if (!videoPath) {
@@ -868,7 +867,7 @@ export default function PlaybackScreen() {
     return clearHideTimer;
   }, [isPlaying, showChrome, editMode]);
 
-  // Tap zones: single tap only shows chrome; double tap seeks by 5s (disabled during edit in the JSX)
+  // Tap zones
   const lastTapLeft = useRef(0);
   const lastTapRight = useRef(0);
   const DOUBLE_MS = 260;
@@ -901,7 +900,7 @@ export default function PlaybackScreen() {
     }
   };
 
-  const SCRUB_RESERVED_TOP = insets.top + 150; // unused while editing
+  const SCRUB_RESERVED_TOP = insets.top + 150;
   const tapZoneBottomGap = (overlayOn ? BELT_H : 0) + insets.bottom;
 
   // ====== Edit/Add actions ======
@@ -928,7 +927,6 @@ export default function PlaybackScreen() {
     setQuickEditFor(null);
   };
 
-  // Handle selection from sport overlay during Edit/Add
   const handleEditOverlayEvent = (evt: OverlayEvent) => {
     const actor: Actor = toActor(evt.actor);
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
@@ -958,17 +956,15 @@ export default function PlaybackScreen() {
       return;
     }
 
-    // Fallback
     exitEditMode();
   };
 
-  // Which overlay to show while editing — expand later for more sports
   const renderEditOverlay = () => {
     return (
       <WrestlingFolkstyleOverlay
         isRecording={true}
         onEvent={handleEditOverlayEvent}
-        getCurrentTSec={() => Math.round(now || 0)}  // live time
+        getCurrentTSec={() => Math.round(now || 0)}
         sport="wrestling"
         style="folkstyle"
         score={{ home: 0, opponent: 0 }}
@@ -990,7 +986,7 @@ export default function PlaybackScreen() {
           contentFit="contain"
         />
 
-        {/* ===== Replay button at video end ===== */}
+        {/* Replay */}
         {atVideoEnd && !editMode && (
           <Pressable
             onPress={() => { onSeek(0); try { (player as any)?.play?.(); } catch {} }}
@@ -1010,7 +1006,7 @@ export default function PlaybackScreen() {
           </Pressable>
         )}
 
-        {/* ===== Interaction layers (DISABLED during edit) ===== */}
+        {/* Interaction layers (disabled during edit) */}
         {!editMode && (
           <>
             {/* TWO half-screen tap zones */}
@@ -1028,7 +1024,7 @@ export default function PlaybackScreen() {
               <Pressable onPress={handleRightTap} style={{ flex: 1 }} />
             </View>
 
-            {/* back button */}
+            {/* back */}
             <Pressable
               onPress={() => router.back()}
               style={{
@@ -1197,13 +1193,12 @@ export default function PlaybackScreen() {
           </>
         )}
 
-        {/* ====== EDIT OVERLAY (only thing interactive while editing) ====== */}
+        {/* EDIT OVERLAY */}
         {editMode && (
           <View
             pointerEvents="box-none"
             style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 100 }}
           >
-            {/* dim the world slightly so it’s obvious we’re in Edit */}
             <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.15)' }} />
             <View pointerEvents="auto" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
               {renderEditOverlay()}

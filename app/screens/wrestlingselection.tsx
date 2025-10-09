@@ -7,29 +7,17 @@ export default function WrestlingSelection() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // Read athlete from params (default to Unassigned)
   const params = useLocalSearchParams<{ athlete?: string | string[] }>();
   const athleteParam = Array.isArray(params.athlete) ? params.athlete[0] : params.athlete;
   const athlete = (athleteParam ?? 'Unassigned').trim() || 'Unassigned';
 
   const go = (style: 'folkstyle' | 'freestyle' | 'greco') => {
-    router.push({
-      pathname: '/record/camera',
-      params: { athlete, sport: 'wrestling', style },
-    });
+    router.push({ pathname: '/record/camera', params: { athlete, sport: 'wrestling', style } });
   };
 
   const CardBtn = ({
-    icon,
-    title,
-    subtitle,
-    onPress,
-  }: {
-    icon: string;
-    title: string;
-    subtitle?: string;
-    onPress: () => void;
-  }) => (
+    icon, title, subtitle, onPress,
+  }: { icon: string; title: string; subtitle?: string; onPress: () => void }) => (
     <TouchableOpacity
       onPress={onPress}
       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -64,16 +52,19 @@ export default function WrestlingSelection() {
 
   return (
     <>
+      {/* Use the system header back chevron only */}
       <Stack.Screen
         options={{
           title: '',
           headerTitle: '',
+          headerShown: true,
           headerTransparent: true,
           headerShadowVisible: false,
-          headerTintColor: 'white',              // back chevron color
-          headerBackButtonDisplayMode: 'minimal' // hide back title text
+          headerTintColor: 'white',
+          headerBackButtonDisplayMode: 'minimal',
         }}
       />
+
       <View
         style={{
           flex: 1,
@@ -85,32 +76,10 @@ export default function WrestlingSelection() {
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Choose wrestling style</Text>
         <Text style={{ color: '#AAA', marginTop: 6, marginBottom: 10 }}>Recording — {athlete}</Text>
 
-        {/* 3 clean cards */}
-        <CardBtn
-          icon="🇺🇸"
-          title="Folkstyle"
-          subtitle="High school & college (US)"
-          onPress={() => go('folkstyle')}
-        />
-        <CardBtn
-          icon="🌍"
-          title="Freestyle"
-          subtitle="International rules"
-          onPress={() => go('freestyle')}
-        />
-        <CardBtn
-          icon="🛡️"
-          title="Greco-Roman"
-          subtitle="Upper-body only"
-          onPress={() => go('greco')}
-        />
+        <CardBtn icon="🇺🇸" title="Folkstyle"  subtitle="High school & college (US)" onPress={() => go('folkstyle')} />
+        <CardBtn icon="🌍" title="Freestyle"  subtitle="International rules"       onPress={() => go('freestyle')} />
+        <CardBtn icon="🛡️" title="Greco-Roman" subtitle="Upper-body only"         onPress={() => go('greco')} />
       </View>
     </>
   );
 }
-
-
-
-
-
-  
