@@ -1,5 +1,5 @@
 // app/(tabs)/library.tsx
-// Library: optimized load + fast row patching + safe FS ops + thumb cleanup
+// Library: optimized load + fast row patching + safe FS ops + thumb cleanup (assetId-aware thumbs)
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   DeviceEventEmitter,
   FlatList,
@@ -26,11 +27,13 @@ import {
   ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
 
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
 const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
 const ATHLETES_KEY = 'athletes:list';
+const UPLOADED_MAP_KEY = 'uploaded:map';
 
 type IndexMeta = {
   uri: string;
@@ -72,7 +75,10 @@ const baseNameNoExt = (p: string) => {
   const i = name.lastIndexOf('.');
   return i > 0 ? name.slice(0, i) : name;
 };
-const thumbPathFor = (videoUri: string) => `${THUMBS_DIR}${baseNameNoExt(videoUri)}.jpg`;
+// hash for unique thumb names even if basenames collide
+const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
+const thumbNameFor = (videoUri: string) => `${baseNameNoExt(videoUri)}_${hash(videoUri)}.jpg`;
+const thumbPathFor = (videoUri: string) => `${THUMBS_DIR}${thumbNameFor(videoUri)}`;
 
 // ----- bounded concurrency helper -----
 async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: number) => Promise<R>): Promise<R[]> {
@@ -181,18 +187,63 @@ async function writeIndexAtomic(list: IndexMeta[]) {
   await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
 }
 
-// ---------- thumbs ----------
-async function getOrCreateThumb(videoUri: string, fileName: string) {
-  await ensureDir(THUMBS_DIR);
-  const base = fileName.replace(/\.[^/.]+$/, '');
-  const dest = `${THUMBS_DIR}${base}.jpg`;
-  const info = await FileSystem.getInfoAsync(dest);
-  if ((info as any)?.exists) return dest;
+// ---------- thumbs (assetId aware) ----------
+async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
+  const { uri: tmp } = await VideoThumbnails.getThumbnailAsync(uri, { time: t, quality: 0.6 });
+  await FileSystem.copyAsync({ from: tmp, to: dest });
+}
+
+async function getOrCreateThumb(videoUri: string, assetId?: string | null): Promise<string | null> {
   try {
-    const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000, quality: 0.6 });
-    try { await FileSystem.copyAsync({ from: uri, to: dest }); } catch {}
-    return dest;
-  } catch { return null; }
+    await ensureDir(THUMBS_DIR);
+    const dest = thumbPathFor(videoUri);
+
+    // already made?
+    const info = await FileSystem.getInfoAsync(dest);
+    // @ts-ignore
+    if ((info as any)?.exists) return dest;
+
+    // 1) First try the given URI (works for file://)
+    try {
+      try {
+        await tryMakeThumbFrom(videoUri, dest, 1000);
+      } catch {
+        await tryMakeThumbFrom(videoUri, dest, 0);
+      }
+      const ok = await FileSystem.getInfoAsync(dest);
+      // @ts-ignore
+      if ((ok as any)?.exists) return dest;
+    } catch (e) {
+      // continue to asset fallback
+      console.log('[thumbs] primary failed for', videoUri, e);
+    }
+
+    // 2) If that fails and we have an assetId, try its localUri from Photos
+    if (assetId) {
+      try {
+        const asset = await MediaLibrary.getAssetInfoAsync(assetId);
+        const local = asset?.localUri || asset?.uri;
+        if (local) {
+          try {
+            await tryMakeThumbFrom(local, dest, 1000);
+          } catch {
+            await tryMakeThumbFrom(local, dest, 0);
+          }
+          const ok2 = await FileSystem.getInfoAsync(dest);
+          // @ts-ignore
+          if ((ok2 as any)?.exists) return dest;
+        }
+      } catch (e2) {
+        console.log('[thumbs] asset fallback failed', assetId, e2);
+      }
+    }
+
+    // still nothing
+    return null;
+  } catch (e) {
+    console.log('[thumbs] error', e);
+    return null;
+  }
 }
 
 // sweep orphaned thumbs (no corresponding video in current index)
@@ -204,12 +255,12 @@ async function sweepOrphanThumbs(indexUris?: string[]) {
     if (!files?.length) return 0;
 
     const allowed = new Set(
-      (indexUris ?? (await readIndex()).map(m => m.uri)).map(u => baseNameNoExt(u).toLowerCase())
+      (indexUris ?? (await readIndex()).map(m => m.uri)).map(u => thumbNameFor(u).replace(/\.jpg$/i, '').toLowerCase())
     );
 
     let removed = 0;
     await mapLimit(files.filter(f => f.toLowerCase().endsWith('.jpg')), 4, async (f) => {
-      const base = f.slice(0, -4).toLowerCase();
+      const base = f.replace(/\.jpg$/i, '').toLowerCase();
       if (!allowed.has(base)) {
         try {
           await FileSystem.deleteAsync(`${THUMBS_DIR}${f}`, { idempotent: true });
@@ -279,7 +330,10 @@ async function readOutcomeFor(videoUri: string): Promise<{
       } catch {}
     }
 
-    if (!sc) return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
+    // If it's a highlight clip (sport === 'highlights'), there is no match outcome—return neutral.
+    if (!sc || sc.sport === 'highlights') {
+      return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
+    }
 
     let finalScore: FinalScore | null = sc.finalScore ?? null;
     if (!finalScore) {
@@ -463,10 +517,71 @@ function retagVideo(input: { uri: string; oldAthlete: string; sportKey: string; 
   return enqueueFs(() => _retagVideo(input, newAthlete));
 }
 
+function UploadButton({
+  localUri,
+  sidecar,
+  uploaded,
+  onUploaded,
+}: {
+  localUri: string;
+  sidecar?: unknown;
+  uploaded?: boolean;
+  onUploaded?: (cloudKey: string, url: string) => void;
+}) {
+  const [state, setState] = useState<'idle'|'uploading'|'done'>(uploaded ? 'done' : 'idle');
+  const [error, setError] = useState<string|undefined>();
+
+  useEffect(() => {
+    setState(uploaded ? 'done' : 'idle');
+  }, [uploaded]);
+
+  if (state === 'done') {
+    return <Text style={{ fontWeight: '600', color: 'white' }}>✅ Uploaded</Text>;
+  }
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <Pressable
+        onPress={async () => {
+          setError(undefined);
+          setState('uploading');
+          try {
+            const { key, url } = await uploadFileOnTap(localUri);
+            if (sidecar) await uploadJSONOnTap(sidecar, 'sidecars/');
+            setState('done');
+            onUploaded?.(key, url);
+          } catch (e: any) {
+            setError(e?.message ?? 'Upload failed');
+            setState('idle');
+            Alert.alert('Upload failed', e?.message ?? 'Please try again while online.');
+          }
+        }}
+        style={{
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: 'white',
+          backgroundColor: 'rgba(255,255,255,0.12)',
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '700' }}>
+          {state === 'uploading' ? 'Uploading…' : 'Upload'}
+        </Text>
+      </Pressable>
+      {state === 'uploading' && <ActivityIndicator />}
+      {!!error && <Text style={{ color: 'tomato' }}>{error}</Text>}
+    </View>
+  );
+}
+
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const router = useRouter();
+
+  // stable key for uploadedMap: use assetId if present, else uri
+  const keyFor = useCallback((r: Row) => r.assetId ?? r.uri, []);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -475,6 +590,8 @@ export default function LibraryScreen() {
   const [athleteList, setAthleteList] = useState<{ id: string; name: string; photoUri?: string | null }[]>([]);
   const [newName, setNewName] = useState('');
 
+  const [uploadedMap, setUploadedMap] = useState<Record<string, { key: string; url: string; at: number }>>({});
+
   // segmented state
   const [view, setView] = useState<'all'|'athletes'|'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
@@ -482,18 +599,21 @@ export default function LibraryScreen() {
 
   const loadingRef = useRef(false);
 
+  // keep a ref of rows for lazy thumb generation to access assetId
+  const rowsRef = useRef<Row[]>([]);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+
   // ---------- build 1 row ----------
   const buildRow = useCallback(async (meta: IndexMeta, eagerThumb: boolean): Promise<Row | null> => {
     const info = await FileSystem.getInfoAsync(meta.uri);
     if (!(info as any)?.exists) return null;
 
-    const name = meta.uri.split('/').pop() || meta.displayName;
     const scoreBits = await readOutcomeFor(meta.uri);
-    const thumb = eagerThumb ? await getOrCreateThumb(meta.uri, name) : null;
+    const thumb = eagerThumb ? await getOrCreateThumb(meta.uri, meta.assetId) : null;
 
     return {
       uri: meta.uri,
-      displayName: meta.displayName || name,
+      displayName: meta.displayName || (meta.uri.split('/').pop() || 'video'),
       athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
       sport: (meta.sport || 'unknown').trim() || 'unknown',
       assetId: meta.assetId,
@@ -530,6 +650,11 @@ export default function LibraryScreen() {
         const raw = await AsyncStorage.getItem(ATHLETES_KEY);
         setAthleteList(raw ? JSON.parse(raw) : []);
       } catch { setAthleteList([]); }
+
+      try {
+        const rawUp = await AsyncStorage.getItem(UPLOADED_MAP_KEY);
+        setUploadedMap(rawUp ? JSON.parse(rawUp) : {});
+      } catch { setUploadedMap({}); }
 
       // opportunistically sweep orphan thumbs (quietly)
       try { await sweepOrphanThumbs(sorted.map(m => m.uri)); } catch {}
@@ -610,13 +735,12 @@ export default function LibraryScreen() {
         { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
       ]
     );
-  }, []); // removeVideo is stable enough below, no hard dep to avoid cycle
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await load();
-      // sweep orphans again on explicit refresh
       try { await sweepOrphanThumbs(); } catch {}
     } finally {
       setRefreshing(false);
@@ -682,7 +806,7 @@ export default function LibraryScreen() {
           { uri: row.uri, oldAthlete: row.athlete, sportKey: row.sport, assetId: row.assetId },
           newAthlete
         );
-        await load(); // refresh list after retag
+        await load();
       } catch (e: any) {
         console.log('retag error', e);
         const msg = e?.message || String(e);
@@ -745,9 +869,11 @@ export default function LibraryScreen() {
       dateStr,
     ].filter(Boolean);
 
-    const chip = item.outcome && item.myScore != null && item.oppScore != null
+    const chip = (item.sport !== 'highlights' && item.outcome && item.myScore != null && item.oppScore != null)
       ? { text: `${item.outcome} ${item.myScore}–${item.oppScore}`, color: outcomeColor(item.outcome) }
       : null;
+
+    const uploaded = uploadedMap[keyFor(item)];
 
     return (
       <Pressable
@@ -779,6 +905,7 @@ export default function LibraryScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             {item.thumbUri ? (
               <Image
+                key={item.thumbUri || item.uri}
                 source={{ uri: item.thumbUri }}
                 style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
                 contentFit="cover"
@@ -793,11 +920,13 @@ export default function LibraryScreen() {
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>{item.displayName}</Text>
+
                 {chip && (
                   <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: `${chip.color}22`, borderWidth: 1, borderColor: `${chip.color}66` }}>
                     <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
                   </View>
                 )}
+
                 {item.highlightGold && (
                   <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: '#00000033', borderWidth: 1, borderColor: '#ffffff55' }}>
                     <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
@@ -823,15 +952,36 @@ export default function LibraryScreen() {
                 <TouchableOpacity onPress={() => setAthletePickerOpen(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
                   <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
                 </TouchableOpacity>
+
+                <View style={{ marginTop: 8, alignItems: 'center' }}>
+                  <UploadButton
+                    localUri={item.uri}
+                    uploaded={!!uploaded}
+                    sidecar={{
+                      videoPath: item.uri,
+                      athlete: item.athlete,
+                      sport: item.sport,
+                      createdAt: item.mtime ?? Date.now(),
+                    }}
+                    onUploaded={(key, url) => {
+                      const mapKey = keyFor(item);
+                      setUploadedMap(prev => {
+                        const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
+                        AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
+                        return next;
+                      });
+                    }}
+                  />
+                </View>
               </View>
             </View>
           </View>
         </View>
       </Pressable>
     );
-  }, [routerPushPlayback, saveToPhotos, confirmRemove]);
+  }, [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]);
 
-  // Lazy thumbnails for viewable rows
+  // Lazy thumbnails for viewable rows (now assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
   const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
     const toFetch: string[] = [];
@@ -847,8 +997,8 @@ export default function LibraryScreen() {
 
     (async () => {
       const updated: { uri: string; thumb: string | null }[] = await mapLimit(toFetch, 3, async (uri) => {
-        const fileName = uri.split('/').pop() || 'video.mp4';
-        const thumb = await getOrCreateThumb(uri, fileName);
+        const row = rowsRef.current.find(r => r.uri === uri);
+        const thumb = await getOrCreateThumb(uri, row?.assetId);
         return { uri, thumb };
       });
       setRows(prev =>

@@ -1,4 +1,7 @@
 // app/(tabs)/index.tsx
+// Athletes list with ImagePicker compatibility (no deprecation warnings),
+// “Take Photo / Choose” flow, and routing to /record/camera (Quick Record -> plain camera).
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,68 +28,101 @@ const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 type Athlete = { id: string; name: string; photoUri?: string | null };
 
-function imagesMediaTypes(): any {
-  const MT = (ImagePicker as any).MediaType;
-  if (MT && typeof MT === 'object' && MT.images) return [MT.images];
-  const MTO = (ImagePicker as any).MediaTypeOptions;
-  if (MTO && MTO.Images) return MTO.Images;
+const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
+
+/**
+ * Version-safe helper for ImagePicker `mediaTypes`.
+ * - New API: return array of ImagePicker.MediaType (e.g., ['images']) -> no warning
+ * - Old API: fall back to MediaTypeOptions.Images -> preserves behavior
+ */
+function pickImagesOnly(): any {
+  const IP: any = ImagePicker as any;
+
+  // Newer SDKs expose MediaType with tokens like "images"
+  if (IP.MediaType) {
+    const token = IP.MediaType.images ?? IP.MediaType.Images ?? 'images';
+    return [token]; // array form is the recommended shape
+  }
+
+  // Older SDKs use MediaTypeOptions.Images (legacy, but still works)
+  if (IP.MediaTypeOptions?.Images) return IP.MediaTypeOptions.Images;
+
+  // Last resort fallback; still selects images only
   return ['images'];
 }
-const wait = (ms = 160) => new Promise(res => setTimeout(res, ms));
+
+async function ensurePermissions(): Promise<boolean> {
+  try {
+    let cam = await ImagePicker.getCameraPermissionsAsync();
+    let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
+    if (cam.status !== 'granted') cam = await ImagePicker.requestCameraPermissionsAsync();
+    if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    const blocked = (p: ImagePicker.PermissionResponse) =>
+      p.status === 'denied' && p.canAskAgain === false;
+
+    if (blocked(cam) || blocked(lib)) {
+      const go = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          'Permissions needed',
+          'Camera/Photos access is blocked. Open Settings to enable?',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Open Settings', onPress: () => resolve(true) },
+          ],
+          { cancelable: true }
+        );
+      });
+      if (go) Linking.openSettings();
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function pickImageWithChoice(): Promise<string | null> {
-  let cam = await ImagePicker.getCameraPermissionsAsync();
-  let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
-  if (cam.status !== 'granted') cam = await ImagePicker.requestCameraPermissionsAsync();
-  if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const ok = await ensurePermissions();
+  if (!ok) return null;
 
-  const blocked = (p: any) => p.status === 'denied' && p.canAskAgain === false;
-  if (blocked(cam) || blocked(lib)) {
-    const go = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        'Permissions needed',
-        'Camera/Photos access is blocked. Open Settings to enable?',
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Open Settings', onPress: () => resolve(true) },
-        ],
-        { cancelable: true }
-      );
-    });
-    if (go) Linking.openSettings();
-    return null;
-  }
+  const mediaTypes = pickImagesOnly();
 
   if (Platform.OS === 'web') {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: imagesMediaTypes(),
+      mediaTypes,
       allowsEditing: true,
       quality: 0.85,
-    });
+    } as any);
     return res.canceled ? null : res.assets?.[0]?.uri ?? null;
   }
 
   if (Platform.OS === 'ios') {
     return new Promise((resolve) => {
       ActionSheetIOS.showActionSheetWithOptions(
-        { options: ['Cancel', 'Take Photo', 'Choose from Library'], cancelButtonIndex: 0, userInterfaceStyle: 'dark' },
+        {
+          options: ['Cancel', 'Take Photo', 'Choose from Library'],
+        // @ts-ignore this exists on iOS
+          userInterfaceStyle: 'dark',
+          cancelButtonIndex: 0,
+        },
         async (idx) => {
           try {
             if (idx === 1) {
-              await wait(120);
+              await wait(150); // avoid UI contention with system camera sheet
               const res = await ImagePicker.launchCameraAsync({
-                mediaTypes: imagesMediaTypes(),
+                mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
-              });
+              } as any);
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             } else if (idx === 2) {
               await wait(120);
               const res = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: imagesMediaTypes(),
+                mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
-              });
+              } as any);
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             } else {
               resolve(null);
@@ -104,7 +140,9 @@ async function pickImageWithChoice(): Promise<string | null> {
     const defer = (fn: () => Promise<void>) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          setTimeout(() => { fn().catch(() => resolve(null)); }, 220);
+          setTimeout(() => {
+            fn().catch(() => resolve(null));
+          }, 220);
         });
       });
     };
@@ -117,10 +155,10 @@ async function pickImageWithChoice(): Promise<string | null> {
           onPress: () =>
             defer(async () => {
               const res = await ImagePicker.launchCameraAsync({
-                mediaTypes: imagesMediaTypes(),
+                mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
-              });
+              } as any);
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             }),
         },
@@ -129,10 +167,10 @@ async function pickImageWithChoice(): Promise<string | null> {
           onPress: () =>
             defer(async () => {
               const res = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: imagesMediaTypes(),
+                mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
-              });
+              } as any);
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             }),
         },
@@ -164,7 +202,9 @@ export default function HomeAthletes() {
       console.log('athletes load error:', e);
     }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -179,11 +219,16 @@ export default function HomeAthletes() {
 
   const addAthlete = async () => {
     const n = nameInput.trim();
-    if (!n) { Alert.alert('Name required', 'Please enter a name.'); return; }
+    if (!n) {
+      Alert.alert('Name required', 'Please enter a name.');
+      return;
+    }
     const id = `${Date.now()}`;
     const next: Athlete[] = [{ id, name: n, photoUri: pendingPhoto }, ...athletes];
     await saveAthletes(next);
-    setNameInput(''); setPendingPhoto(null); setAddOpen(false);
+    setNameInput('');
+    setPendingPhoto(null);
+    setAddOpen(false);
   };
 
   const pickPendingPhoto = async () => {
@@ -194,35 +239,40 @@ export default function HomeAthletes() {
   const setPhotoForAthlete = async (id: string) => {
     const uri = await pickImageWithChoice();
     if (!uri) return;
-    const next = athletes.map(a => a.id === id ? { ...a, photoUri: uri } : a);
+    const next = athletes.map((a) => (a.id === id ? { ...a, photoUri: uri } : a));
     await saveAthletes(next);
   };
 
   const renameAthlete = async (id: string, newName: string) => {
     const name = newName.trim();
-    if (!name) { Alert.alert('Name required'); return; }
-    const next = athletes.map(a => a.id === id ? { ...a, name } : a);
+    if (!name) {
+      Alert.alert('Name required');
+      return;
+    }
+    const next = athletes.map((a) => (a.id === id ? { ...a, name } : a));
     await saveAthletes(next);
   };
 
   const deleteAthleteShell = async (id: string) => {
-    const next = athletes.filter(a => a.id !== id);
+    const next = athletes.filter((a) => a.id !== id);
     await saveAthletes(next);
     const current = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
-    if (current && !next.find(a => a.name === current)) {
+    if (current && !next.find((a) => a.name === current)) {
       await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
     }
   };
 
+  // ROUTE: push to /record/camera with athlete param
+  // Quick Record -> plain camera (no overlay)
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
-    router.push({ pathname: '/recordingScreen', params: { athlete: 'Unassigned' } });
+    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'plain', style: '' } });
   };
 
   const recordWithAthlete = async (name: string) => {
     const clean = name.trim();
     await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
-    router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
+    router.push({ pathname: '/record/camera', params: { athlete: clean, sport: 'wrestling', style: 'folkstyle' } });
   };
 
   const AthleteCard = ({ a }: { a: Athlete }) => {
@@ -236,6 +286,7 @@ export default function HomeAthletes() {
             options: ['Cancel', 'Delete'],
             cancelButtonIndex: 0,
             destructiveButtonIndex: 1,
+            // @ts-ignore iOS only prop
             userInterfaceStyle: 'dark',
             title: a.name,
           },
@@ -274,13 +325,15 @@ export default function HomeAthletes() {
       } else if (kind === 'danger') {
         style = { ...base, backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.35)' };
       } else {
-        style = { ...base, backgroundColor: 'rgba(255,255,255,0.12)', borderColor: 'rgba(255,255,255,0.35)' };
+        style = {
+          ...base,
+          backgroundColor: 'rgba(255,255,255,0.12)',
+          borderColor: 'rgba(255,255,255,0.35)',
+        };
       }
       return (
         <TouchableOpacity onPress={onPress} style={style}>
-          <Text style={{ color: 'white', fontWeight: '800' }}>
-            {label}
-          </Text>
+          <Text style={{ color: 'white', fontWeight: '800' }}>{label}</Text>
         </TouchableOpacity>
       );
     };
@@ -299,9 +352,26 @@ export default function HomeAthletes() {
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           {a.photoUri ? (
-            <Image source={{ uri: a.photoUri }} style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+            <Image
+              source={{ uri: a.photoUri }}
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+              }}
+            />
           ) : (
-            <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+            <View
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
               <Text style={{ color: 'white', opacity: 0.7, fontSize: 22 }}>👤</Text>
             </View>
           )}
@@ -318,7 +388,10 @@ export default function HomeAthletes() {
         {/* Actions */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
           <ActionBtn label="Record" kind="primary" onPress={() => recordWithAthlete(a.name)} />
-          <ActionBtn label={a.photoUri ? 'Change Photo' : 'Set Photo'} onPress={() => setPhotoForAthlete(a.id)} />
+          <ActionBtn
+            label={a.photoUri ? 'Change Photo' : 'Set Photo'}
+            onPress={() => setPhotoForAthlete(a.id)}
+          />
           <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
           {isWide ? (
             <ActionBtn label="Delete" kind="danger" onPress={() => deleteAthleteShell(a.id)} />
@@ -330,20 +403,50 @@ export default function HomeAthletes() {
         {/* Rename modal */}
         <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
-            <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+            <View
+              style={{
+                backgroundColor: '#121212',
+                borderRadius: 16,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.15)',
+              }}
+            >
               <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Rename Athlete</Text>
               <TextInput
                 value={renameInput}
                 onChangeText={setRenameInput}
                 placeholder="Name"
                 placeholderTextColor="rgba(255,255,255,0.4)"
-                style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', color: 'white' }}
+                style={{
+                  marginTop: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
+                  color: 'white',
+                }}
               />
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
-                <TouchableOpacity onPress={() => setEditOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
+                <TouchableOpacity
+                  onPress={() => setEditOpen(false)}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.12)',
+                  }}
+                >
                   <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={async () => { await renameAthlete(a.id, renameInput); setEditOpen(false); }} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    await renameAthlete(a.id, renameInput);
+                    setEditOpen(false);
+                  }}
+                  style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+                >
                   <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
                 </TouchableOpacity>
               </View>
@@ -357,13 +460,28 @@ export default function HomeAthletes() {
   return (
     <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
       {/* Header */}
-      <View style={{ paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+      <View
+        style={{
+          paddingHorizontal: 16,
+          paddingBottom: 8,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity onPress={recordNoAthlete} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#DC2626' }}>
+          <TouchableOpacity
+            onPress={recordNoAthlete}
+            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#DC2626' }}
+          >
             <Text style={{ color: 'white', fontWeight: '900' }}>Quick Record</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setAddOpen(true)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}>
+          <TouchableOpacity
+            onPress={() => setAddOpen(true)}
+            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}
+          >
             <Text style={{ color: 'white', fontWeight: '900' }}>Add Athlete</Text>
           </TouchableOpacity>
         </View>
@@ -389,27 +507,94 @@ export default function HomeAthletes() {
       {/* Add Athlete Modal */}
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
-          <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+          <View
+            style={{
+              backgroundColor: '#121212',
+              borderRadius: 16,
+              padding: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.15)',
+            }}
+          >
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Add Athlete</Text>
-            <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>Enter a name and (optionally) pick a photo.</Text>
-            <TextInput value={nameInput} onChangeText={setNameInput} placeholder="e.g., Jordan" placeholderTextColor="rgba(255,255,255,0.4)" style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', color: 'white' }} />
+            <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>
+              Enter a name and (optionally) pick a photo.
+            </Text>
+            <TextInput
+              value={nameInput}
+              onChangeText={setNameInput}
+              placeholder="e.g., Jordan"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={{
+                marginTop: 12,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.25)',
+                color: 'white',
+              }}
+            />
             <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               {pendingPhoto ? (
-                <Image source={{ uri: pendingPhoto }} style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+                <Image
+                  source={{ uri: pendingPhoto }}
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                  }}
+                />
               ) : (
-                <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}
+                >
                   <Text style={{ color: 'white', opacity: 0.6 }}>👤</Text>
                 </View>
               )}
-              <TouchableOpacity onPress={pickPendingPhoto} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
-                <Text style={{ color: 'white', fontWeight: '800' }}>{pendingPhoto ? 'Change Photo' : 'Pick Photo'}</Text>
+              <TouchableOpacity
+                onPress={pickPendingPhoto}
+                style={{
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'white',
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '800' }}>
+                  {pendingPhoto ? 'Change Photo' : 'Pick Photo'}
+                </Text>
               </TouchableOpacity>
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
-              <TouchableOpacity onPress={() => { setAddOpen(false); setPendingPhoto(null); }} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setAddOpen(false);
+                  setPendingPhoto(null);
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                }}
+              >
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={addAthlete} style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}>
+              <TouchableOpacity
+                onPress={addAthlete}
+                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+              >
                 <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
               </TouchableOpacity>
             </View>
@@ -419,4 +604,3 @@ export default function HomeAthletes() {
     </View>
   );
 }
-
