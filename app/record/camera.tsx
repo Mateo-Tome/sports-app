@@ -5,7 +5,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
@@ -20,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import HighlightButton from '../../components/HighlightButton';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
@@ -251,8 +251,6 @@ export default function CameraScreen() {
 
   const [markers, setMarkers] = useState<number[]>([]);
   const HILITE_DURATION_SEC = 10;
-  const sparkleScale = useRef(new Animated.Value(0)).current;
-  const sparkleOpacity = useRef(new Animated.Value(0)).current;
 
   const segmentsRef = useRef<string[]>([]);
   const segmentActiveRef = useRef(false);
@@ -526,22 +524,6 @@ export default function CameraScreen() {
     }
   };
 
-  const playSparkle = () => {
-    sparkleScale.setValue(0.2);
-    sparkleOpacity.setValue(0.0);
-    Animated.parallel([
-      Animated.timing(sparkleScale, {
-        toValue: 1.4,
-        duration: 320,
-        easing: Easing.out(Easing.back(2)),
-        useNativeDriver: true,
-      }),
-      Animated.timing(sparkleOpacity, { toValue: 1, duration: 80, useNativeDriver: true }),
-    ]).start(() => {
-      Animated.timing(sparkleOpacity, { toValue: 0, duration: 220, useNativeDriver: true }).start();
-    });
-  };
-
   const addHighlight = () => {
     if (!isRecording || isPaused) return;
     const t = Math.max(
@@ -554,7 +536,6 @@ export default function CameraScreen() {
       })(),
     );
     setMarkers((m) => [...m, t]);
-    playSparkle();
   };
 
   return (
@@ -675,40 +656,38 @@ export default function CameraScreen() {
         </View>
       )}
 
-{!isRecording && !isProcessing && (
-  <View
-    pointerEvents="none"
-    style={{
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      left: 0,
-      right: 0,
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 600,
-    }}
-  >
-    <View
-      style={{
-        paddingVertical: 6,
-        paddingHorizontal: 14,
-        borderRadius: 999,
-        backgroundColor: 'rgba(0,0,0,0.55)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.35)',
-      }}
-    >
-      <Text style={{ color: 'white', fontWeight: '800', fontSize: 14 }}>
-        {cameraReady ? 'Ready' : 'Opening camera…'} — {athlete || 'Unassigned'}
-      </Text>
-    </View>
-  </View>
-)}
+      {!isRecording && !isProcessing && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 600,
+          }}
+        >
+          <View
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 14,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.35)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800', fontSize: 14 }}>
+              {cameraReady ? 'Ready' : 'Opening camera…'} — {athlete || 'Unassigned'}
+            </Text>
+          </View>
+        </View>
+      )}
 
-
-      {/* Removed the red "● Recording — ..." badge entirely */}
-
+      {/* Bottom controls row with HighlightButton on the right */}
       <View
         style={{
           position: 'absolute',
@@ -717,23 +696,31 @@ export default function CameraScreen() {
           right: 0,
           flexDirection: 'row',
           justifyContent: 'center',
+          alignItems: 'center',
           gap: 12,
         }}
       >
         {!isRecording ? (
-          <TouchableOpacity
-            onPress={handleStart}
-            disabled={!cameraReady || isProcessing}
-            style={{
-              opacity: cameraReady && !isProcessing ? 1 : 0.5,
-              paddingVertical: 12,
-              paddingHorizontal: 20,
-              backgroundColor: 'red',
-              borderRadius: 999,
-            }}
-          >
-            <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              onPress={handleStart}
+              disabled={!cameraReady || isProcessing}
+              style={{
+                opacity: cameraReady && !isProcessing ? 1 : 0.5,
+                paddingVertical: 12,
+                paddingHorizontal: 20,
+                backgroundColor: 'red',
+                borderRadius: 999,
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
+            </TouchableOpacity>
+
+            {/* star shown but disabled before recording */}
+            <View style={{ marginLeft: 6 }}>
+              <HighlightButton onPress={addHighlight} disabled={true} count={markers.length} />
+            </View>
+          </>
         ) : (
           <>
             {!isPaused ? (
@@ -760,6 +747,7 @@ export default function CameraScreen() {
                 <Text style={{ color: 'black', fontWeight: '800' }}>Resume</Text>
               </TouchableOpacity>
             )}
+
             <TouchableOpacity
               onPress={handleStop}
               disabled={isProcessing}
@@ -767,41 +755,14 @@ export default function CameraScreen() {
             >
               <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
             </TouchableOpacity>
+
+            {/* star at far right when recording; disabled if paused/processing */}
+            <View style={{ marginLeft: 6 }}>
+              <HighlightButton onPress={addHighlight} disabled={isPaused || isProcessing} count={markers.length} />
+            </View>
           </>
         )}
       </View>
-
-      {isRecording && !isPaused && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', bottom: insets.bottom + 86, left: 0, right: 0, alignItems: 'center' }}
-        >
-          <TouchableOpacity activeOpacity={0.85} onPress={addHighlight}>
-            <LinearGradient
-              colors={['#f7d774', '#d4a017', '#b88912']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{
-                paddingVertical: 9,
-                paddingHorizontal: 16,
-                borderRadius: 999,
-                borderWidth: 2,
-                borderColor: 'white',
-                minWidth: 110,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ color: '#111', fontWeight: '900' }}>★ Highlight ({markers.length})</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-          <Animated.View
-            pointerEvents="none"
-            style={{ position: 'absolute', bottom: 36, transform: [{ scale: sparkleScale }], opacity: sparkleOpacity }}
-          >
-            <Text style={{ color: '#f8e08a', fontSize: 24, fontWeight: '900' }}>✦</Text>
-          </Animated.View>
-        </View>
-      )}
     </View>
   );
 }
