@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -94,7 +94,6 @@ async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: 
     if (!granted) return undefined;
     const asset = await MediaLibrary.createAssetAsync(fileUri);
     const athleteAlbum = (athlete?.trim() || 'Unassigned');
-    // NOTE: plain hyphen + space to avoid odd characters
     const sportAlbum = `${athleteAlbum} - ${(sport?.trim() || 'unknown')}`;
 
     let a = await MediaLibrary.getAlbumAsync(athleteAlbum);
@@ -177,7 +176,6 @@ const processHighlights = async (videoUri: string, markers: number[], durationSe
     const start = Math.max(0, markers[i]);
     const outPath = `${destDir}clip_${i + 1}_${tsStamp()}.mp4`;
 
-    // Fast path
     let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c copy ${q(outPath)}`;
     let s = await FFmpegKit.execute(cmd);
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
@@ -187,7 +185,6 @@ const processHighlights = async (videoUri: string, markers: number[], durationSe
       continue;
     }
 
-    // Fallback re-encode
     cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(outPath)}`;
     s = await FFmpegKit.execute(cmd);
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
@@ -222,7 +219,6 @@ async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
 
 // --- screen
 export default function CameraScreen() {
-  // params
   const params = useLocalSearchParams<{ athlete?: string | string[]; sport?: string | string[]; style?: string | string[] }>();
   const athleteParamIncluded = typeof params.athlete !== 'undefined';
   const athleteParam = paramToStr(params.athlete, 'Unassigned');
@@ -240,6 +236,7 @@ export default function CameraScreen() {
 
   const cameraRef = useRef<CameraView>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -261,14 +258,16 @@ export default function CameraScreen() {
   const segmentActiveRef = useRef(false);
   const recordPromiseRef = useRef<Promise<any> | null>(null);
 
-  // Smooth fade-in for preview (prevents “instant black” flash)
   const camOpacity = useRef(new Animated.Value(0)).current;
   const fadeInCamera = () => {
-    camOpacity.setValue(0);
-    Animated.timing(camOpacity, { toValue: 1, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+    Animated.timing(camOpacity, { 
+      toValue: 1, 
+      duration: 300, 
+      easing: Easing.out(Easing.quad), 
+      useNativeDriver: true 
+    }).start();
   };
 
-  // ffmpeg check (async, doesn’t block UI)
   useEffect(() => {
     (async () => {
       try {
@@ -281,7 +280,6 @@ export default function CameraScreen() {
     })();
   }, []);
 
-  // remember athlete
   useEffect(() => {
     (async () => {
       if (athleteParamIncluded) setAthlete((athleteParam || '').trim() || 'Unassigned');
@@ -294,32 +292,40 @@ export default function CameraScreen() {
         }
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // proactively request camera permission fast
   useEffect(() => {
     (async () => {
-      if (permission && !permission.granted) {
+      if (!permission) return;
+      
+      if (!permission.granted && permission.canAskAgain) {
         try {
-          await requestPermission();
-        } catch {}
+          const result = await requestPermission();
+          if (result.granted) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            setShouldRenderCamera(true);
+          }
+        } catch (e) {
+          console.warn('[permission error]', e);
+        }
+      } else if (permission.granted) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        setShouldRenderCamera(true);
       }
     })();
-  }, [permission?.granted, requestPermission]);
+  }, [permission, requestPermission]);
 
-  // request mic when focused & camera allowed
   useEffect(() => {
-    if (isFocused && permission?.granted && !micPerm?.granted) {
-      (async () => {
-        try {
-          await requestMicPerm();
-        } catch {}
-      })();
+    if (!isFocused) {
+      setCameraReady(false);
+      setShouldRenderCamera(false);
+      camOpacity.setValue(0);
+    } else if (isFocused && permission?.granted) {
+      const timer = setTimeout(() => setShouldRenderCamera(true), 150);
+      return () => clearTimeout(timer);
     }
-  }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
+  }, [isFocused, permission?.granted]);
 
-  // stop if we lose focus
   useEffect(() => {
     if (!isFocused && isRecording) {
       try {
@@ -331,7 +337,16 @@ export default function CameraScreen() {
     }
   }, [isFocused, isRecording]);
 
-  // cleanup on unmount
+  useEffect(() => {
+    if (isFocused && permission?.granted && !micPerm?.granted) {
+      (async () => {
+        try {
+          await requestMicPerm();
+        } catch {}
+      })();
+    }
+  }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
+
   useEffect(
     () => () => {
       try {
@@ -341,7 +356,6 @@ export default function CameraScreen() {
     [],
   );
 
-  // time helper
   const getCurrentTSec = () => {
     const start = startMs ?? Date.now();
     const pausedNow = isPaused && pauseStartedAtRef.current ? Date.now() - pauseStartedAtRef.current : 0;
@@ -349,7 +363,6 @@ export default function CameraScreen() {
     return Math.max(0, Math.round(effectiveElapsed / 1000) - 3);
   };
 
-  // overlay events
   const handleOverlayEvent = (evt: OverlayEvent) => {
     if (!isRecording || isPaused) return;
     const t = getCurrentTSec();
@@ -364,7 +377,6 @@ export default function CameraScreen() {
     eventsRef.current = [...eventsRef.current, { t, kind, points, actor, meta: evt as any, scoreAfter: { ...scoreRef.current } }];
   };
 
-  // segmented helpers
   const startNewSegment = async () => {
     const cam: any = cameraRef.current;
     if (!cam || !cameraReady) {
@@ -439,7 +451,6 @@ export default function CameraScreen() {
     await waitFor(() => !segmentActiveRef.current, 2500);
   };
 
-  // record flow
   const handleStart = async () => {
     if (isRecording || isProcessing) return;
     if (!cameraReady || !cameraRef.current) {
@@ -484,7 +495,6 @@ export default function CameraScreen() {
     await startNewSegment();
   };
 
-  // stop (decoupled from processing)
   const handleStop = async () => {
     if (!isRecording || isProcessing) return;
 
@@ -512,11 +522,10 @@ export default function CameraScreen() {
       setIsProcessing(false);
       segmentsRef.current = [];
       setMarkers([]);
-      setCameraReady(true); // stays ready for instant next open
+      setCameraReady(true);
     }
   };
 
-  // sparkle for highlight button
   const playSparkle = () => {
     sparkleScale.setValue(0.2);
     sparkleOpacity.setValue(0.0);
@@ -548,143 +557,9 @@ export default function CameraScreen() {
     playSparkle();
   };
 
-  // memo: showPreview when focused & permitted
-  const showPreview = useMemo(() => isFocused && !!permission?.granted, [isFocused, permission?.granted]);
-
-  // UI bits
-  const BackButton = () => (
-    <View style={{ position: 'absolute', top: insets.top + 8, left: 12, zIndex: 800 }}>
-      <TouchableOpacity
-        onPress={() => {
-          if (isProcessing) {
-            Alert.alert('Please Wait', 'Recording is currently being saved and processed.', [{ text: 'OK' }]);
-          } else if (isRecording) {
-            Alert.alert('Stop recording?', 'Going back will stop and save the current recording.', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Stop & Go Back',
-                style: 'destructive',
-                onPress: async () => {
-                  await handleStop();
-                  (navigation as any)?.goBack?.();
-                },
-              },
-            ]);
-          } else {
-            (navigation as any)?.goBack?.();
-          }
-        }}
-        hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-        disabled={isProcessing}
-        style={{
-          paddingVertical: 10,
-          paddingHorizontal: 14,
-          borderRadius: 999,
-          backgroundColor: 'rgba(0,0,0,0.55)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.35)',
-        }}
-      >
-        <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // READY PILL (only before recording; never shown while recording)
-  const ReadyPill = () =>
-    !isRecording && !isProcessing ? (
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: insets.top + 8,
-          right: 12, // top-right so it never overlaps Flip Sides (center)
-          zIndex: 600,
-        }}
-      >
-        <View
-          style={{
-            paddingVertical: 4,
-            paddingHorizontal: 10,
-            borderRadius: 999,
-            backgroundColor: 'rgba(0,0,0,0.55)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.35)',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>
-            {cameraReady ? 'Ready' : 'Opening camera…'} — {athlete || 'Unassigned'}
-          </Text>
-        </View>
-      </View>
-    ) : null;
-
-  // RECORDING PILL (top-left; away from Flip Sides)
-  const RecordingPill = () =>
-    isRecording ? (
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: insets.top + 8,
-          left: 12,
-          zIndex: 700,
-        }}
-      >
-        <View
-          style={{
-            paddingVertical: 4,
-            paddingHorizontal: 10,
-            borderRadius: 999,
-            backgroundColor: 'rgba(220,38,38,0.9)', // red-600
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.4)',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
-            ● Recording — {athlete || 'Unassigned'}
-          </Text>
-        </View>
-      </View>
-    ) : null;
-
-  const HighlightButton = () =>
-    isRecording && !isPaused ? (
-      <View
-        pointerEvents="box-none"
-        style={{ position: 'absolute', bottom: insets.bottom + 86, left: 0, right: 0, alignItems: 'center' }}
-      >
-        <TouchableOpacity activeOpacity={0.85} onPress={addHighlight}>
-          <LinearGradient
-            colors={['#f7d774', '#d4a017', '#b88912']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              paddingVertical: 9,
-              paddingHorizontal: 16,
-              borderRadius: 999,
-              borderWidth: 2,
-              borderColor: 'white',
-              minWidth: 110,
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ color: '#111', fontWeight: '900' }}>★ Highlight ({markers.length})</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-        <Animated.View
-          pointerEvents="none"
-          style={{ position: 'absolute', bottom: 36, transform: [{ scale: sparkleScale }], opacity: sparkleOpacity }}
-        >
-          <Text style={{ color: '#f8e08a', fontSize: 24, fontWeight: '900' }}>✦</Text>
-        </Animated.View>
-      </View>
-    ) : null;
-
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      {/* preview */}
-      {showPreview ? (
+      {isFocused && shouldRenderCamera ? (
         <>
           <Animated.View style={{ flex: 1, opacity: camOpacity }}>
             <CameraView
@@ -693,18 +568,22 @@ export default function CameraScreen() {
               facing="back"
               mode="video"
               onCameraReady={() => {
+                console.log('[camera ready]');
                 setCameraReady(true);
-                fadeInCamera(); // fade in once ready (prevents a jarring black frame)
+                fadeInCamera();
               }}
               onMountError={(e: any) => {
                 const msg = e?.message || (e as any)?.nativeEvent?.message || 'Camera mount error';
                 console.warn('[camera mount error]', e);
                 Alert.alert('Camera error', msg);
                 setCameraReady(false);
+                setTimeout(() => {
+                  setShouldRenderCamera(false);
+                  setTimeout(() => setShouldRenderCamera(true), 500);
+                }, 1000);
               }}
             />
           </Animated.View>
-          {/* overlay only once preview is ready & not processing */}
           {cameraReady && !isProcessing && (
             <View
               style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
@@ -742,7 +621,6 @@ export default function CameraScreen() {
           )}
         </>
       ) : (
-        // no preview yet (permissions sheet, etc.)
         <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{ color: 'white', fontSize: 18 }}>
             {permission?.granted ? 'Preparing camera…' : 'Waiting for camera permissions...'}
@@ -750,7 +628,6 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* processing overlay */}
       {isProcessing && (
         <View
           style={{
@@ -771,11 +648,67 @@ export default function CameraScreen() {
         </View>
       )}
 
-      <BackButton />
-      <ReadyPill />
-      <RecordingPill />
+      {/* Hide Back button while recording */}
+      {!isRecording && (
+        <View style={{ position: 'absolute', top: insets.top + 8, left: 12, zIndex: 800 }}>
+          <TouchableOpacity
+            onPress={() => {
+              if (isProcessing) {
+                Alert.alert('Please Wait', 'Recording is currently being saved and processed.', [{ text: 'OK' }]);
+              } else {
+                (navigation as any)?.goBack?.();
+              }
+            }}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+            disabled={isProcessing}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.35)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* controls */}
+{!isRecording && !isProcessing && (
+  <View
+    pointerEvents="none"
+    style={{
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 600,
+    }}
+  >
+    <View
+      style={{
+        paddingVertical: 6,
+        paddingHorizontal: 14,
+        borderRadius: 999,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.35)',
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '800', fontSize: 14 }}>
+        {cameraReady ? 'Ready' : 'Opening camera…'} — {athlete || 'Unassigned'}
+      </Text>
+    </View>
+  </View>
+)}
+
+
+      {/* Removed the red "● Recording — ..." badge entirely */}
+
       <View
         style={{
           position: 'absolute',
@@ -838,7 +771,37 @@ export default function CameraScreen() {
         )}
       </View>
 
-      {isRecording && <HighlightButton />}
+      {isRecording && !isPaused && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', bottom: insets.bottom + 86, left: 0, right: 0, alignItems: 'center' }}
+        >
+          <TouchableOpacity activeOpacity={0.85} onPress={addHighlight}>
+            <LinearGradient
+              colors={['#f7d774', '#d4a017', '#b88912']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                paddingVertical: 9,
+                paddingHorizontal: 16,
+                borderRadius: 999,
+                borderWidth: 2,
+                borderColor: 'white',
+                minWidth: 110,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: '#111', fontWeight: '900' }}>★ Highlight ({markers.length})</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+          <Animated.View
+            pointerEvents="none"
+            style={{ position: 'absolute', bottom: 36, transform: [{ scale: sparkleScale }], opacity: sparkleOpacity }}
+          >
+            <Text style={{ color: '#f8e08a', fontSize: 24, fontWeight: '900' }}>✦</Text>
+          </Animated.View>
+        </View>
+      )}
     </View>
   );
 }

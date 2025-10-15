@@ -1,6 +1,6 @@
 // app/(tabs)/index.tsx
-// Athletes list with ImagePicker compatibility (no deprecation warnings),
-// “Take Photo / Choose” flow, and routing to /record/camera (Quick Record -> plain camera).
+// Athletes list with rock-solid ImagePicker flow that avoids the iOS first-open black camera.
+// Also routes Quick Record to the plain camera (sport=plain, style=none).
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -12,6 +12,7 @@ import {
   Alert,
   FlatList,
   Image,
+  InteractionManager,
   Linking,
   Modal,
   Platform,
@@ -30,28 +31,16 @@ type Athlete = { id: string; name: string; photoUri?: string | null };
 
 const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
 
-/**
- * Version-safe helper for ImagePicker `mediaTypes`.
- * - New API: return array of ImagePicker.MediaType (e.g., ['images']) -> no warning
- * - Old API: fall back to MediaTypeOptions.Images -> preserves behavior
- */
-function pickImagesOnly(): any {
-  const IP: any = ImagePicker as any;
-
-  // Newer SDKs expose MediaType with tokens like "images"
-  if (IP.MediaType) {
-    const token = IP.MediaType.images ?? IP.MediaType.Images ?? 'images';
-    return [token]; // array form is the recommended shape
-  }
-
-  // Older SDKs use MediaTypeOptions.Images (legacy, but still works)
-  if (IP.MediaTypeOptions?.Images) return IP.MediaTypeOptions.Images;
-
-  // Last resort fallback; still selects images only
-  return ['images'];
+// Acceptable mediaTypes for current SDK; falls back safely for older SDKs.
+function imagesMediaTypesLegacy(): any {
+  const MTO = (ImagePicker as any).MediaTypeOptions;
+  if (MTO && typeof MTO === 'object' && 'Images' in MTO) return MTO.Images;
+  const MT = (ImagePicker as any).MediaType;
+  if (MT && (MT.images || MT.Images)) return MT.images ?? MT.Images;
+  return undefined;
 }
 
-async function ensurePermissions(): Promise<boolean> {
+async function ensurePickerPermissions(): Promise<boolean> {
   try {
     let cam = await ImagePicker.getCameraPermissionsAsync();
     let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
@@ -82,34 +71,60 @@ async function ensurePermissions(): Promise<boolean> {
   }
 }
 
-async function pickImageWithChoice(): Promise<string | null> {
-  const ok = await ensurePermissions();
+/**
+ * Robust picker that avoids the iOS first-launch black camera by:
+ * - clearing pending picker result,
+ * - ensuring modals/sheets are closed,
+ * - waiting for interactions/RAF,
+ * - adding a tiny delay before native presentation.
+ *
+ * @param launchedFromModal set true if you call this right after closing a RN Modal
+ */
+async function pickImageWithChoice(launchedFromModal: boolean): Promise<string | null> {
+  const ok = await ensurePickerPermissions();
   if (!ok) return null;
 
-  const mediaTypes = pickImagesOnly();
+  // Clear any stale result (fixes stuck internal session edge-cases)
+  try {
+    const pending = await (ImagePicker as any).getPendingResultAsync?.();
+    if (Array.isArray(pending) && pending.length) {
+      // read & ignore to clear internal state
+    }
+  } catch {}
 
-  if (Platform.OS === 'web') {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes,
-      allowsEditing: true,
-      quality: 0.85,
-    } as any);
-    return res.canceled ? null : res.assets?.[0]?.uri ?? null;
+  if (launchedFromModal) {
+    // Give time for the modal dismissal animation to complete
+    await wait(250);
   }
+
+  // Let all interactions/animations finish
+  await new Promise<void>((resolve) =>
+    InteractionManager.runAfterInteractions(() => resolve())
+  );
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  await wait(140);
+
+  const mediaTypes = imagesMediaTypesLegacy();
 
   if (Platform.OS === 'ios') {
     return new Promise((resolve) => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ['Cancel', 'Take Photo', 'Choose from Library'],
-        // @ts-ignore this exists on iOS
-          userInterfaceStyle: 'dark',
+          // cancel index
           cancelButtonIndex: 0,
+          userInterfaceStyle: 'dark',
         },
         async (idx) => {
           try {
             if (idx === 1) {
-              await wait(150); // avoid UI contention with system camera sheet
+              // Take Photo
+              await new Promise<void>((resolve2) =>
+                InteractionManager.runAfterInteractions(() => resolve2())
+              );
+              await new Promise((r) => requestAnimationFrame(() => r(null)));
+              await wait(120);
+
               const res = await ImagePicker.launchCameraAsync({
                 mediaTypes,
                 allowsEditing: true,
@@ -117,7 +132,6 @@ async function pickImageWithChoice(): Promise<string | null> {
               } as any);
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             } else if (idx === 2) {
-              await wait(120);
               const res = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes,
                 allowsEditing: true,
@@ -135,7 +149,7 @@ async function pickImageWithChoice(): Promise<string | null> {
     });
   }
 
-  // Android
+  // Android – use the double-RAF deferral trick via an Alert
   return new Promise((resolve) => {
     const defer = (fn: () => Promise<void>) => {
       requestAnimationFrame(() => {
@@ -185,7 +199,7 @@ export default function HomeAthletes() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const tabBarHeight = useBottomTabBarHeight();
-  const isWide = width >= 420; // show Delete inline on wider screens
+  const isWide = width >= 420;
 
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [addOpen, setAddOpen] = useState(false);
@@ -231,13 +245,17 @@ export default function HomeAthletes() {
     setAddOpen(false);
   };
 
+  // NOTE: We close the modal before launching the picker and pass `true`
   const pickPendingPhoto = async () => {
-    const uri = await pickImageWithChoice();
+    setAddOpen(false);
+    const uri = await pickImageWithChoice(true);
     if (uri) setPendingPhoto(uri);
+    setAddOpen(true);
   };
 
+  // Outside of a modal, pass `false`
   const setPhotoForAthlete = async (id: string) => {
-    const uri = await pickImageWithChoice();
+    const uri = await pickImageWithChoice(false);
     if (!uri) return;
     const next = athletes.map((a) => (a.id === id ? { ...a, photoUri: uri } : a));
     await saveAthletes(next);
@@ -262,17 +280,17 @@ export default function HomeAthletes() {
     }
   };
 
-  // ROUTE: push to /record/camera with athlete param
-  // Quick Record -> plain camera (no overlay)
+  // ROUTE: Quick Record -> plain camera (no overlay)
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
-    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'plain', style: '' } });
+    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'plain', style: 'none' } });
   };
 
+  // ✅ ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
   const recordWithAthlete = async (name: string) => {
-    const clean = name.trim();
+    const clean = (name || '').trim() || 'Unassigned';
     await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
-    router.push({ pathname: '/record/camera', params: { athlete: clean, sport: 'wrestling', style: 'folkstyle' } });
+    router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
 
   const AthleteCard = ({ a }: { a: Athlete }) => {
@@ -286,7 +304,6 @@ export default function HomeAthletes() {
             options: ['Cancel', 'Delete'],
             cancelButtonIndex: 0,
             destructiveButtonIndex: 1,
-            // @ts-ignore iOS only prop
             userInterfaceStyle: 'dark',
             title: a.name,
           },

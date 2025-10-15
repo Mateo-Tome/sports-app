@@ -1,5 +1,6 @@
 // app/(tabs)/library.tsx
 // Library: optimized load + fast row patching + safe FS ops + thumb cleanup (assetId-aware thumbs)
+// + Title editing: small "Edit" button over the thumbnail lets you change displayName only.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -185,6 +186,31 @@ async function writeIndexAtomic(list: IndexMeta[]) {
   await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
   try { await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true }); } catch {}
   await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
+}
+
+// --- update displayName for a single entry (by uri)
+async function updateDisplayName(uri: string, newName: string) {
+  const list = await readIndex();
+  let changed = false;
+  const next = list.map((e) => {
+    if (e.uri === uri) {
+      changed = true;
+      return { ...e, displayName: newName };
+    }
+    return e;
+  });
+  if (changed) {
+    await writeIndexAtomic(next);
+  } else {
+    // try to recover if path moved but filename matches current media
+    const fileName = uri.split('/').pop() || '';
+    const hit = list.find((e) => (e.uri.split('/').pop() || '') === fileName);
+    if (hit) {
+      const next2 = list.map((e) => (e === hit ? { ...e, displayName: newName } : e));
+      await writeIndexAtomic(next2);
+    }
+  }
+  return true;
 }
 
 // ---------- thumbs (assetId aware) ----------
@@ -592,6 +618,10 @@ export default function LibraryScreen() {
 
   const [uploadedMap, setUploadedMap] = useState<Record<string, { key: string; url: string; at: number }>>({});
 
+  // NEW: Title editor modal state
+  const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
+  const [titleInput, setTitleInput] = useState('');
+
   // segmented state
   const [view, setView] = useState<'all'|'athletes'|'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
@@ -856,22 +886,34 @@ export default function LibraryScreen() {
     [athleteList]
   );
 
+  const openEditName = useCallback((row: Row) => {
+    setTitleEditRow(row);
+    setTitleInput(row.displayName || '');
+  }, []);
+
   // ====== FlatList helpers ======
   const outcomeColor = (o?: Outcome | null) =>
     o === 'W' ? '#16a34a' : o === 'L' ? '#dc2626' : o === 'T' ? '#f59e0b' : 'rgba(255,255,255,0.25)';
-
   const renderVideoRow = useCallback(({ item }: { item: Row }) => {
-    const dateStr = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
+    // split date/time for fixed badges
+    const when = item.mtime ? new Date(item.mtime) : null;
+    const dateOnly = when ? when.toLocaleDateString() : '—';
+    const timeOnly = when ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    // NOTE: date/time removed from subtitleBits on purpose (now shown as badges above)
     const subtitleBits = [
       item.athlete ? `👤 ${item.athlete}` : null,
       item.sport ? `🏷️ ${item.sport}` : null,
       `${bytesToMB(item.size)}`,
-      dateStr,
     ].filter(Boolean);
 
-    const chip = (item.sport !== 'highlights' && item.outcome && item.myScore != null && item.oppScore != null)
-      ? { text: `${item.outcome} ${item.myScore}–${item.oppScore}`, color: outcomeColor(item.outcome) }
-      : null;
+    const chip =
+      item.sport !== 'highlights' &&
+      item.outcome &&
+      item.myScore != null &&
+      item.oppScore != null
+        ? { text: `${item.outcome} ${item.myScore}–${item.oppScore}`, color: outcomeColor(item.outcome) }
+        : null;
 
     const uploaded = uploadedMap[keyFor(item)];
 
@@ -897,59 +939,191 @@ export default function LibraryScreen() {
               end={{ x: 1, y: 1 }}
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
             />
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.08)' }} />
+            <View
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.08)',
+              }}
+            />
           </>
         )}
 
         <View style={{ padding: 12 }}>
+          {/* Header row: date/time on the left, Edit Title on the right */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View
+                style={{
+                  paddingVertical: 6,
+                  paddingHorizontal: 10,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.2)',
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '800' }}>{dateOnly}</Text>
+              </View>
+              <View
+                style={{
+                  paddingVertical: 6,
+                  paddingHorizontal: 10,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.2)',
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '800' }}>{timeOnly}</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => openEditName(item)}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                borderWidth: 1,
+                borderColor: 'white',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900' }}>Edit Title</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {/* thumbnail */}
             {item.thumbUri ? (
               <Image
                 key={item.thumbUri || item.uri}
                 source={{ uri: item.thumbUri }}
-                style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                style={{
+                  width: 96,
+                  height: 54,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255,255,255,0.1)',
+                }}
                 contentFit="cover"
                 transition={100}
               />
             ) : (
-              <View style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}>
+              <View
+                style={{
+                  width: 96,
+                  height: 54,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255,255,255,0.1)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
                 <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
               </View>
             )}
 
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>{item.displayName}</Text>
+                <Text
+                  style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
+                  numberOfLines={2}
+                >
+                  {item.displayName}
+                </Text>
 
                 {chip && (
-                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: `${chip.color}22`, borderWidth: 1, borderColor: `${chip.color}66` }}>
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                      backgroundColor: `${chip.color}22`,
+                      borderWidth: 1,
+                      borderColor: `${chip.color}66`,
+                    }}
+                  >
                     <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
                   </View>
                 )}
 
                 {item.highlightGold && (
-                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: '#00000033', borderWidth: 1, borderColor: '#ffffff55' }}>
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                      backgroundColor: '#00000033',
+                      borderWidth: 1,
+                      borderColor: '#ffffff55',
+                    }}
+                  >
                     <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
                   </View>
                 )}
               </View>
 
-              <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>{subtitleBits.join(' • ')}</Text>
+              <Text
+                style={{ color: 'white', opacity: 0.85, marginTop: 4 }}
+                numberOfLines={1}
+              >
+                {subtitleBits.join(' • ')}
+              </Text>
 
               <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-                <TouchableOpacity onPress={() => saveToPhotos(item.uri)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}>
+                <TouchableOpacity
+                  onPress={() => saveToPhotos(item.uri)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: 'white',
+                  }}
+                >
                   <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => routerPushPlayback(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+                <TouchableOpacity
+                  onPress={() => routerPushPlayback(item)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.12)',
+                    borderWidth: 1,
+                    borderColor: 'white',
+                  }}
+                >
                   <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => confirmRemove(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}>
+                <TouchableOpacity
+                  onPress={() => confirmRemove(item)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(220,0,0,0.9)',
+                  }}
+                >
                   <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => setAthletePickerOpen(item)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+                <TouchableOpacity
+                  onPress={() => setAthletePickerOpen(item)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.12)',
+                    borderWidth: 1,
+                    borderColor: 'white',
+                  }}
+                >
                   <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
                 </TouchableOpacity>
 
@@ -965,9 +1139,11 @@ export default function LibraryScreen() {
                     }}
                     onUploaded={(key, url) => {
                       const mapKey = keyFor(item);
-                      setUploadedMap(prev => {
+                      setUploadedMap((prev) => {
                         const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
-                        AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
+                        AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(
+                          () => {}
+                        );
                         return next;
                       });
                     }}
@@ -980,6 +1156,8 @@ export default function LibraryScreen() {
       </Pressable>
     );
   }, [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]);
+
+  
 
   // Lazy thumbnails for viewable rows (now assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
@@ -1319,6 +1497,73 @@ export default function LibraryScreen() {
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}
               >
                 <Text style={{ color: 'black', fontWeight: '800' }}>Add & Apply</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* NEW: Edit Title modal */}
+      <Modal
+        visible={!!titleEditRow}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setTitleEditRow(null); setTitleInput(''); }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Edit Title</Text>
+            <Text style={{ color: 'white', opacity: 0.75, marginTop: 6 }}>
+              Rename the video (e.g., add tournament or opponent).
+            </Text>
+
+            <TextInput
+              value={titleInput}
+              onChangeText={setTitleInput}
+              placeholder="Enter title"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={{
+                marginTop: 12,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.25)',
+                color: 'white',
+              }}
+            />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
+              <TouchableOpacity
+                onPress={() => { setTitleEditRow(null); setTitleInput(''); }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  const n = (titleInput || '').trim();
+                  if (!titleEditRow || !n) { setTitleEditRow(null); return; }
+
+                  try {
+                    await enqueueFs(() => updateDisplayName(titleEditRow.uri, n));
+                    // fast local patch
+                    setRows((prev) => prev.map((r) => (r.uri === titleEditRow.uri ? { ...r, displayName: n } : r)));
+                  } catch (e: any) {
+                    Alert.alert('Rename failed', e?.message ?? 'Could not update title.');
+                  } finally {
+                    setTitleEditRow(null);
+                    setTitleInput('');
+                  }
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+              >
+                <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
