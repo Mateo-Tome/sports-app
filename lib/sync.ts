@@ -1,77 +1,133 @@
 // lib/sync.ts
-// Zero-native dependency sync helpers used by Library.
-// - No expo-network / NetInfo imports
-// - Simple online probe with fetch + timeout
-// - Stubbed upload functions that you can wire to your backend later
+// Firebase Storage uploads for Expo (no native modules)
+// Exports: uploadFileOnTap(fileUri), uploadJSONOnTap(data, prefix?)
 
 import * as FileSystem from 'expo-file-system';
 
-const ONLINE_PROBE_URL = 'https://clients3.google.com/generate_204';
+// Firebase web SDK (works in Expo)
+import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import {
+    getDownloadURL,
+    getStorage,
+    ref,
+    StorageReference,
+    uploadBytes,
+} from 'firebase/storage';
 
-// Tiny timeout helper
-function withTimeout<T>(p: Promise<T>, ms: number, err: Error) {
-  let t: any;
-  return Promise.race([
-    p.finally(() => clearTimeout(t)),
-    new Promise<T>((_, reject) => {
-      t = setTimeout(() => reject(err), ms);
-    }),
-  ]);
-}
+// ---- YOUR PROJECT CONFIG ----
+// Double-check these in Firebase Console → Project settings → General → "Your apps" (Web)
+const firebaseConfig = {
+  apiKey: 'YOUR_API_KEY',
+  authDomain: 'sports-app-9efb3.firebaseapp.com',
+  projectId: 'sports-app-9efb3',
+  storageBucket: 'sports-app-9efb3.firebasestorage.app', // ← matches your screenshot
+  messagingSenderId: 'YOUR_SENDER_ID',
+  appId: 'YOUR_APP_ID',
+};
 
-export async function isOnline(timeoutMs = 2500): Promise<boolean> {
-  try {
-    const res = await withTimeout(
-      fetch(ONLINE_PROBE_URL, { method: 'GET' }),
-      timeoutMs,
-      new Error('timeout')
-    );
-    // Treat 204/200 as online
-    return !!res && (res.status === 204 || res.status === 200);
-  } catch {
-    return false;
+// Initialize app once
+let app: FirebaseApp;
+if (!getApps().length) app = initializeApp(firebaseConfig);
+else app = getApps()[0];
+
+// Auth (anonymous) so rules can require auth
+const auth = getAuth(app);
+let signedInOnce = false;
+async function ensureAnonAuth() {
+  if (!signedInOnce && !auth.currentUser) {
+    await signInAnonymously(auth);
+    signedInOnce = true;
+    console.log('[sync] signed in anonymously:', !!auth.currentUser);
   }
 }
 
-// ---- Upload helpers ----
-// NOTE: These are basic stubs so your app compiles and the UI works.
-// Replace the inside with your real upload to S3, Supabase, etc.
+// Storage
+const storage = getStorage(app);
 
+// ---------- utils ----------
+const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+function yyyymmdd_hhmmss(d = new Date()) {
+  return (
+    d.getFullYear() +
+    '-' +
+    pad(d.getMonth() + 1) +
+    '-' +
+    pad(d.getDate()) +
+    '_' +
+    pad(d.getHours()) +
+    '-' +
+    pad(d.getMinutes()) +
+    '-' +
+    pad(d.getSeconds())
+  );
+}
+function baseName(p: string) {
+  const n = p.split('/').pop() || 'file';
+  return n.replace(/\s+/g, '_');
+}
+async function uriToBlob(uri: string): Promise<Blob> {
+  const res = await fetch(uri);
+  // @ts-ignore - RN fetch polyfill in Expo supports blob()
+  const blob = await res.blob();
+  return blob as Blob;
+}
+function contentTypeFromName(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.mov')) return 'video/quicktime';
+  if (lower.endsWith('.json')) return 'application/json';
+  return 'application/octet-stream';
+}
+
+// ---------- uploads ----------
 export async function uploadFileOnTap(localUri: string): Promise<{ key: string; url: string }> {
-  const online = await isOnline();
-  if (!online) {
-    throw new Error('You appear to be offline. Connect to the internet and try again.');
-  }
+  await ensureAnonAuth();
 
-  // TODO: replace with your real upload logic (presigned URL, multipart, etc.)
-  // For now, we "pretend" the upload succeeded and return a stable key + a file:// fallback url.
-  const filename = (localUri.split('/').pop() || `video_${Date.now()}`).replace(/\s+/g, '_');
-  const key = `uploads/${filename}`;
-  // If you have a CDN/base URL, compose it here; for stub we return the local URI
-  const url = localUri;
+  const info = await FileSystem.getInfoAsync(localUri);
+  // @ts-ignore
+  if (!(info as any)?.exists) throw new Error(`File not found: ${localUri}`);
 
-  // If you want to at least ensure the file exists before pretending:
-  try {
-    const info = await FileSystem.getInfoAsync(localUri);
-    // @ts-ignore
-    if (!info?.exists) throw new Error('File not found on device.');
-  } catch (e: any) {
-    throw new Error(e?.message ?? 'File missing.');
-  }
+  const name = baseName(localUri);
+  const stamp = yyyymmdd_hhmmss();
+  const key = `videos/${stamp}_${name}`;
+  const storageRef: StorageReference = ref(storage, key);
 
+  const blob = await uriToBlob(localUri);
+  const ct = contentTypeFromName(name);
+
+  await uploadBytes(storageRef, blob, { contentType: ct });
+  const url = await getDownloadURL(storageRef);
+
+  console.log('[uploadFileOnTap]', {
+    bucket: storage.app.options['storageBucket'],
+    key,
+    url,
+  });
   return { key, url };
 }
 
 export async function uploadJSONOnTap(
-  data: unknown,
+  jsonData: unknown,
   prefix = 'sidecars/'
 ): Promise<{ key: string; url: string }> {
-  const online = await isOnline();
-  if (!online) {
-    throw new Error('You appear to be offline. Connect to the internet and try again.');
-  }
-  // In a real backend, POST this JSON somewhere. For now we just return a pretend key+url.
-  const key = `${prefix}${Date.now()}.json`;
-  const url = `data:application/json,${encodeURIComponent(JSON.stringify(data ?? {}, null, 2))}`;
+  await ensureAnonAuth();
+
+  const stamp = yyyymmdd_hhmmss();
+  const key = `${prefix}${stamp}.json`;
+  const storageRef: StorageReference = ref(storage, key);
+
+  const blob = new Blob([JSON.stringify(jsonData ?? {}, null, 2)], {
+    type: 'application/json',
+  });
+
+  await uploadBytes(storageRef, blob, { contentType: 'application/json' });
+  const url = await getDownloadURL(storageRef);
+
+  console.log('[uploadJSONOnTap]', {
+    bucket: storage.app.options['storageBucket'],
+    key,
+    url,
+  });
   return { key, url };
 }
