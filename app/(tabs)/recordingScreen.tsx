@@ -6,6 +6,7 @@ import {
   BackHandler,
   Image,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -47,7 +48,6 @@ export default function RecordingScreen() {
     if (!controlledByParam) return;
     const fromParam = (paramToStr(params.athlete, initialAthlete).trim() || 'Unassigned');
     if (fromParam !== athlete) setAthlete(fromParam);
-    // We intentionally include params.athlete so this runs if navigation pushes new search params
   }, [params.athlete, controlledByParam, athlete, initialAthlete]);
 
   // ---------- load helpers ----------
@@ -122,11 +122,8 @@ export default function RecordingScreen() {
       .join('') || 'U';
 
   const applyAthlete = (name: string) => {
-    // local pick wins from now on
     if (controlledByParam) setControlledByParam(false);
     setAthlete(name);
-    // We intentionally DO NOT call router.setParams here because tabs don’t always
-    // propagate search param changes reliably; keeping local state is safer.
   };
 
   const AthleteCard = () => {
@@ -222,9 +219,10 @@ export default function RecordingScreen() {
           zIndex: 999,
         }}
       >
+        {/* tap the dim background to close */}
         <Pressable
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-          onPress={() => {}}
+          onPress={() => setPickerOpen(false)}
         />
         <View
           style={{
@@ -326,8 +324,17 @@ export default function RecordingScreen() {
 
   // ---------- Render ----------
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right']}>
-      <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right', 'bottom']}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator
+        scrollEnabled={!pickerOpen} // freeze scroll while overlay is open
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 6,
+          paddingBottom: 32, // extra bottom space for smaller landscape height
+        }}
+      >
         <AthleteCard />
 
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900', marginBottom: 12 }}>
@@ -377,7 +384,7 @@ export default function RecordingScreen() {
             </TouchableOpacity>
           ))}
         </View>
-      </View>
+      </ScrollView>
 
       {/* Picker overlay (no native Modal) */}
       <AthletePickerOverlay />
