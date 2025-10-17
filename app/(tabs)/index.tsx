@@ -31,14 +31,12 @@ type Athlete = { id: string; name: string; photoUri?: string | null };
 
 const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
 
-// Acceptable mediaTypes for current SDK; falls back safely for older SDKs.
 function imagesMediaTypesLegacy(): any {
-  const MTO = (ImagePicker as any).MediaTypeOptions;
-  if (MTO && typeof MTO === 'object' && 'Images' in MTO) return MTO.Images;
   const MT = (ImagePicker as any).MediaType;
-  if (MT && (MT.images || MT.Images)) return MT.images ?? MT.Images;
-  return undefined;
+  return MT?.Images ?? MT?.images ?? undefined; // fallback to picker default if missing
 }
+
+
 
 async function ensurePickerPermissions(): Promise<boolean> {
   try {

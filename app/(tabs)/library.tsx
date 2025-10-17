@@ -25,7 +25,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ViewToken,
+  ViewToken
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
@@ -107,9 +107,8 @@ function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
 // extra helpers for robust move/rename
 async function pathExists(p: string) {
   try {
-    const info = await FileSystem.getInfoAsync(p);
-    // @ts-ignore
-    return !!(info as any)?.exists;
+    const info: any = await FileSystem.getInfoAsync(p);
+    return !!info?.exists;
   } catch { return false; }
 }
 async function pickUniqueDest(dir: string, baseName: string, extWithDot: string) {
@@ -174,8 +173,8 @@ async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promi
 // ---------- index helpers ----------
 async function readIndex(): Promise<IndexMeta[]> {
   try {
-    const info = await FileSystem.getInfoAsync(INDEX_PATH);
-    if (!(info as any)?.exists) return [];
+    const info: any = await FileSystem.getInfoAsync(INDEX_PATH);
+    if (!info?.exists) return [];
     const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
     const list = JSON.parse(raw || '[]');
     return Array.isArray(list) ? list : [];
@@ -214,9 +213,32 @@ async function updateDisplayName(uri: string, newName: string) {
 }
 
 // ---------- thumbs (assetId aware) ----------
+async function fileExists(uri: string) {
+  try {
+    const info: any = await FileSystem.getInfoAsync(uri, { size: false as any });
+    return !!info?.exists;
+  } catch {
+    return false;
+  }
+}
+
 async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
   const { uri: tmp } = await VideoThumbnails.getThumbnailAsync(uri, { time: t, quality: 0.6 });
   await FileSystem.copyAsync({ from: tmp, to: dest });
+}
+
+async function safeThumbFromFileUri(videoUri: string, dest: string, atMs = 900) {
+  if (!(await fileExists(videoUri))) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (!(await fileExists(videoUri))) {
+      throw new Error('File missing or not yet written: ' + videoUri);
+    }
+  }
+  try {
+    await tryMakeThumbFrom(videoUri, dest, atMs);
+  } catch {
+    await tryMakeThumbFrom(videoUri, dest, 0);
+  }
 }
 
 async function getOrCreateThumb(videoUri: string, assetId?: string | null): Promise<string | null> {
@@ -224,47 +246,38 @@ async function getOrCreateThumb(videoUri: string, assetId?: string | null): Prom
     await ensureDir(THUMBS_DIR);
     const dest = thumbPathFor(videoUri);
 
-    // already made?
-    const info = await FileSystem.getInfoAsync(dest);
-    // @ts-ignore
-    if ((info as any)?.exists) return dest;
+    // already cached?
+    const info: any = await FileSystem.getInfoAsync(dest);
+    if (info?.exists) return dest;
 
-    // 1) First try the given URI (works for file://)
+    // 1) Try the actual file path first (works for file:// in app storage)
     try {
-      try {
-        await tryMakeThumbFrom(videoUri, dest, 1000);
-      } catch {
-        await tryMakeThumbFrom(videoUri, dest, 0);
-      }
-      const ok = await FileSystem.getInfoAsync(dest);
-      // @ts-ignore
-      if ((ok as any)?.exists) return dest;
+      await safeThumbFromFileUri(videoUri, dest, 900);
+      const ok: any = await FileSystem.getInfoAsync(dest);
+      if (ok?.exists) return dest;
     } catch (e) {
-      // continue to asset fallback
       console.log('[thumbs] primary failed for', videoUri, e);
     }
 
-    // 2) If that fails and we have an assetId, try its localUri from Photos
+    // 2) Fallback: use Photos asset localUri (best-effort; permission request is platform-safe)
     if (assetId) {
       try {
-        const asset = await MediaLibrary.getAssetInfoAsync(assetId);
-        const local = asset?.localUri || asset?.uri;
-        if (local) {
-          try {
-            await tryMakeThumbFrom(local, dest, 1000);
-          } catch {
-            await tryMakeThumbFrom(local, dest, 0);
+        // Request if not granted; ignore result if denied to avoid errors.
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        if (perm.granted) {
+          const asset = await MediaLibrary.getAssetInfoAsync(assetId);
+          const local = asset?.localUri || asset?.uri;
+          if (local) {
+            await safeThumbFromFileUri(local, dest, 900);
+            const ok2: any = await FileSystem.getInfoAsync(dest);
+            if (ok2?.exists) return dest;
           }
-          const ok2 = await FileSystem.getInfoAsync(dest);
-          // @ts-ignore
-          if ((ok2 as any)?.exists) return dest;
         }
       } catch (e2) {
         console.log('[thumbs] asset fallback failed', assetId, e2);
       }
     }
 
-    // still nothing
     return null;
   } catch (e) {
     console.log('[thumbs] error', e);
@@ -338,8 +351,8 @@ async function readOutcomeFor(videoUri: string): Promise<{
     const guess = `${base}.json`;
 
     const tryRead = async (p: string): Promise<Sidecar | null> => {
-      const info = await FileSystem.getInfoAsync(p);
-      if (!(info as any)?.exists) return null;
+      const info: any = await FileSystem.getInfoAsync(p);
+      if (!info?.exists) return null;
       const txt = await FileSystem.readAsStringAsync(p);
       return JSON.parse(txt || '{}');
     };
@@ -382,7 +395,7 @@ async function readOutcomeFor(videoUri: string): Promise<{
     let highlightGold = sc.endedBy === 'pin' ? !!sc.athletePinned : false;
 
     if (outcome == null) {
-      const ev = sc.events ?? [];
+      const ev = (sc.events ?? []);
       const pinEv = ev.find((e: SidecarEvent) => {
         const key = String(e?.key ?? '').toLowerCase();
         const label = String(e?.label ?? '').toLowerCase();
@@ -635,8 +648,8 @@ export default function LibraryScreen() {
 
   // ---------- build 1 row ----------
   const buildRow = useCallback(async (meta: IndexMeta, eagerThumb: boolean): Promise<Row | null> => {
-    const info = await FileSystem.getInfoAsync(meta.uri);
-    if (!(info as any)?.exists) return null;
+    const info: any = await FileSystem.getInfoAsync(meta.uri);
+    if (!info?.exists) return null;
 
     const scoreBits = await readOutcomeFor(meta.uri);
     const thumb = eagerThumb ? await getOrCreateThumb(meta.uri, meta.assetId) : null;
@@ -647,8 +660,8 @@ export default function LibraryScreen() {
       athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
       sport: (meta.sport || 'unknown').trim() || 'unknown',
       assetId: meta.assetId,
-      size: (info as any)?.size ?? null,
-      mtime: (info as any)?.modificationTime ? Math.round(((info as any).modificationTime as number) * 1000) : meta.createdAt ?? null,
+      size: info?.size ?? null,
+      mtime: info?.modificationTime ? Math.round((info.modificationTime as number) * 1000) : meta.createdAt ?? null,
       thumbUri: thumb,
 
       finalScore: scoreBits.finalScore,
@@ -787,9 +800,8 @@ export default function LibraryScreen() {
         // delete the cached thumbnail (if present)
         try {
           const t = thumbPathFor(row.uri);
-          const info = await FileSystem.getInfoAsync(t);
-          // @ts-ignore
-          if ((info as any)?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
+          const info: any = await FileSystem.getInfoAsync(t);
+          if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
         } catch {}
 
         // drop from index
@@ -1156,8 +1168,6 @@ export default function LibraryScreen() {
       </Pressable>
     );
   }, [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]);
-
-  
 
   // Lazy thumbnails for viewable rows (now assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
