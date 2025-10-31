@@ -1,13 +1,15 @@
 {
   "expo": {
-    "name": "sport-app",
-    "slug": "sport-app",
+    "name": "QuickClip",
+    "slug": "quickclip",
     "version": "1.0.0",
     "orientation": "default",
-    "icon": "./assets/images/icon.png",
-    "scheme": "sportapp",
+    "scheme": "quickclip",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
+    "icon": "./assets/images/icon.png",
+
     "plugins": [
       "expo-router",
       [
@@ -16,15 +18,17 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#000000"
         }
       ],
       "expo-video",
       "sentry-expo"
     ],
+
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
       "supportsTablet": true,
+      "icon": "./assets/images/icon.png",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
@@ -32,22 +36,26 @@
         "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
       }
     },
+
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
       "edgeToEdgeEnabled": true,
-      "package": "com.mateotome2133.sportapp"
+      "package": "com.mateotome2133.sportapp",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#000000"
+      }
     },
+
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "experiments": {
       "typedRoutes": true
     },
+
     "extra": {
       "router": {},
       "eas": {

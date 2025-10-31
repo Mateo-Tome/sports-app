@@ -455,7 +455,7 @@ function TopScrubber({
         right: Math.max(H_MARG, insets.right + SAFE_MARGIN),
         width: undefined,
         top: TOP,
-        opacity: visible ? 1 : 0.04,
+        opacity: visible ? 1 : 0,
         zIndex: 50,
         elevation: 3,
       }}
