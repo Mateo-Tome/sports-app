@@ -175,3 +175,12 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// THIS BLOCK FORCES THE USE OF A WORKING FFmpeg KIT VERSION
+configurations.all {
+    resolutionStrategy {
+        // Force Gradle to use the stable version found on Maven Central
+        // This replaces the retired 'ffmpeg-kit-https:6.0-2' dependency
+        force 'com.antonkarpenko:ffmpeg-kit-min:2.1.0'
+    }
+}

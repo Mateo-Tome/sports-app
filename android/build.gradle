@@ -1,6 +1,11 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
 buildscript {
+  ext {
+    // >> ADDED: The Spreen/FFmpegKit plugins use this variable to correctly select a working dependency
+    // 'https' or 'full' are common, 'https' is the default and likely what you need.
+    ffmpegKitPackage = "https" 
+  }
   repositories {
     google()
     mavenCentral()
@@ -22,13 +27,15 @@ def reactNativeAndroidDir = new File(
 
 allprojects {
   repositories {
+    // >> REMOVED: The line 'maven { url 'https://repo.ffmpegkit.com' }'
+
     maven {
       // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
       url(reactNativeAndroidDir)
     }
 
     google()
-    mavenCentral()
+    mavenCentral() // This is where the working FFmpeg binaries are now hosted!
     maven { url 'https://www.jitpack.io' }
   }
 }

@@ -25,10 +25,18 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ViewToken
+  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
+
+// 🚨 SUPABASE SWAP: Import the Supabase client
+import { supabase } from '@/lib/supabase';
+
+// ⬇️ Firebase-only uploads + Firestore save
+// 🚨 LINE REMOVED: import { saveVideoDoc, uploadFileToFirebase, uploadJSONToFirebase } from '../../lib/firebaseUploads';
+
+
+// ... (The rest of your file, including the updated UploadButton logic)
 
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
@@ -57,32 +65,53 @@ type Row = {
   mtime: number | null;
   thumbUri?: string | null;
   assetId?: string | undefined;
-
   finalScore?: FinalScore | null;
   homeIsAthlete?: boolean;
   outcome?: Outcome;
   myScore?: number | null;
   oppScore?: number | null;
-
   highlightGold?: boolean;
 };
 
 // ---------- small utils ----------
-const ensureDir = async (dir: string) => { try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {} };
-const slug = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
-const bytesToMB = (b?: number | null) => (b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB');
+const ensureDir = async (dir: string) => {
+  try {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  } catch {}
+};
+
+const slug = (s: string) =>
+  (s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'unknown';
+
+const bytesToMB = (b?: number | null) =>
+  b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB';
+
 const baseNameNoExt = (p: string) => {
-  const name = (p.split('/').pop() || '');
+  const name = p.split('/').pop() || '';
   const i = name.lastIndexOf('.');
   return i > 0 ? name.slice(0, i) : name;
 };
+
 // hash for unique thumb names even if basenames collide
-const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+};
+
 const thumbNameFor = (videoUri: string) => `${baseNameNoExt(videoUri)}_${hash(videoUri)}.jpg`;
 const thumbPathFor = (videoUri: string) => `${THUMBS_DIR}${thumbNameFor(videoUri)}`;
 
 // ----- bounded concurrency helper -----
-async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: number) => Promise<R>): Promise<R[]> {
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, i: number) => Promise<R>
+): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let i = 0;
   const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
@@ -100,7 +129,10 @@ async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, i: nu
 let __fsQueue: Promise<any> = Promise.resolve();
 function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
   const task = __fsQueue.then(fn, fn);
-  __fsQueue = task.then(() => undefined, () => undefined);
+  __fsQueue = task.then(
+    () => undefined,
+    () => undefined
+  );
   return task;
 }
 
@@ -109,8 +141,11 @@ async function pathExists(p: string) {
   try {
     const info: any = await FileSystem.getInfoAsync(p);
     return !!info?.exists;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
+
 async function pickUniqueDest(dir: string, baseName: string, extWithDot: string) {
   let n = 0;
   while (true) {
@@ -120,6 +155,7 @@ async function pickUniqueDest(dir: string, baseName: string, extWithDot: string)
     n++;
   }
 }
+
 async function findByFilename(fileName: string): Promise<string | null> {
   try {
     // @ts-ignore
@@ -134,7 +170,7 @@ async function findByFilename(fileName: string): Promise<string | null> {
           try {
             // @ts-ignore
             const files: string[] = await (FileSystem as any).readDirectoryAsync(sDir);
-            const cand = files.find(f => f === fileName);
+            const cand = files.find((f) => f === fileName);
             if (cand) return sDir + cand;
           } catch {}
         }
@@ -143,6 +179,7 @@ async function findByFilename(fileName: string): Promise<string | null> {
   } catch {}
   return null;
 }
+
 async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promise<string | null> {
   try {
     // @ts-ignore
@@ -157,9 +194,10 @@ async function findByLooseBasename(baseNoExt: string, extWithDot: string): Promi
           try {
             // @ts-ignore
             const files: string[] = await (FileSystem as any).readDirectoryAsync(sDir);
-            const cand = files.find(f =>
-              (f === `${baseNoExt}${extWithDot}`) ||
-              (f.startsWith(`${baseNoExt}-`) && f.endsWith(extWithDot))
+            const cand = files.find(
+              (f) =>
+                f === `${baseNoExt}${extWithDot}` ||
+                (f.startsWith(`${baseNoExt}-`) && f.endsWith(extWithDot))
             );
             if (cand) return sDir + cand;
           } catch {}
@@ -178,12 +216,17 @@ async function readIndex(): Promise<IndexMeta[]> {
     const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
     const list = JSON.parse(raw || '[]');
     return Array.isArray(list) ? list : [];
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
+
 async function writeIndexAtomic(list: IndexMeta[]) {
   const tmp = INDEX_PATH + '.tmp';
   await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
-  try { await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true }); } catch {}
+  try {
+    await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true });
+  } catch {}
   await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
 }
 
@@ -277,7 +320,6 @@ async function getOrCreateThumb(videoUri: string, assetId?: string | null): Prom
         console.log('[thumbs] asset fallback failed', assetId, e2);
       }
     }
-
     return null;
   } catch (e) {
     console.log('[thumbs] error', e);
@@ -294,21 +336,28 @@ async function sweepOrphanThumbs(indexUris?: string[]) {
     if (!files?.length) return 0;
 
     const allowed = new Set(
-      (indexUris ?? (await readIndex()).map(m => m.uri)).map(u => thumbNameFor(u).replace(/\.jpg$/i, '').toLowerCase())
+      (indexUris ?? (await readIndex()).map((m) => m.uri))
+        .map((u) => thumbNameFor(u).replace(/\.jpg$/i, '').toLowerCase())
     );
 
     let removed = 0;
-    await mapLimit(files.filter(f => f.toLowerCase().endsWith('.jpg')), 4, async (f) => {
-      const base = f.replace(/\.jpg$/i, '').toLowerCase();
-      if (!allowed.has(base)) {
-        try {
-          await FileSystem.deleteAsync(`${THUMBS_DIR}${f}`, { idempotent: true });
-          removed++;
-        } catch {}
+    await mapLimit(
+      files.filter((f) => f.toLowerCase().endsWith('.jpg')),
+      4,
+      async (f) => {
+        const base = f.replace(/\.jpg$/i, '').toLowerCase();
+        if (!allowed.has(base)) {
+          try {
+            await FileSystem.deleteAsync(`${THUMBS_DIR}${f}`, { idempotent: true });
+            removed++;
+          } catch {}
+        }
       }
-    });
+    );
     return removed;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 // ---------- sidecar (score/outcome + gold) ----------
@@ -321,22 +370,24 @@ type SidecarEvent = {
   kind?: string;
   meta?: Record<string, any>;
 };
+
 type Sidecar = {
   athlete?: string;
   sport?: string;
   events?: SidecarEvent[];
   finalScore?: FinalScore;
   homeIsAthlete?: boolean;
-
-  outcome?: 'W'|'L'|'T';
-  winner?: 'home'|'opponent'|null;
-  endedBy?: 'pin'|'decision'|null;
+  outcome?: 'W' | 'L' | 'T';
+  winner?: 'home' | 'opponent' | null;
+  endedBy?: 'pin' | 'decision' | null;
   athletePinned?: boolean;
   athleteWasPinned?: boolean;
   modifiedAt?: number;
 };
 
-async function readOutcomeFor(videoUri: string): Promise<{
+async function readOutcomeFor(
+  videoUri: string
+): Promise<{
   finalScore: FinalScore | null;
   homeIsAthlete: boolean;
   outcome: Outcome | null;
@@ -364,19 +415,27 @@ async function readOutcomeFor(videoUri: string): Promise<{
         // @ts-ignore
         const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
         const baseName = base.slice(lastSlash + 1);
-        const candidate = files.find(f => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
+        const candidate = files.find((f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
         if (candidate) sc = await tryRead(dir + candidate);
       } catch {}
     }
 
     // If it's a highlight clip (sport === 'highlights'), there is no match outcome—return neutral.
     if (!sc || sc.sport === 'highlights') {
-      return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
+      return {
+        finalScore: null,
+        homeIsAthlete: true,
+        outcome: null,
+        myScore: null,
+        oppScore: null,
+        highlightGold: false,
+      };
     }
 
     let finalScore: FinalScore | null = sc.finalScore ?? null;
     if (!finalScore) {
-      let h = 0, o = 0;
+      let h = 0,
+        o = 0;
       for (const e of sc.events ?? []) {
         const pts = typeof e.points === 'number' ? e.points : 0;
         if (pts > 0) {
@@ -395,7 +454,7 @@ async function readOutcomeFor(videoUri: string): Promise<{
     let highlightGold = sc.endedBy === 'pin' ? !!sc.athletePinned : false;
 
     if (outcome == null) {
-      const ev = (sc.events ?? []);
+      const ev = sc.events ?? [];
       const pinEv = ev.find((e: SidecarEvent) => {
         const key = String(e?.key ?? '').toLowerCase();
         const label = String(e?.label ?? '').toLowerCase();
@@ -406,7 +465,8 @@ async function readOutcomeFor(videoUri: string): Promise<{
           kind === 'pin' ||
           label.includes('pin') ||
           winBy === 'pin' ||
-          kind === 'fall' || label.includes('fall')
+          kind === 'fall' ||
+          label.includes('fall')
         );
       });
 
@@ -423,7 +483,14 @@ async function readOutcomeFor(videoUri: string): Promise<{
 
     return { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
   } catch {
-    return { finalScore: null, homeIsAthlete: true, outcome: null, myScore: null, oppScore: null, highlightGold: false };
+    return {
+      finalScore: null,
+      homeIsAthlete: true,
+      outcome: null,
+      myScore: null,
+      oppScore: null,
+      highlightGold: false,
+    };
   }
 }
 
@@ -439,7 +506,7 @@ async function _retagVideo(
   // re-resolve source by filename if missing
   let sourceUri = input.uri;
   if (!(await pathExists(sourceUri))) {
-    const fileName = (input.uri.split('/').pop() || '');
+    const fileName = input.uri.split('/').pop() || '';
     const dot = fileName.lastIndexOf('.');
     const baseNoExt = dot > 0 ? fileName.slice(0, dot) : fileName;
     const ext = dot > 0 ? fileName.slice(dot) : '.mp4';
@@ -449,10 +516,9 @@ async function _retagVideo(
 
     if (!found && input.assetId) {
       const list = await readIndex();
-      const hit = list.find(m => m.assetId === input.assetId);
-      if (hit && await pathExists(hit.uri)) found = hit.uri;
+      const hit = list.find((m) => m.assetId === input.assetId);
+      if (hit && (await pathExists(hit.uri))) found = hit.uri;
     }
-
     if (found) {
       sourceUri = found;
     } else {
@@ -488,7 +554,7 @@ async function _retagVideo(
     try {
       // @ts-ignore
       const files: string[] = await (FileSystem as any).readDirectoryAsync(srcDir);
-      const cand = files.find(f => f.toLowerCase() === `${base.toLowerCase()}.json`);
+      const cand = files.find((f) => f.toLowerCase() === `${base.toLowerCase()}.json`);
       if (cand) sidecarFrom = srcDir + cand;
     } catch {}
   }
@@ -499,16 +565,28 @@ async function _retagVideo(
   let sidecarDest = `${newDir}${newBase}.json`;
 
   try {
-    if (sidecarFrom && await pathExists(sidecarFrom)) {
+    if (sidecarFrom && (await pathExists(sidecarFrom))) {
       if (await pathExists(sidecarDest)) sidecarDest = `${newDir}${newBase}-${Date.now()}.json`;
       await FileSystem.moveAsync({ from: sidecarFrom, to: sidecarDest });
     } else {
-      const minimal = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
+      const minimal = {
+        athlete: newAthlete,
+        sport: input.sportKey,
+        events: [],
+        homeIsAthlete: true,
+        finalScore: { home: 0, opponent: 0 },
+      };
       await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(minimal));
     }
   } catch {
     try {
-      const minimal = { athlete: newAthlete, sport: input.sportKey, events: [], homeIsAthlete: true, finalScore: { home: 0, opponent: 0 } };
+      const minimal = {
+        athlete: newAthlete,
+        sport: input.sportKey,
+        events: [],
+        homeIsAthlete: true,
+        finalScore: { home: 0, opponent: 0 },
+      };
       await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(minimal));
     } catch {}
   }
@@ -519,16 +597,18 @@ async function _retagVideo(
     sc.athlete = newAthlete;
     if (!sc.sport) sc.sport = input.sportKey;
     await FileSystem.writeAsStringAsync(sidecarDest, JSON.stringify(sc));
-  } catch (e) { console.log('sidecar patch error:', e); }
+  } catch (e) {
+    console.log('sidecar patch error:', e);
+  }
 
   const list = await readIndex();
-  const updated: IndexMeta[] = list.map(e =>
+  const updated: IndexMeta[] = list.map((e) =>
     e.uri === input.uri || e.uri === sourceUri
       ? {
           ...e,
           uri: newVideoUri,
           athlete: newAthlete,
-          displayName: `${newAthlete} — ${e.sport} — ${new Date(e.createdAt).toLocaleString()}`
+          displayName: `${newAthlete} — ${e.sport} — ${new Date(e.createdAt).toLocaleString()}`,
         }
       : e
   );
@@ -537,8 +617,8 @@ async function _retagVideo(
   try {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted || !input.assetId) return;
-
     const assetId = input.assetId;
+
     const athleteAlbumName = newAthlete;
     const sportAlbumName = `${newAthlete} — ${input.sportKey}`;
 
@@ -551,10 +631,20 @@ async function _retagVideo(
     else await MediaLibrary.addAssetsToAlbumAsync([assetId], s, false);
   } catch {}
 }
+
 // safe wrapper (serialized with the FS queue)
-function retagVideo(input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string }, newAthlete: string) {
+function retagVideo(
+  input: { uri: string; oldAthlete: string; sportKey: string; assetId?: string },
+  newAthlete: string
+) {
   return enqueueFs(() => _retagVideo(input, newAthlete));
 }
+
+// app/(tabs)/library.tsx (Focusing on the UploadButton function only)
+
+// ... (other functions like retagVideo and component imports)
+// ASSUMPTION: The top of the file now includes: import { supabase } from '@/lib/supabase';
+// ASSUMPTION: The file imports 'expo-file-system', 'react', and 'react-native' components
 
 function UploadButton({
   localUri,
@@ -567,8 +657,10 @@ function UploadButton({
   uploaded?: boolean;
   onUploaded?: (cloudKey: string, url: string) => void;
 }) {
-  const [state, setState] = useState<'idle'|'uploading'|'done'>(uploaded ? 'done' : 'idle');
-  const [error, setError] = useState<string|undefined>();
+  // Assuming useState, useEffect, supabase, FileSystem, baseNameNoExt, Text, View, Pressable, 
+  // ActivityIndicator, Alert, Date, Blob, and fetch are imported/available in the scope.
+  const [state, setState] = useState<'idle' | 'uploading' | 'done'>(uploaded ? 'done' : 'idle');
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
     setState(uploaded ? 'done' : 'idle');
@@ -584,12 +676,110 @@ function UploadButton({
         onPress={async () => {
           setError(undefined);
           setState('uploading');
+          
+          // 1. Get user session (which includes the token data)
+          const { data: { session } } = await supabase.auth.getSession();
+          const user = session?.user;
+
+          if (!user) {
+            setError('User not authenticated for upload');
+            setState('idle');
+            Alert.alert('Authentication Error', 'You must be signed in to upload videos.');
+            return;
+          }
+          
+          // 🛑 CRITICAL FIX: FORCE TOKEN REFRESH
+          const { error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError) {
+             console.error("[Refresh Error]", refreshError);
+          }
+          
+          // 🛑 DEBUGGING LINE: CHECK THE USER ID BEING SENT
+          console.log(`[DEBUG] User ID for RLS: ${user.id}`); 
+          
+          const fileName = baseNameNoExt(localUri);
+          const timestamp = Date.now();
+          const path = `videos/${user.id}/${timestamp}_${fileName}.mp4`;
+          const sidecarPath = `sidecars/${user.id}/${timestamp}_${fileName}.json`;
+          const sc = (sidecar as any) || undefined;
+          
           try {
-            const { key, url } = await uploadFileOnTap(localUri);
-            if (sidecar) await uploadJSONOnTap(sidecar, 'sidecars/');
+            // 0) Get Blob from local URI
+            const res = await fetch(localUri);
+            const blob = await res.blob();
+            
+            // 1) Upload video to Supabase Storage (THIS PART SUCCEEDS)
+            const { error: uploadError } = await supabase.storage
+              .from('user-videos') 
+              .upload(path, blob, {
+                contentType: 'video/mp4',
+              });
+
+            if (uploadError) throw uploadError;
+
+            // 2) Upload sidecar JSON if provided (omitted for brevity)
+            if (sidecar) {
+              const sidecarBlob = new Blob([JSON.stringify(sidecar)], { type: 'application/json' });
+              await supabase.storage
+                .from('user-videos')
+                .upload(sidecarPath, sidecarBlob, {
+                  contentType: 'application/json',
+                });
+            }
+
+            // 3) Get public URL and bytes
+            const { data: { publicUrl } } = supabase.storage.from('user-videos').getPublicUrl(path);
+            // Assuming FileSystem.getInfoAsync is available from expo-file-system or similar
+            const info = await FileSystem.getInfoAsync(localUri);
+            const bytes = info.exists ? info.size : 0;
+            
+            const videoTitle = sc?.athlete && sc?.sport 
+                  ? `${sc.athlete} - ${sc.sport}` 
+                  : baseNameNoExt(localUri);
+
+            // 4) Save an index row in Supabase Database (public.videos table)
+
+            // 1. CONSTRUCT THE PAYLOAD OBJECT
+            const payload = {
+                // 1. AUTHENTICATION (NOT NULL)
+                owner_uid: user.id, // Must be a valid UUID string
+
+                // 2. FILE/STORAGE COLUMNS (NOT NULL)
+                b2_key: path, // Must be a non-empty string for the file path
+                bytes: bytes, // Must be a valid number (integer) for file size
+                
+                // 3. VIDEO METADATA COLUMNS
+                title: videoTitle,
+                athlete_name: sc?.athlete || 'Unassigned', 
+                sport: sc?.sport || 'unknown',
+                
+                // Converting recorded_at_ms (number) to required ISO timestamp string
+                recorded_at: new Date(sc?.modifiedAt || Date.now()).toISOString(),
+                
+                // 4. SCORE AND STATUS COLUMNS
+                score_home: 0,
+                score_opponent: 0,
+                home_is_athlete: true,
+                is_public: false,
+            };
+
+            // 🛑 DEBUG STEP: LOGGING THE PAYLOAD
+            console.log("Supabase Insert Payload:", JSON.stringify(payload, null, 2));
+
+
+            // 2. PERFORM THE INSERT
+            // 🎉 FIX B: Add { returning: 'minimal' } to prevent RLS failure from the automatic SELECT
+            // The type cast (as any) is used to clear the TypeScript overload error.
+            const { error: insertError } = await supabase.from('videos').insert(payload, { returning: 'minimal' } as any);
+
+
+            if (insertError) throw insertError;
+            
             setState('done');
-            onUploaded?.(key, url);
+            onUploaded?.(path, publicUrl); 
+
           } catch (e: any) {
+            console.error('[Supabase Upload Error]', e);
             setError(e?.message ?? 'Upload failed');
             setState('idle');
             Alert.alert('Upload failed', e?.message ?? 'Please try again while online.');
@@ -608,7 +798,7 @@ function UploadButton({
           {state === 'uploading' ? 'Uploading…' : 'Upload'}
         </Text>
       </Pressable>
-      {state === 'uploading' && <ActivityIndicator />}
+      {state === 'uploading' && <ActivityIndicator color="white" />}
       {!!error && <Text style={{ color: 'tomato' }}>{error}</Text>}
     </View>
   );
@@ -636,7 +826,7 @@ export default function LibraryScreen() {
   const [titleInput, setTitleInput] = useState('');
 
   // segmented state
-  const [view, setView] = useState<'all'|'athletes'|'sports'>('athletes');
+  const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
@@ -644,7 +834,9 @@ export default function LibraryScreen() {
 
   // keep a ref of rows for lazy thumb generation to access assetId
   const rowsRef = useRef<Row[]>([]);
-  useEffect(() => { rowsRef.current = rows; }, [rows]);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
 
   // ---------- build 1 row ----------
   const buildRow = useCallback(async (meta: IndexMeta, eagerThumb: boolean): Promise<Row | null> => {
@@ -656,14 +848,13 @@ export default function LibraryScreen() {
 
     return {
       uri: meta.uri,
-      displayName: meta.displayName || (meta.uri.split('/').pop() || 'video'),
+      displayName: meta.displayName || meta.uri.split('/').pop() || 'video',
       athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
       sport: (meta.sport || 'unknown').trim() || 'unknown',
       assetId: meta.assetId,
       size: info?.size ?? null,
       mtime: info?.modificationTime ? Math.round((info.modificationTime as number) * 1000) : meta.createdAt ?? null,
       thumbUri: thumb,
-
       finalScore: scoreBits.finalScore,
       homeIsAthlete: scoreBits.homeIsAthlete,
       outcome: scoreBits.outcome ?? undefined,
@@ -680,11 +871,9 @@ export default function LibraryScreen() {
     try {
       const list: IndexMeta[] = await readIndex();
       const sorted = [...list].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-
       const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => {
         return await buildRow(meta, i < 12);
       });
-
       const filtered = rowsBuilt.filter(Boolean) as Row[];
       filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
       setRows(filtered);
@@ -692,33 +881,57 @@ export default function LibraryScreen() {
       try {
         const raw = await AsyncStorage.getItem(ATHLETES_KEY);
         setAthleteList(raw ? JSON.parse(raw) : []);
-      } catch { setAthleteList([]); }
+      } catch {
+        setAthleteList([]);
+      }
 
       try {
         const rawUp = await AsyncStorage.getItem(UPLOADED_MAP_KEY);
         setUploadedMap(rawUp ? JSON.parse(rawUp) : {});
-      } catch { setUploadedMap({}); }
+      } catch {
+        setUploadedMap({});
+      }
 
       // opportunistically sweep orphan thumbs (quietly)
-      try { await sweepOrphanThumbs(sorted.map(m => m.uri)); } catch {}
+      try {
+        await sweepOrphanThumbs(sorted.map((m) => m.uri));
+      } catch {}
     } finally {
       loadingRef.current = false;
     }
   }, [buildRow]);
 
   // initial + focus refresh
-  useEffect(() => { load(); }, [load]);
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useEffect(() => {
+    load();
+  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   // ----- FAST PATH: patch only the edited row on sidecarUpdated -----
   const patchRowFromSidecarPayload = useCallback(async (uri: string, sc?: any) => {
-    let nextBits: { finalScore: FinalScore | null; homeIsAthlete: boolean; outcome: Outcome | null; myScore: number | null; oppScore: number | null; highlightGold: boolean } | null = null;
+    let nextBits:
+      | {
+          finalScore: FinalScore | null;
+          homeIsAthlete: boolean;
+          outcome: Outcome | null;
+          myScore: number | null;
+          oppScore: number | null;
+          highlightGold: boolean;
+        }
+      | null = null;
 
     if (sc) {
       try {
         const homeIsAthlete = sc.homeIsAthlete !== false;
         const finalScore: FinalScore | null = sc.finalScore ?? null;
-        let myScore: number | null = null, oppScore: number | null = null, outcome: Outcome | null = sc.outcome ?? null, highlightGold = false;
+        let myScore: number | null = null,
+          oppScore: number | null = null,
+          outcome: Outcome | null = sc.outcome ?? null,
+          highlightGold = false;
 
         if (finalScore) {
           myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
@@ -726,24 +939,31 @@ export default function LibraryScreen() {
         }
 
         if (sc.endedBy === 'pin') highlightGold = !!sc.athletePinned;
+
         if (!outcome && finalScore) {
-          outcome = (myScore! > oppScore!) ? 'W' : (myScore! < oppScore!) ? 'L' : 'T';
+          outcome = myScore! > oppScore! ? 'W' : myScore! < oppScore! ? 'L' : 'T';
         }
 
         nextBits = { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
-      } catch { nextBits = null; }
+      } catch {
+        nextBits = null;
+      }
     }
 
     if (!nextBits) {
       const b = await readOutcomeFor(uri);
       nextBits = {
-        finalScore: b.finalScore, homeIsAthlete: b.homeIsAthlete, outcome: b.outcome,
-        myScore: b.myScore, oppScore: b.oppScore, highlightGold: b.highlightGold
+        finalScore: b.finalScore,
+        homeIsAthlete: b.homeIsAthlete,
+        outcome: b.outcome,
+        myScore: b.myScore,
+        oppScore: b.oppScore,
+        highlightGold: b.highlightGold,
       };
     }
 
-    setRows(prev =>
-      prev.map(r =>
+    setRows((prev) =>
+      prev.map((r) =>
         r.uri === uri
           ? {
               ...r,
@@ -761,7 +981,7 @@ export default function LibraryScreen() {
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
-      const uri = evt?.uri as string | undefined;
+      const uri = (evt?.uri as string) || undefined;
       if (!uri) return;
       await patchRowFromSidecarPayload(uri, evt?.sidecar);
     });
@@ -770,109 +990,131 @@ export default function LibraryScreen() {
 
   // confirm-before-delete
   const confirmRemove = useCallback((row: Row) => {
-    Alert.alert(
-      'Delete this video?',
-      'This removes the file, its index entry, and its cached thumbnail.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
-      ]
-    );
+    Alert.alert('Delete this video?', 'This removes the file, its index entry, and its cached thumbnail.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
+    ]);
   }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await load();
-      try { await sweepOrphanThumbs(); } catch {}
+      try {
+        await sweepOrphanThumbs();
+      } catch {}
     } finally {
       setRefreshing(false);
     }
   }, [load]);
 
   // delete handler (serialized through FS queue) + thumb cleanup
-  const removeVideo = useCallback(async (row: Row) => {
-    await enqueueFs(async () => {
-      try {
-        // delete the video file
-        try { await FileSystem.deleteAsync(row.uri, { idempotent: true }); } catch {}
-
-        // delete the cached thumbnail (if present)
+  const removeVideo = useCallback(
+    async (row: Row) => {
+      await enqueueFs(async () => {
         try {
-          const t = thumbPathFor(row.uri);
-          const info: any = await FileSystem.getInfoAsync(t);
-          if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
-        } catch {}
-
-        // drop from index
-        const current = await readIndex();
-        const updated = current.filter(e => e.uri !== row.uri);
-        await writeIndexAtomic(updated);
-
-        // delete from Photos (if it was saved there)
-        if (row.assetId) {
+          // delete the video file
           try {
-            const { granted } = await MediaLibrary.requestPermissionsAsync();
-            if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
+            await FileSystem.deleteAsync(row.uri, { idempotent: true });
           } catch {}
-        }
 
-        Alert.alert('Deleted', 'Video removed.');
-        await load();
-      } catch (e: any) {
-        console.log('delete error:', e);
-        Alert.alert('Delete failed', String(e?.message ?? e));
-      }
-    });
-  }, [load]);
+          // delete the cached thumbnail (if present)
+          try {
+            const t = thumbPathFor(row.uri);
+            const info: any = await FileSystem.getInfoAsync(t);
+            if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
+          } catch {}
+
+          // drop from index
+          const current = await readIndex();
+          const updated = current.filter((e) => e.uri !== row.uri);
+          await writeIndexAtomic(updated);
+
+          // delete from Photos (if it was saved there)
+          if (row.assetId) {
+            try {
+              const { granted } = await MediaLibrary.requestPermissionsAsync();
+              if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
+            } catch {}
+          }
+
+          Alert.alert('Deleted', 'Video removed.');
+          await load();
+        } catch (e: any) {
+          console.log('delete error:', e);
+          Alert.alert('Delete failed', String(e?.message ?? e));
+        }
+      });
+    },
+    [load]
+  );
 
   const saveToPhotos = useCallback(async (uri: string) => {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
-    if (!granted) { Alert.alert('Photos permission needed', 'Allow access to save your video.'); return; }
+    if (!granted) {
+      Alert.alert('Photos permission needed', 'Allow access to save your video.');
+      return;
+    }
     await MediaLibrary.saveToLibraryAsync(uri);
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  const routerPushPlayback = useCallback((row: Row) => {
-    router.push({
-      pathname: '/screens/PlaybackScreen',
-      params: { videoPath: row.uri, athlete: row.athlete, sport: row.sport, displayName: row.displayName },
-    });
-  }, [router]);
+  const routerPushPlayback = useCallback(
+    (row: Row) => {
+      router.push({
+        pathname: '/screens/PlaybackScreen',
+        params: {
+          videoPath: row.uri,
+          athlete: row.athlete,
+          sport: row.sport,
+          displayName: row.displayName,
+        },
+      });
+    },
+    [router]
+  );
 
   // >>> define doEditAthlete used by the modal (serialized) <<<
   const doEditAthlete = useCallback(
     async (row: Row, newAthlete: string) => {
       try {
         await retagVideo(
-          { uri: row.uri, oldAthlete: row.athlete, sportKey: row.sport, assetId: row.assetId },
+          {
+            uri: row.uri,
+            oldAthlete: row.athlete,
+            sportKey: row.sport,
+            assetId: row.assetId,
+          },
           newAthlete
         );
         await load();
       } catch (e: any) {
         console.log('retag error', e);
         const msg = e?.message || String(e);
-        Alert.alert(
-          'Update failed',
-          msg.includes('Original file not found') ? `${msg}\n\nTap Refresh and try again.` : msg
-        );
+        Alert.alert('Update failed', msg.includes('Original file not found') ? `${msg}\n\nTap Refresh and try again.` : msg);
       }
     },
     [load]
   );
 
   // ====== GROUPINGS ======
-  const allRows = useMemo(() => [...rows].sort((a,b)=>(b.mtime ?? 0)-(a.mtime ?? 0)), [rows]);
+  const allRows = useMemo(() => [...rows].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)), [rows]);
 
   const rowsByAthlete = useMemo(() => {
     const map: Record<string, Row[]> = {};
-    for (const r of allRows) { const k = r.athlete || 'Unassigned'; (map[k] ||= []).push(r); }
+    for (const r of allRows) {
+      const k = r.athlete || 'Unassigned';
+      (map[k] ||= []).push(r);
+    }
     return map;
   }, [allRows]);
 
   const rowsBySport = useMemo(() => {
     const map: Record<string, Row[]> = {};
-    for (const r of allRows) { const k = r.sport || 'unknown'; (map[k] ||= []).push(r); }
+    for (const r of allRows) {
+      const k = r.sport || 'unknown';
+      (map[k] ||= []).push(r);
+    }
     return map;
   }, [allRows]);
 
@@ -894,7 +1136,7 @@ export default function LibraryScreen() {
   }, [allRows]);
 
   const photoFor = useCallback(
-    (name: string) => athleteList.find(a => a.name === name)?.photoUri ?? null,
+    (name: string) => athleteList.find((a) => a.name === name)?.photoUri ?? null,
     [athleteList]
   );
 
@@ -906,305 +1148,318 @@ export default function LibraryScreen() {
   // ====== FlatList helpers ======
   const outcomeColor = (o?: Outcome | null) =>
     o === 'W' ? '#16a34a' : o === 'L' ? '#dc2626' : o === 'T' ? '#f59e0b' : 'rgba(255,255,255,0.25)';
-  const renderVideoRow = useCallback(({ item }: { item: Row }) => {
-    // split date/time for fixed badges
-    const when = item.mtime ? new Date(item.mtime) : null;
-    const dateOnly = when ? when.toLocaleDateString() : '—';
-    const timeOnly = when ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
-    // NOTE: date/time removed from subtitleBits on purpose (now shown as badges above)
-    const subtitleBits = [
-      item.athlete ? `👤 ${item.athlete}` : null,
-      item.sport ? `🏷️ ${item.sport}` : null,
-      `${bytesToMB(item.size)}`,
-    ].filter(Boolean);
+  const renderVideoRow = useCallback(
+    ({ item }: { item: Row }) => {
+      // split date/time for fixed badges
+      const when = item.mtime ? new Date(item.mtime) : null;
+      const dateOnly = when ? when.toLocaleDateString() : '—';
+      const timeOnly = when ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
-    const chip =
-      item.sport !== 'highlights' &&
-      item.outcome &&
-      item.myScore != null &&
-      item.oppScore != null
-        ? { text: `${item.outcome} ${item.myScore}–${item.oppScore}`, color: outcomeColor(item.outcome) }
-        : null;
+      // NOTE: date/time removed from subtitleBits on purpose (now shown as badges above)
+      const subtitleBits = [
+        item.athlete ? `👤 ${item.athlete}` : null,
+        item.sport ? `🏷️ ${item.sport}` : null,
+        `${bytesToMB(item.size)}`,
+      ].filter(Boolean) as string[];
 
-    const uploaded = uploadedMap[keyFor(item)];
+      const chip =
+        item.sport !== 'highlights' && item.outcome && item.myScore != null && item.oppScore != null
+          ? {
+              text: `${item.outcome} ${item.myScore}–${item.oppScore}`,
+              color: outcomeColor(item.outcome),
+            }
+          : null;
 
-    return (
-      <Pressable
-        onPress={() => routerPushPlayback(item)}
-        style={{
-          padding: 0,
-          marginHorizontal: 16,
-          marginVertical: 8,
-          borderRadius: 12,
-          overflow: 'hidden',
-          borderWidth: item.highlightGold ? 0 : 2,
-          borderColor: item.highlightGold ? 'transparent' : outcomeColor(item.outcome),
-          backgroundColor: item.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
-        }}
-      >
-        {item.highlightGold && (
-          <>
-            <LinearGradient
-              colors={['#f7d774', '#d4a017', '#b88912']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-            />
+      const uploaded = uploadedMap[keyFor(item)];
+
+      return (
+        <Pressable
+          onPress={() => routerPushPlayback(item)}
+          style={{
+            padding: 0,
+            marginHorizontal: 16,
+            marginVertical: 8,
+            borderRadius: 12,
+            overflow: 'hidden',
+            borderWidth: item.highlightGold ? 0 : 2,
+            borderColor: item.highlightGold ? 'transparent' : outcomeColor(item.outcome),
+            backgroundColor: item.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
+          }}
+        >
+          {item.highlightGold && (
+            <>
+              <LinearGradient
+                colors={['#f7d774', '#d4a017', '#b88912']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              />
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0,0,0,0.08)',
+                }}
+              />
+            </>
+          )}
+
+          <View style={{ padding: 12 }}>
+            {/* Header row: date/time on the left, Edit Title on the right */}
             <View
               style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0,0,0,0.08)',
-              }}
-            />
-          </>
-        )}
-
-        <View style={{ padding: 12 }}>
-          {/* Header row: date/time on the left, Edit Title on the right */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View
-                style={{
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.2)',
-                }}
-              >
-                <Text style={{ color: 'white', fontWeight: '800' }}>{dateOnly}</Text>
-              </View>
-              <View
-                style={{
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.2)',
-                }}
-              >
-                <Text style={{ color: 'white', fontWeight: '800' }}>{timeOnly}</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => openEditName(item)}
-              style={{
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 999,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                borderWidth: 1,
-                borderColor: 'white',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 8,
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '900' }}>Edit Title</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '800' }}>{dateOnly}</Text>
+                </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            {/* thumbnail */}
-            {item.thumbUri ? (
-              <Image
-                key={item.thumbUri || item.uri}
-                source={{ uri: item.thumbUri }}
+                <View
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '800' }}>{timeOnly}</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => openEditName(item)}
                 style={{
-                  width: 96,
-                  height: 54,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(255,255,255,0.1)',
-                }}
-                contentFit="cover"
-                transition={100}
-              />
-            ) : (
-              <View
-                style={{
-                  width: 96,
-                  height: 54,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(255,255,255,0.1)',
-                  justifyContent: 'center',
-                  alignItems: 'center',
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'white',
                 }}
               >
-                <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
-              </View>
-            )}
+                <Text style={{ color: 'white', fontWeight: '900' }}>Edit Title</Text>
+              </TouchableOpacity>
+            </View>
 
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text
-                  style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
-                  numberOfLines={2}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              {/* thumbnail */}
+              {item.thumbUri ? (
+                <Image
+                  key={item.thumbUri || item.uri}
+                  source={{ uri: item.thumbUri }}
+                  style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                  contentFit="cover"
+                  transition={100}
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 96,
+                    height: 54,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}
                 >
-                  {item.displayName}
+                  <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+                </View>
+              )}
+
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>
+                    {item.displayName}
+                  </Text>
+
+                  {chip && (
+                    <View
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 999,
+                        backgroundColor: `${chip.color}22`,
+                        borderWidth: 1,
+                        borderColor: `${chip.color}66`,
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
+                    </View>
+                  )}
+
+                  {item.highlightGold && (
+                    <View
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 999,
+                        backgroundColor: '#00000033',
+                        borderWidth: 1,
+                        borderColor: '#ffffff55',
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
+                    </View>
+                  )}
+                </View>
+
+                <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>
+                  {subtitleBits.join(' • ')}
                 </Text>
 
-                {chip && (
-                  <View
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+                  <TouchableOpacity
+                    onPress={() => saveToPhotos(item.uri)}
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}
+                  >
+                    <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => routerPushPlayback(item)}
                     style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
                       borderRadius: 999,
-                      backgroundColor: `${chip.color}22`,
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                       borderWidth: 1,
-                      borderColor: `${chip.color}66`,
+                      borderColor: 'white',
                     }}
                   >
-                    <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
-                  </View>
-                )}
+                    <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
+                  </TouchableOpacity>
 
-                {item.highlightGold && (
-                  <View
+                  <TouchableOpacity
+                    onPress={() => confirmRemove(item)}
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(220,0,0,0.9)' }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setAthletePickerOpen(item)}
                     style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
                       borderRadius: 999,
-                      backgroundColor: '#00000033',
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                       borderWidth: 1,
-                      borderColor: '#ffffff55',
+                      borderColor: 'white',
                     }}
                   >
-                    <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
-                  </View>
-                )}
-              </View>
+                    <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
+                  </TouchableOpacity>
 
-              <Text
-                style={{ color: 'white', opacity: 0.85, marginTop: 4 }}
-                numberOfLines={1}
-              >
-                {subtitleBits.join(' • ')}
-              </Text>
-
-              <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-                <TouchableOpacity
-                  onPress={() => saveToPhotos(item.uri)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 999,
-                    backgroundColor: 'white',
-                  }}
-                >
-                  <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => routerPushPlayback(item)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(255,255,255,0.12)',
-                    borderWidth: 1,
-                    borderColor: 'white',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '700' }}>Play</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => confirmRemove(item)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(220,0,0,0.9)',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setAthletePickerOpen(item)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(255,255,255,0.12)',
-                    borderWidth: 1,
-                    borderColor: 'white',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
-                </TouchableOpacity>
-
+                  {/* START: Temporarily disabled UploadButton for closed beta testing */}
+                {/*
                 <View style={{ marginTop: 8, alignItems: 'center' }}>
-                  <UploadButton
-                    localUri={item.uri}
-                    uploaded={!!uploaded}
-                    sidecar={{
-                      videoPath: item.uri,
-                      athlete: item.athlete,
-                      sport: item.sport,
-                      createdAt: item.mtime ?? Date.now(),
-                    }}
-                    onUploaded={(key, url) => {
-                      const mapKey = keyFor(item);
-                      setUploadedMap((prev) => {
-                        const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
-                        AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(
-                          () => {}
-                        );
-                        return next;
-                      });
-                    }}
-                  />
+                    <UploadButton
+                      localUri={item.uri}
+                      uploaded={!!uploaded}
+                      sidecar={{
+                        videoPath: item.uri,
+                        athlete: item.athlete,
+                        sport: item.sport,
+                        createdAt: item.mtime ?? Date.now(),
+                      }}
+                      onUploaded={(key, url) => {
+                        // keep your local "uploaded" bookkeeping
+                        const mapKey = keyFor(item);
+                        setUploadedMap((prev) => {
+                          const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
+                          AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
+                          return next;
+                        });
+                        // Firestore indexing already happened in saveVideoDoc (inside UploadButton)
+                      }}
+                    />
+                </View>
+                */}
+                {/* END: Temporarily disabled UploadButton */}
+
+                {/* Show a placeholder message instead */}
+                <View style={{ marginTop: 8, alignItems: 'center' }}>
+                    <Text style={{ color: 'gray', fontSize: 10 }}>
+                        Upload Disabled for Beta Testing
+                    </Text>
+                </View>
                 </View>
               </View>
             </View>
           </View>
-        </View>
-      </Pressable>
-    );
-  }, [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]);
+        </Pressable>
+      );
+    },
+    [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]
+  );
 
   // Lazy thumbnails for viewable rows (now assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
-  const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
-    const toFetch: string[] = [];
-    changed.forEach(vt => {
-      const row = vt.item as Row;
-      if (!row?.uri) return;
-      if (vt.isViewable && !row.thumbUri && !thumbQueueRef.current.has(row.uri)) {
-        thumbQueueRef.current.add(row.uri);
-        toFetch.push(row.uri);
-      }
-    });
-    if (!toFetch.length) return;
-
-    (async () => {
-      const updated: { uri: string; thumb: string | null }[] = await mapLimit(toFetch, 3, async (uri) => {
-        const row = rowsRef.current.find(r => r.uri === uri);
-        const thumb = await getOrCreateThumb(uri, row?.assetId);
-        return { uri, thumb };
+  const onViewableItemsChanged = useRef(
+    ({ changed }: { changed: ViewToken[] }) => {
+      const toFetch: string[] = [];
+      changed.forEach((vt) => {
+        const row = vt.item as Row;
+        if (!row?.uri) return;
+        if (vt.isViewable && !row.thumbUri && !thumbQueueRef.current.has(row.uri)) {
+          thumbQueueRef.current.add(row.uri);
+          toFetch.push(row.uri);
+        }
       });
-      setRows(prev =>
-        prev.map(r => {
-          const hit = updated.find(u => u.uri === r.uri);
-          return hit ? { ...r, thumbUri: hit.thumb } : r;
-        })
-      );
-      updated.forEach(u => thumbQueueRef.current.delete(u.uri));
-    })();
-  }).current;
+      if (!toFetch.length) return;
+
+      (async () => {
+        const updated: { uri: string; thumb: string | null }[] = await mapLimit(toFetch, 3, async (uri) => {
+          const row = rowsRef.current.find((r) => r.uri === uri);
+          const thumb = await getOrCreateThumb(uri, row?.assetId);
+          return { uri, thumb };
+        });
+        setRows((prev) =>
+          prev.map((r) => {
+            const hit = updated.find((u) => u.uri === r.uri);
+            return hit ? { ...r, thumbUri: hit.thumb } : r;
+          })
+        );
+        updated.forEach((u) => thumbQueueRef.current.delete(u.uri));
+      })();
+    }
+  ).current;
 
   const viewConfigRef = useRef({ itemVisiblePercentThreshold: 40 });
 
   // ====== UI ======
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      <View style={{ paddingHorizontal: 16, paddingTop: insets.top, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <View
+        style={{
+          paddingHorizontal: 16,
+          paddingTop: insets.top,
+          paddingBottom: 6,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
         <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>Library</Text>
         <TouchableOpacity onPress={onRefresh} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}>
           <Text style={{ color: 'white', fontWeight: '800' }}>Refresh</Text>
@@ -1213,21 +1468,25 @@ export default function LibraryScreen() {
 
       {/* segmented */}
       <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 }}>
-        {(['all', 'athletes', 'sports'] as const).map(k => (
+        {(['all', 'athletes', 'sports'] as const).map((k) => (
           <TouchableOpacity
             key={k}
-            onPress={() => { setView(k); setSelectedAthlete(null); setSelectedSport(null); }}
+            onPress={() => {
+              setView(k);
+              setSelectedAthlete(null);
+              setSelectedSport(null);
+            }}
             style={{
               paddingVertical: 8,
               paddingHorizontal: 12,
               borderRadius: 999,
               backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
               borderWidth: 1,
-              borderColor: 'white'
+              borderColor: 'white',
             }}
           >
             <Text style={{ color: view === k ? 'black' : 'white', fontWeight: '800' }}>
-              {k === 'all' ? 'All' : k[0].toUpperCase()+k.slice(1)}
+              {k === 'all' ? 'All' : k[0].toUpperCase() + k.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -1241,15 +1500,17 @@ export default function LibraryScreen() {
           renderItem={renderVideoRow}
           contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-          ListEmptyComponent={<Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>No recordings yet. Record a match, then come back.</Text>}
-
+          ListEmptyComponent={
+            <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
+              No recordings yet. Record a match, then come back.
+            </Text>
+          }
           // performance tuning
           initialNumToRender={10}
           windowSize={7}
           maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
           removeClippedSubviews
-
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewConfigRef.current}
         />
@@ -1263,16 +1524,18 @@ export default function LibraryScreen() {
             if (b === 'Unassigned') return -1;
             return a.localeCompare(b);
           })}
-          keyExtractor={(k)=>k}
+          keyExtractor={(k) => k}
           renderItem={({ item: name }) => {
             const photoUri = photoFor(name);
             const videos = rowsByAthlete[name];
             const count = videos.length;
             const last = videos?.[0]?.mtime ? new Date(videos[0].mtime!).toLocaleString() : '—';
-
             return (
               <Pressable
-                onPress={() => { setSelectedAthlete(name); setSelectedSport(null); }}
+                onPress={() => {
+                  setSelectedAthlete(name);
+                  setSelectedSport(null);
+                }}
                 style={{
                   padding: 12,
                   marginHorizontal: 16,
@@ -1309,7 +1572,6 @@ export default function LibraryScreen() {
                       <Text style={{ color: 'white', opacity: 0.7, fontSize: 20 }}>👤</Text>
                     </View>
                   )}
-
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
                       {name}
@@ -1319,7 +1581,6 @@ export default function LibraryScreen() {
                     </Text>
                   </View>
                 </View>
-
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>›</Text>
               </Pressable>
             );
@@ -1333,15 +1594,18 @@ export default function LibraryScreen() {
       {view === 'athletes' && selectedAthlete != null && selectedSport == null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
-            <TouchableOpacity onPress={() => setSelectedAthlete(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+            <TouchableOpacity
+              onPress={() => setSelectedAthlete(null)}
+              style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}
+            >
               <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
             </TouchableOpacity>
             <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedAthlete}</Text>
           </View>
 
           <FlatList
-            data={Object.keys(athleteSportsMap[selectedAthlete] || {}).sort((a,b)=>a.localeCompare(b))}
-            keyExtractor={(s)=>s}
+            data={Object.keys(athleteSportsMap[selectedAthlete] || {}).sort((a, b) => a.localeCompare(b))}
+            keyExtractor={(s) => s}
             renderItem={({ item: sport }) => {
               const list = athleteSportsMap[selectedAthlete]?.[sport] ?? [];
               const count = list.length;
@@ -1378,15 +1642,15 @@ export default function LibraryScreen() {
                         <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
                       </View>
                     )}
-
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>{sport}</Text>
+                      <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
+                        {sport}
+                      </Text>
                       <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
                         {count} {count === 1 ? 'video' : 'videos'} • last {last}
                       </Text>
                     </View>
                   </View>
-
                   <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>›</Text>
                 </Pressable>
               );
@@ -1400,15 +1664,20 @@ export default function LibraryScreen() {
       {view === 'athletes' && selectedAthlete != null && selectedSport != null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
-            <TouchableOpacity onPress={() => setSelectedSport(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+            <TouchableOpacity
+              onPress={() => setSelectedSport(null)}
+              style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}
+            >
               <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
             </TouchableOpacity>
-            <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedAthlete} • {selectedSport}</Text>
+            <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>
+              {selectedAthlete} • {selectedSport}
+            </Text>
           </View>
 
           <FlatList
             data={athleteSportsMap[selectedAthlete]?.[selectedSport] ?? []}
-            keyExtractor={(it)=>it.uri}
+            keyExtractor={(it) => it.uri}
             renderItem={renderVideoRow}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
             initialNumToRender={8}
@@ -1425,10 +1694,24 @@ export default function LibraryScreen() {
       {/* Sports tab (global) */}
       {view === 'sports' && selectedSport == null && (
         <FlatList
-          data={Object.keys(rowsBySport).sort((a,b)=>a.localeCompare(b))}
-          keyExtractor={(k)=>k}
+          data={Object.keys(rowsBySport).sort((a, b) => a.localeCompare(b))}
+          keyExtractor={(k) => k}
           renderItem={({ item: s }) => (
-            <Pressable onPress={() => setSelectedSport(s)} style={{ padding: 12, marginHorizontal: 16, marginVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Pressable
+              onPress={() => setSelectedSport(s)}
+              style={{
+                padding: 12,
+                marginHorizontal: 16,
+                marginVertical: 8,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
               <Text style={{ color: 'white', fontWeight: '800' }}>{s}</Text>
               <Text style={{ color: 'white', opacity: 0.7 }}>{rowsBySport[s].length} videos</Text>
             </Pressable>
@@ -1440,14 +1723,18 @@ export default function LibraryScreen() {
       {view === 'sports' && selectedSport != null && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
-            <TouchableOpacity onPress={() => setSelectedSport(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}>
+            <TouchableOpacity
+              onPress={() => setSelectedSport(null)}
+              style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'white' }}
+            >
               <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
             </TouchableOpacity>
             <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>{selectedSport}</Text>
           </View>
+
           <FlatList
             data={rowsBySport[selectedSport] ?? []}
-            keyExtractor={(it)=>it.uri}
+            keyExtractor={(it) => it.uri}
             renderItem={renderVideoRow}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
             initialNumToRender={8}
@@ -1469,12 +1756,29 @@ export default function LibraryScreen() {
           <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Edit Athlete</Text>
 
-            <Pressable onPress={async () => { if (athletePickerOpen) { await doEditAthlete(athletePickerOpen, 'Unassigned'); setAthletePickerOpen(null); } }} style={{ paddingVertical: 12 }}>
+            <Pressable
+              onPress={async () => {
+                if (athletePickerOpen) {
+                  await doEditAthlete(athletePickerOpen, 'Unassigned');
+                  setAthletePickerOpen(null);
+                }
+              }}
+              style={{ paddingVertical: 12 }}
+            >
               <Text style={{ color: 'white', fontWeight: '700' }}>• Unassigned</Text>
             </Pressable>
 
-            {athleteList.map(a => (
-              <Pressable key={a.id} onPress={async () => { if (athletePickerOpen) { await doEditAthlete(athletePickerOpen, a.name); setAthletePickerOpen(null); } }} style={{ paddingVertical: 10 }}>
+            {athleteList.map((a) => (
+              <Pressable
+                key={a.id}
+                onPress={async () => {
+                  if (athletePickerOpen) {
+                    await doEditAthlete(athletePickerOpen, a.name);
+                    setAthletePickerOpen(null);
+                  }
+                }}
+                style={{ paddingVertical: 10 }}
+              >
                 <Text style={{ color: 'white', fontWeight: '700' }}>• {a.name}</Text>
               </Pressable>
             ))}
@@ -1489,17 +1793,24 @@ export default function LibraryScreen() {
               onChangeText={setNewName}
               style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }}
             />
+
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
               <TouchableOpacity onPress={() => setAthletePickerOpen(null)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}>
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={async () => {
                   const n = newName.trim();
                   if (!n || !athletePickerOpen) return;
+
+                  // store locally
                   const next = [{ id: `${Date.now()}`, name: n }, ...athleteList];
-                  try { await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next)); } catch {}
+                  try {
+                    await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next));
+                  } catch {}
                   setAthleteList(next);
+
                   await doEditAthlete(athletePickerOpen, n);
                   setNewName('');
                   setAthletePickerOpen(null);
@@ -1518,7 +1829,10 @@ export default function LibraryScreen() {
         visible={!!titleEditRow}
         transparent
         animationType="fade"
-        onRequestClose={() => { setTitleEditRow(null); setTitleInput(''); }}
+        onRequestClose={() => {
+          setTitleEditRow(null);
+          setTitleInput('');
+        }}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: '#121212', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
@@ -1545,21 +1859,22 @@ export default function LibraryScreen() {
 
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
               <TouchableOpacity
-                onPress={() => { setTitleEditRow(null); setTitleInput(''); }}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
+                onPress={() => {
+                  setTitleEditRow(null);
+                  setTitleInput('');
                 }}
+                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' }}
               >
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={async () => {
                   const n = (titleInput || '').trim();
-                  if (!titleEditRow || !n) { setTitleEditRow(null); return; }
-
+                  if (!titleEditRow || !n) {
+                    setTitleEditRow(null);
+                    return;
+                  }
                   try {
                     await enqueueFs(() => updateDisplayName(titleEditRow.uri, n));
                     // fast local patch

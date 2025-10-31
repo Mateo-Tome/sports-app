@@ -88,29 +88,42 @@ export default function RecordingScreen() {
       params: { sport: sportKey, style: styleKey, athlete },
     });
 
-  const go = (sport: (typeof SPORTS)[number]) => {
-    if (sport === 'Wrestling') {
+  // --- UPDATED 'go' FUNCTION IN recordingScreen.tsx ---
+
+const go = (sport: (typeof SPORTS)[number]) => {
+  // Wrestling now uses its dedicated selection screen
+  if (sport === 'Wrestling') {
       router.push({
-        pathname: '/screens/wrestlingselection' as any,
-        params: { athlete },
+          pathname: '/screens/wrestlingselection' as any,
+          params: { athlete },
       });
       return;
-    }
-    switch (sport) {
-      case 'Basketball':
-        toCam('basketball', 'default');
-        break;
-      case 'Baseball':
-        toCam('baseball', 'default');
-        break;
-      case 'Volleyball':
-        toCam('volleyball', 'default');
-        break;
-      case 'BJJ':
-        toCam('bjj', 'gi');
-        break;
-    }
-  };
+  }
+
+  // >>> NEW LOGIC FOR BASEBALL <<<
+  // Baseball now redirects to its dedicated selection screen (BaseballSelection.tsx)
+  if (sport === 'Baseball') {
+      router.push({
+          pathname: '/screens/BaseballSelection' as any, 
+          params: { athlete },
+      });
+      return;
+  }
+  
+  // All other sports still go directly to the camera with a default style
+  switch (sport) {
+    case 'Basketball':
+      toCam('basketball', 'default');
+      break;
+    // NOTE: 'Baseball' is no longer in this switch block
+    case 'Volleyball':
+      toCam('volleyball', 'default');
+      break;
+    case 'BJJ':
+      toCam('bjj', 'gi');
+      break;
+  }
+};
 
   // ---------- UI bits ----------
   const initials = (name: string) =>

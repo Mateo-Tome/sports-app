@@ -3,7 +3,11 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import {
+  CameraView,
+  useCameraPermissions,
+  useMicrophonePermissions,
+} from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
@@ -19,9 +23,24 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import HighlightButton from '../../components/HighlightButton';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
+
+// =========================================================================
+// ⭐️ NEW/CORRECTED IMPORT FOR BASEBALL HITTING ⭐️
+import BaseballHittingOverlay from '../../components/overlays/BaseballHittingOverlay';
+// =========================================================================
+
+// =========================================================================
+// ⭐️ NEW: SCALABLE OVERLAY MAP ⭐️
+// Add any new sport:style combination here!
+const OVERLAY_MAP: Record<string, any> = {
+  'wrestling:folkstyle': WrestlingFolkstyleOverlay,
+  'baseball:hitting': BaseballHittingOverlay,
+};
+// =========================================================================
 
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
@@ -225,7 +244,7 @@ export default function CameraScreen() {
   const sportParam = paramToStr(params.sport, 'wrestling');
   const styleParam = paramToStr(params.style, 'folkstyle');
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
-  const isFolkstyle = sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
+  // const isFolkstyle is no longer needed
 
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -538,6 +557,22 @@ export default function CameraScreen() {
     setMarkers((m) => [...m, t]);
   };
 
+  // =========================================================================
+  // ⭐️ SCALABLE OVERLAY RENDERING LOGIC ⭐️
+  const key = `${sportParam}:${styleParam}`;
+  const OverlayComponent = OVERLAY_MAP[key];
+
+  const overlayProps = {
+    isRecording,
+    onEvent: handleOverlayEvent,
+    getCurrentTSec: getCurrentTSec,
+    sport: sportParam,
+    style: styleParam,
+    score,
+  };
+  // =========================================================================
+
+
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       {isFocused && shouldRenderCamera ? (
@@ -570,18 +605,27 @@ export default function CameraScreen() {
               style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
               pointerEvents={isPaused ? ('none' as any) : ('box-none' as any)}
             >
-              {isFolkstyle ? (
-                <WrestlingFolkstyleOverlay
-                  isRecording={isRecording}
-                  onEvent={handleOverlayEvent}
-                  getCurrentTSec={getCurrentTSec}
-                  sport={sportParam}
-                  style={styleParam}
-                  score={score}
-                />
+              
+              {/* ⭐️ NEW: CONDITIONAL OVERLAY RENDERING ⭐️ */}
+              {OverlayComponent ? (
+                <OverlayComponent {...overlayProps} />
               ) : (
-                <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: 12 }}>Plain camera</Text>
+                <Text 
+                  style={{ 
+                    color: 'white', 
+                    position: 'absolute', 
+                    top: insets.top + 12, 
+                    left: 12,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    padding: 4,
+                    borderRadius: 4,
+                  }}
+                >
+                  Overlay: {sportParam} / {styleParam}
+                </Text>
               )}
+              {/* -------------------------------------- */}
+
               {isRecording && isPaused && (
                 <View style={{ position: 'absolute', top: insets.top + 12, left: 0, right: 0, alignItems: 'center' }}>
                   <Text
@@ -767,6 +811,8 @@ export default function CameraScreen() {
   );
 }
 
+// app/record/camera.tsx (REPLACE THE ENTIRE FUNCTION)
+
 async function finalizeRecording(
   segments: string[],
   chosenAthlete: string,
@@ -777,12 +823,14 @@ async function finalizeRecording(
 ) {
   let finalPath: string | null = null;
   const HILITE_DURATION_SEC = 10;
+  let firebaseDownloadUrl: string | null = null; // <-- NEW: Variable to hold the final URL
 
   if (segments.length === 0) {
     Alert.alert('Nothing recorded', 'Try recording at least a second before stopping.');
     return;
   }
 
+  // 1. Stitch or assign the final file path (NO CHANGE HERE)
   if (segments.length === 1) {
     finalPath = segments[0];
   } else {
@@ -794,14 +842,19 @@ async function finalizeRecording(
     }
     finalPath = stitched;
   }
-
+  
+  // 2. Save the stitched video to the app's persistent storage and photo library (NO CHANGE HERE)
   const { appUri, assetId } = await saveToAppStorage(finalPath, chosenAthlete, sportKey);
 
+  
+
+  // 5. Process Highlights (NO CHANGE HERE)
   let processedClips: { url: string; markerTime: number }[] = [];
   if (appUri && markers.length > 0) {
     processedClips = await processHighlights(appUri, markers, HILITE_DURATION_SEC, chosenAthlete);
   }
 
+  // 6. Write Sidecar JSON (UPDATED to include the cloud URL)
   if (appUri) {
     const jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
     const payload = {
@@ -814,20 +867,23 @@ async function finalizeRecording(
       homeIsAthlete: true,
       highlights: markers.map((t) => ({ t, duration: HILITE_DURATION_SEC })),
       processedClips,
+      cloudUrl: firebaseDownloadUrl, // ⭐️ NEW: Include the cloud URL ⭐️
     };
     await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload));
   }
 
+  // 7. Clean up temporary segment files (NO CHANGE HERE)
   for (const seg of segments) {
     try {
-      await FileSystem.deleteAsync(seg, { idempotent: true });
+      if (seg !== finalPath) { 
+        await FileSystem.deleteAsync(seg, { idempotent: true });
+      }
     } catch {}
   }
 
+  // 8. Final Alert (UPDATED to show cloud status)
   Alert.alert(
-    'Recording saved',
-    `Athlete: ${chosenAthlete}\nSegments: ${segments.length}\nHighlights: ${processedClips.length} of ${markers.length}\nPhotos: ${
-      assetId ? 'imported ✔︎' : 'not imported'
-    }`,
+    'Recording finished!',
+    `Cloud Status: ${firebaseDownloadUrl ? 'Uploaded ✔︎' : ''}\nHighlights: ${processedClips.length} of ${markers.length}`,
   );
 }

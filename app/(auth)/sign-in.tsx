@@ -1,150 +1,182 @@
-import { auth } from '@/lib/firebase';
-import { router } from 'expo-router';
-import {
-    createUserWithEmailAndPassword,
-    signInAnonymously,
-    signInWithEmailAndPassword,
-} from 'firebase/auth';
+// app/(auth)/sign-in.tsx - UPDATED
+
+import { useRouter } from 'expo-router'; // <-- Added useRouter
 import { useState } from 'react';
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+
+import { supabase } from '@/lib/supabase';
 
 export default function SignInScreen() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const router = useRouter(); // <-- Initialized useRouter
 
-  const goToApp = () => router.replace('/(tabs)');
-
-  const onContinueGuest = async () => {
-    setErr(null);
+  // Helper function to abstract busy state and error handling
+  const run = async (fn: () => Promise<any>, okMsg: string) => {
     setBusy(true);
     try {
-      await signInAnonymously(auth);
-      goToApp();
+      await fn();
+      Alert.alert(okMsg);
     } catch (e: any) {
-      setErr(e?.message ?? 'Failed to continue as guest.');
+      // Supabase errors have a `message` property
+      Alert.alert('Error', String(e?.message ?? e));
     } finally {
       setBusy(false);
     }
   };
 
-  const onSubmit = async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      if (mode === 'signin') {
-        await signInWithEmailAndPassword(auth, email.trim(), pass);
-      } else {
-        await createUserWithEmailAndPassword(auth, email.trim(), pass);
+  // --- Supabase Auth Handlers ---
+
+  const handleSignIn = async () => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password: pass,
+    });
+    if (error) throw error;
+  };
+
+  const handleCreateAccount = async () => {
+    const { error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password: pass,
+    });
+    
+    if (error) {
+      if (error.message.includes('Email link')) {
+        Alert.alert('Verify Email', 'Check your inbox to verify your account.');
       }
-      goToApp();
-    } catch (e: any) {
-      setErr(e?.message ?? 'Auth error');
-    } finally {
-      setBusy(false);
+      throw error;
     }
+  };
+
+  const handleSignOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  };
+
+  const handleContinueAsGuest = async () => {
+    try {
+        await supabase.auth.signOut();
+    } catch {} 
+    
+    Alert.alert('Continuing', 'Accessing as unauthenticated user.');
+    router.replace('/(tabs)'); // <-- Added navigation
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'black', padding: 20, justifyContent: 'center' }}>
-      <Text style={{ color: 'white', fontSize: 28, fontWeight: '900', marginBottom: 24 }}>
-        {mode === 'signin' ? 'Sign in' : 'Create account'}
-      </Text>
+    <KeyboardAvoidingView
+      style={styles.container} // <-- Applied style for dark mode
+      behavior={Platform.select({ ios: 'padding', android: undefined })}
+    >
+      <View style={{ gap: 8 }}>
+        <Text style={styles.headerText}>Sign in</Text>
 
-      <TextInput
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        placeholder="Email"
-        placeholderTextColor="rgba(255,255,255,0.5)"
-        style={{
-          color: 'white',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.2)',
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          marginBottom: 12,
-        }}
-      />
-      <TextInput
-        value={pass}
-        onChangeText={setPass}
-        secureTextEntry
-        placeholder="Password"
-        placeholderTextColor="rgba(255,255,255,0.5)"
-        style={{
-          color: 'white',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.2)',
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          marginBottom: 16,
-        }}
-      />
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          placeholder="Email"
+          placeholderTextColor="#777" // <-- Added placeholder color
+          value={email}
+          onChangeText={setEmail}
+          style={styles.input} // <-- Applied fixed style
+        />
 
-      {!!err && (
-        <Text style={{ color: 'tomato', marginBottom: 12 }} numberOfLines={3}>
-          {err}
-        </Text>
-      )}
-
+        <TextInput
+          placeholder="Password"
+          placeholderTextColor="#777" // <-- Added placeholder color
+          secureTextEntry
+          value={pass}
+          onChangeText={setPass}
+          style={styles.input} // <-- Applied fixed style
+        />
+      </View>
+      
+      {/* 1. SIGN IN */}
       <TouchableOpacity
-        onPress={onSubmit}
         disabled={busy}
-        style={{
-          backgroundColor: 'white',
-          borderRadius: 999,
-          paddingVertical: 12,
-          alignItems: 'center',
-          marginBottom: 12,
-          opacity: busy ? 0.7 : 1,
-        }}
+        onPress={() => run(handleSignIn, 'Signed in')}
+        style={[styles.button, { backgroundColor: busy ? '#999' : '#0a84ff' }]}
       >
-        {busy ? (
-          <ActivityIndicator />
-        ) : (
-          <Text style={{ color: 'black', fontWeight: '800' }}>
-            {mode === 'signin' ? 'Sign in' : 'Sign up'}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-        style={{
-          borderColor: 'white',
-          borderWidth: 1,
-          borderRadius: 999,
-          paddingVertical: 12,
-          alignItems: 'center',
-          marginBottom: 24,
-        }}
-      >
-        <Text style={{ color: 'white', fontWeight: '800' }}>
-          {mode === 'signin' ? "Don't have an account? Sign up" : 'Have an account? Sign in'}
+        <Text style={styles.buttonText}>
+          {busy ? 'Working…' : 'Sign In'}
         </Text>
       </TouchableOpacity>
 
+      {/* 2. CREATE ACCOUNT */}
       <TouchableOpacity
-        onPress={onContinueGuest}
         disabled={busy}
-        style={{
-          backgroundColor: 'rgba(255,255,255,0.12)',
-          borderWidth: 1,
-          borderColor: 'white',
-          borderRadius: 999,
-          paddingVertical: 12,
-          alignItems: 'center',
-          opacity: busy ? 0.7 : 1,
-        }}
+        onPress={() => run(handleCreateAccount, 'Account created')}
+        style={[styles.button, { backgroundColor: busy ? '#999' : '#34c759' }]}
       >
-        <Text style={{ color: 'white', fontWeight: '800' }}>Continue as Guest</Text>
+        <Text style={styles.buttonText}>
+          {busy ? 'Working…' : 'Create Account'}
+        </Text>
       </TouchableOpacity>
-    </View>
+
+      {/* 3. CONTINUE AS GUEST */}
+      <TouchableOpacity
+        disabled={busy}
+        onPress={() => run(handleContinueAsGuest, 'Continuing as unauthenticated user')}
+        style={[styles.button, { backgroundColor: busy ? '#999' : '#ff9f0a' }]}
+      >
+        <Text style={styles.buttonText}>
+          {busy ? 'Working…' : 'Continue as Guest'}
+        </Text>
+      </TouchableOpacity>
+
+      {/* 4. SIGN OUT */}
+      <TouchableOpacity
+        disabled={busy}
+        onPress={() => run(handleSignOut, 'Signed out')}
+        style={[styles.button, { backgroundColor: busy ? '#999' : '#ff3b30' }]}
+      >
+        <Text style={styles.buttonText}>
+          {busy ? 'Working…' : 'Sign Out'}
+        </Text>
+      </TouchableOpacity>
+    </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1, 
+        padding: 20, 
+        justifyContent: 'center', 
+        gap: 16,
+        backgroundColor: 'black', // <-- Set a background color for the screen
+    },
+    headerText: {
+        fontSize: 22, 
+        fontWeight: '700',
+        color: 'white', // <-- Ensures header text is visible
+    },
+    input: {
+        borderWidth: 1, 
+        borderColor: '#333',
+        borderRadius: 10, 
+        padding: 12,
+        backgroundColor: '#1c1c1e', // <-- Dark background for contrast
+        color: 'white', // <-- FIX: Sets the input text color to white
+    },
+    button: {
+        padding: 14, 
+        borderRadius: 12,
+    },
+    buttonText: {
+        color: 'white', 
+        fontWeight: '700', 
+        textAlign: 'center',
+    },
+});
