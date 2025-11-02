@@ -1,15 +1,14 @@
 {
   "expo": {
-    "name": "QuickClip",
+    "name": "QuickClip Sport", 
     "slug": "quickclip",
     "version": "1.0.0",
-    "orientation": "default",
-    "scheme": "quickclip",
+    "orientation": "default", 
+    "scheme": "quickclip", 
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-
     "icon": "./assets/images/icon.png",
-
+    
     "plugins": [
       "expo-router",
       [
@@ -24,42 +23,45 @@
       "expo-video",
       "sentry-expo"
     ],
-
+    
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
       "supportsTablet": true,
       "icon": "./assets/images/icon.png",
+      "buildNumber": "3", 
       "infoPlist": {
-        "NSCameraUsageDescription": "This app records matches.",
-        "NSMicrophoneUsageDescription": "This app records match audio.",
-        "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
-        "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
+        
+        "NSCameraUsageDescription": "QuickClip requires camera access to record video and capture sports moments for analysis.",
+        "NSMicrophoneUsageDescription": "QuickClip requires microphone access to record audio synchronized with your video.",
+        "NSPhotoLibraryAddUsageDescription": "QuickClip saves recorded video clips directly to your Photo Library/Camera Roll.",
+        "NSPhotoLibraryUsageDescription": "QuickClip needs access to your Photo Library to load existing videos for review and analysis."
       }
     },
-
+    
     "android": {
       "edgeToEdgeEnabled": true,
       "package": "com.mateotome2133.sportapp",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#000000"
-      }
+      },
+      "versionCode": 3 
     },
-
+    
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
+    
     "experiments": {
       "typedRoutes": true
     },
-
+    
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "591d53da-7aa5-4094-bcf7-b97d2895c348"
+        "projectId": "9aeeba59-c87f-4815-9af4-991289ff5085"
       }
     }
   }
