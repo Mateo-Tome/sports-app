@@ -12,7 +12,7 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react'; // ⭐️ Added useMemo
 import {
   ActivityIndicator,
   Alert,
@@ -244,7 +244,12 @@ export default function CameraScreen() {
   const sportParam = paramToStr(params.sport, 'wrestling');
   const styleParam = paramToStr(params.style, 'folkstyle');
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
-  // const isFolkstyle is no longer needed
+  
+  // ⭐️ FIX: Determine the athlete name to be passed to the overlay
+  const athleteName = useMemo(() => {
+    return (athleteParam || '').trim() || 'Unassigned';
+  }, [athleteParam]);
+  // -------------------------------------------------------------
 
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -263,8 +268,15 @@ export default function CameraScreen() {
   const pauseStartedAtRef = useRef<number | null>(null);
   const totalPausedMsRef = useRef(0);
 
+  // ⭐️ NOTE: This state is for display only in the main UI, not used for overlay prop
   const [athlete, setAthlete] = useState<string>('Unassigned');
+  
+  // -------------------------------------------------------------
+  // ⭐️ FIX: Moved declaration up to resolve TypeScript errors 2448/2454
   const eventsRef = useRef<MatchEvent[]>([]);
+  eventsRef.current = []; // Clear this state.
+  // -------------------------------------------------------------
+  
   const scoreRef = useRef<{ home: number; opponent: number }>({ home: 0, opponent: 0 });
   const [score, setScore] = useState(scoreRef.current);
 
@@ -299,7 +311,12 @@ export default function CameraScreen() {
 
   useEffect(() => {
     (async () => {
-      if (athleteParamIncluded) setAthlete((athleteParam || '').trim() || 'Unassigned');
+      // ⭐️ FIX: Always prioritize the URL param for the overlay prop (athleteName)
+      if (athleteParamIncluded) {
+        // We still set the local 'athlete' state for the bottom status bar, 
+        // but it is now derived from the parameter that is memoized above.
+        setAthlete(athleteName); 
+      }
       else {
         try {
           const last = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
@@ -309,7 +326,7 @@ export default function CameraScreen() {
         }
       }
     })();
-  }, []);
+  }, [athleteParamIncluded, athleteName]); // Dependency on athleteName is important
 
   useEffect(() => {
     (async () => {
@@ -492,7 +509,8 @@ export default function CameraScreen() {
     setMarkers([]);
     segmentsRef.current = [];
     try {
-      await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, (athlete || 'Unassigned').trim());
+      // Save the athleteName derived from URL/default to AsyncStorage
+      await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, athleteName.trim());
     } catch {}
     await startNewSegment();
   };
@@ -521,7 +539,8 @@ export default function CameraScreen() {
     await stopCurrentSegment();
 
     const segmentsToProcess = segmentsRef.current;
-    const chosenAthlete = (athlete || '').trim() || 'Unassigned';
+    // ⭐️ FIX: Use the athleteName derived from the URL (or default)
+    const chosenAthlete = athleteName; 
     const currentMarkers = [...markers];
     const currentEvents = [...eventsRef.current];
     const finalScore = { ...scoreRef.current };
@@ -569,6 +588,8 @@ export default function CameraScreen() {
     sport: sportParam,
     style: styleParam,
     score,
+    isPaused, // Important: pass isPaused
+    athleteName: athleteName, // ⭐️ FIX: Passing the athlete name
   };
   // =========================================================================
 
@@ -608,7 +629,8 @@ export default function CameraScreen() {
               
               {/* ⭐️ NEW: CONDITIONAL OVERLAY RENDERING ⭐️ */}
               {OverlayComponent ? (
-                <OverlayComponent {...overlayProps} />
+                // ⭐️ FIX: Using the spread overlayProps which now includes athleteName
+                <OverlayComponent {...overlayProps} /> 
               ) : (
                 <Text 
                   style={{ 
@@ -811,7 +833,7 @@ export default function CameraScreen() {
   );
 }
 
-// app/record/camera.tsx (REPLACE THE ENTIRE FUNCTION)
+// ⭐️ FIX: Completed and corrected the finalizeRecording function
 
 async function finalizeRecording(
   segments: string[],
@@ -823,14 +845,14 @@ async function finalizeRecording(
 ) {
   let finalPath: string | null = null;
   const HILITE_DURATION_SEC = 10;
-  let firebaseDownloadUrl: string | null = null; // <-- NEW: Variable to hold the final URL
+  let firebaseDownloadUrl: string | null = null; // Variable to hold the final URL
 
   if (segments.length === 0) {
     Alert.alert('Nothing recorded', 'Try recording at least a second before stopping.');
     return;
   }
 
-  // 1. Stitch or assign the final file path (NO CHANGE HERE)
+  // 1. Stitch or assign the final file path
   if (segments.length === 1) {
     finalPath = segments[0];
   } else {
@@ -843,18 +865,16 @@ async function finalizeRecording(
     finalPath = stitched;
   }
   
-  // 2. Save the stitched video to the app's persistent storage and photo library (NO CHANGE HERE)
+  // 2. Save the stitched video to the app's persistent storage and photo library
   const { appUri, assetId } = await saveToAppStorage(finalPath, chosenAthlete, sportKey);
 
-  
-
-  // 5. Process Highlights (NO CHANGE HERE)
+  // 3. Process Highlights
   let processedClips: { url: string; markerTime: number }[] = [];
   if (appUri && markers.length > 0) {
     processedClips = await processHighlights(appUri, markers, HILITE_DURATION_SEC, chosenAthlete);
   }
 
-  // 6. Write Sidecar JSON (UPDATED to include the cloud URL)
+  // 4. Write Sidecar JSON
   if (appUri) {
     const jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
     const payload = {
@@ -867,23 +887,20 @@ async function finalizeRecording(
       homeIsAthlete: true,
       highlights: markers.map((t) => ({ t, duration: HILITE_DURATION_SEC })),
       processedClips,
-      cloudUrl: firebaseDownloadUrl, // ⭐️ NEW: Include the cloud URL ⭐️
+      cloudUrl: firebaseDownloadUrl, // Include the cloud URL
     };
     await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload));
   }
 
-  // 7. Clean up temporary segment files (NO CHANGE HERE)
+  // 5. Clean up temporary segment files
   for (const seg of segments) {
     try {
-      if (seg !== finalPath) { 
+      if (seg !== finalPath) {
         await FileSystem.deleteAsync(seg, { idempotent: true });
       }
     } catch {}
   }
-
-  // 8. Final Alert (UPDATED to show cloud status)
-  Alert.alert(
-    'Recording finished!',
-    `Cloud Status: ${firebaseDownloadUrl ? 'Uploaded ✔︎' : ''}\nHighlights: ${processedClips.length} of ${markers.length}`,
-  );
+  
+  // 6. Return the results
+  return { appUri, assetId, processedClips };
 }

@@ -47,14 +47,19 @@ function FlashToast({
   );
 }
 
+// NOTE: OverlayProps type needs to be updated to include athleteName: string | undefined
+interface ExtendedOverlayProps extends OverlayProps {
+  athleteName?: string;
+  isPaused: boolean; 
+}
+
 export default function WrestlingFolkstyleOverlay({
-  isRecording,
+  isRecording, 
   onEvent,
-  getCurrentTSec: _getCurrentTSec,
-  sport: _sport,
-  style: _style,
   score,
-}: OverlayProps) {
+  athleteName, 
+  isPaused,    
+}: ExtendedOverlayProps) { 
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
@@ -81,16 +86,32 @@ export default function WrestlingFolkstyleOverlay({
   const RED = '#ef4444';
   const GOLD = '#d4a017';
 
-  // which side is "my kid"
+  // which side is "my kid" (LEFT or RIGHT)
   const [myKidSide, setMyKidSide] = React.useState<'left' | 'right'>('left');
+  // which color is "my kid" (GREEN or RED) - NEW STATE
+  const [myKidIsGreen, setMyKidIsGreen] = React.useState(true);
 
+  // The actual actors (home/opponent) based on screen position
   const leftActor  = myKidSide === 'left'  ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
-  const leftColor  = myKidSide === 'left'  ? GREEN : RED;
-  const rightColor = myKidSide === 'right' ? GREEN : RED;
-  const leftTitle  = myKidSide === 'left'  ? 'My Kid' : 'Opponent';
-  const rightTitle = myKidSide === 'right' ? 'My Kid' : 'Opponent';
 
+  // The color of the left/right side based on myKidIsGreen and myKidSide
+  const myKidColor = myKidIsGreen ? GREEN : RED;
+  const opponentColor = myKidIsGreen ? RED : GREEN;
+
+  const leftColor = leftActor === 'home' ? myKidColor : opponentColor;
+  const rightColor = rightActor === 'home' ? myKidColor : opponentColor;
+
+  // Display name logic (using new athleteName prop)
+  const myKidDisplayName = (athleteName || '').trim() || 'My Kid'; 
+  
+  // Titles use the athlete's name when they are the 'home' actor
+  const leftTitle  = leftActor  === 'home' ? myKidDisplayName : 'Opponent';
+  const rightTitle = rightActor === 'home' ? myKidDisplayName : 'Opponent';
+  
+  // Big Name Title for the Athlete's side
+  const athleteBigTitle = myKidDisplayName; 
+  
   const leftScore  = leftActor  === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
   const rightScore = rightActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
 
@@ -101,17 +122,21 @@ export default function WrestlingFolkstyleOverlay({
   const [cautionCount, setCautionCount] = React.useState<{ left: number; right: number }>({ left: 0, right: 0 });
   const [pinFor, setPinFor] = React.useState<null | 'left' | 'right'>(null);
   const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
+  // State for Period Tracking
+  const [periodCount, setPeriodCount] = React.useState(1);
 
   const showToast = (text: string, tint: string) => setToast({ text, tint });
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
   const fire = (actor: 'home' | 'opponent' | 'neutral', key: string, label: string, value?: number, meta?: Record<string, any>) => {
     if (!isRecording) return;
-    onEvent({ key, label, actor, value, meta });
+    // Inject the current color scheme setup into the metadata
+    const colorMeta = { myKidIsGreen, myKidSide };
+    onEvent({ key, label, actor, value, meta: { ...meta, ...colorMeta } });
   };
 
   const openNF = (side: 'left' | 'right') => { if (!isRecording) return; setNfFor(side); };
-  const openSC = (side: 'left' | 'right') => { if (!isRecording) return; setScFor(side); };
+  const openSC = (side: 'left' | 'right') => { if (!isRecording) return; setScFor(side); }; 
 
   const NFChooserClose = ({ onClose }: { onClose: () => void }) => (
     <TouchableOpacity
@@ -244,7 +269,7 @@ export default function WrestlingFolkstyleOverlay({
             <TouchableOpacity onPress={() => setPinFor(null)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}>
               <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => { fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', myKidSide }); setPinFor(null); showToast(`${title}: PIN`, GOLD); }} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}>
+            <TouchableOpacity onPress={() => { fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', athletePinned: actor === 'opponent' }); setPinFor(null); showToast(`${title}: PIN`, GOLD); }} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}>
               <Text style={{ color: '#111', fontWeight: '900' }}>Confirm</Text>
             </TouchableOpacity>
           </View>
@@ -263,7 +288,7 @@ export default function WrestlingFolkstyleOverlay({
         if (onPressOverride) onPressOverride();
         else {
           fire(actor, keyName, label, value);
-          if (actor === 'home') showToast(`My Kid: ${label}`, bg);
+          if (actor === 'home') showToast(`${myKidDisplayName}: ${label}`, bg);
           else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
           else showToast(label, bg);
         }
@@ -293,18 +318,42 @@ export default function WrestlingFolkstyleOverlay({
       <Text style={{ color: 'white', fontWeight: '900' }}>Score: {value}</Text>
     </View>
   );
+  
+  // Athlete Name Title Component
+  const AthleteNameTitle = ({ title, color, side }: { title: string; color: string; side: 'left' | 'right' }) => (
+    <View 
+      style={{ 
+        marginBottom: 8, 
+        backgroundColor: color, 
+        paddingHorizontal: 10, 
+        paddingVertical: 4, 
+        borderRadius: 999, 
+        overflow: 'hidden',
+        alignSelf: side === 'left' ? 'flex-start' : 'flex-end',
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '900' }}>
+        {title}
+      </Text>
+    </View>
+  );
 
   const LeftGrid = () => (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, alignItems: 'flex-start', width: COL_W }}>
-      <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: leftColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
-        {leftTitle}
-      </Text>
+      
+      {/* Display Name or 'Opponent' with color background */}
+      {leftActor === 'home' ? (
+        <AthleteNameTitle title={athleteBigTitle} color={leftColor} side="left" />
+      ) : (
+        <AthleteNameTitle title="Opponent" color={leftColor} side="left" />
+      )}
+      
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle label="T3" actor={leftActor as any} keyName="takedown" value={3} bg={leftColor} />
         <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
         <Circle label="R2" actor={leftActor as any} keyName="reversal" value={2} bg={leftColor} />
         <Circle label="NF" actor={leftActor as any} keyName="nearfall" bg={leftColor} onPressOverride={() => setNfFor('left')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => setScFor('left')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => openSC('left')} />
         <Circle label="PIN" actor={'neutral'} keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
       </View>
       <View style={{ flex: 1 }} />
@@ -314,15 +363,20 @@ export default function WrestlingFolkstyleOverlay({
 
   const RightGrid = () => (
     <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, alignItems: 'flex-start', width: COL_W }}>
-      <Text style={{ color: 'white', fontWeight: '800', marginBottom: 8, backgroundColor: rightColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' }}>
-        {rightTitle}
-      </Text>
+      
+      {/* Display Name or 'Opponent' with color background */}
+      {rightActor === 'home' ? (
+        <AthleteNameTitle title={athleteBigTitle} color={rightColor} side="right" />
+      ) : (
+        <AthleteNameTitle title="Opponent" color={rightColor} side="right" />
+      )}
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
         <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
         <Circle label="NF" actor={rightActor as any} keyName="nearfall" bg={rightColor} onPressOverride={() => setNfFor('right')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => setScFor('right')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => openSC('right')} />
         <Circle label="PIN" actor={'neutral'} keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
       </View>
       <View style={{ flex: 1 }} />
@@ -337,13 +391,41 @@ export default function WrestlingFolkstyleOverlay({
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
-      {/* Flip sides control */}
+      {/* Control Area: Swap Colors, Pause Pill, Period Button */}
       <View style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
-        <TouchableOpacity onPress={() => setMyKidSide(s => (s === 'left' ? 'right' : 'left'))} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Sides (My Kid: {myKidSide.toUpperCase()})</Text>
-        </TouchableOpacity>
-      </View>
+        <View style={{ flexDirection: 'row', gap: 10 }}> 
 
+          {/* PERIOD BUTTON */}
+          <TouchableOpacity
+            disabled={!isRecording}
+            onPress={() => {
+              const nextPeriod = periodCount + 1;
+              const label = nextPeriod <= 3 ? `PERIOD ${nextPeriod}` : `OT ${nextPeriod - 3}`;
+              fire('neutral', 'period', label, nextPeriod);
+              setPeriodCount(nextPeriod);
+              showToast(label, GREEN);
+            }}
+            style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, opacity: isRecording ? 1 : 0.55 }}
+          >
+            <Text style={{ color: 'white', fontWeight: '700', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden' }}>
+              {periodCount <= 3 ? `P${periodCount}` : `OT${periodCount - 3}`} → Next
+            </Text>
+          </TouchableOpacity>
+
+          {/* SWAP COLORS: FIX - Disabled prop removed */}
+          <TouchableOpacity
+            // 🛑 REMOVED: disabled={!isRecording}
+            onPress={() => setMyKidIsGreen(c => !c)} 
+            style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 }}
+          >
+            <Text style={{ color: 'white', fontWeight: '700', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden' }}>
+              Swap Colors ({myKidIsGreen ? 'Green' : 'Red'})
+            </Text>
+          </TouchableOpacity>
+
+        </View>
+      </View>
+      
       <NFChooser />
       <SCCooser />
       <PinConfirm />
@@ -352,6 +434,40 @@ export default function WrestlingFolkstyleOverlay({
 
       <LeftGrid />
       <RightGrid />
+
+      {/* NEW FULL-SCREEN CENTERED PAUSED PILL (100% BIGGER) */}
+      {isPaused && ( 
+        <View 
+          pointerEvents="none" 
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0, 
+            alignItems: 'center',
+            justifyContent: 'center', 
+            zIndex: 99, 
+          }}
+        >
+          <View style={{ 
+            paddingHorizontal: 32, 
+            paddingVertical: 20, 
+            borderRadius: 999, 
+            backgroundColor: 'rgba(0,0,0,0.75)', 
+            borderWidth: 2, 
+            borderColor: 'white' 
+          }}>
+            <Text style={{ 
+              color: 'white', 
+              fontWeight: '900', 
+              fontSize: 36 
+            }}>
+              PAUSED
+            </Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }

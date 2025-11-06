@@ -1,6 +1,5 @@
 // app/(tabs)/library.tsx
-// Library: optimized load + fast row patching + safe FS ops + thumb cleanup (assetId-aware thumbs)
-// + Title editing: small "Edit" button over the thumbnail lets you change displayName only.
+// Library: fast load, safe FS ops, thumb cleanup, title edit, per-sport event tints + gold badge
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -13,7 +12,6 @@ import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   DeviceEventEmitter,
   FlatList,
@@ -25,25 +23,21 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ViewToken,
+  ViewToken
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// 🚨 SUPABASE SWAP: Import the Supabase client
-import { supabase } from '@/lib/supabase';
+// ⬇️ NEW: per-sport tint helper
+import { getEventTint } from '@/lib/eventTints';
 
-// ⬇️ Firebase-only uploads + Firestore save
-// 🚨 LINE REMOVED: import { saveVideoDoc, uploadFileToFirebase, uploadJSONToFirebase } from '../../lib/firebaseUploads';
-
-
-// ... (The rest of your file, including the updated UploadButton logic)
-
+// ---- constants / storage keys ----
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
 const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
+// ---------- types ----------
 type IndexMeta = {
   uri: string;
   displayName: string;
@@ -65,12 +59,42 @@ type Row = {
   mtime: number | null;
   thumbUri?: string | null;
   assetId?: string | undefined;
+
+  // match/score bits
   finalScore?: FinalScore | null;
   homeIsAthlete?: boolean;
   outcome?: Outcome;
   myScore?: number | null;
   oppScore?: number | null;
+
+  // visuals
   highlightGold?: boolean;
+  eventTint?: string | null;                       // ← NEW (green/yellow/red or null)
+  goldKind?: 'PIN' | 'SUB' | 'HR' | 'GOLD' | null; // ← NEW (label inside gold badge)
+};
+
+type SidecarEvent = {
+  t: number;
+  points?: number;
+  actor?: 'home' | 'opponent' | 'neutral';
+  key?: string;
+  label?: string;
+  kind?: string;
+  meta?: Record<string, any>;
+};
+
+type Sidecar = {
+  athlete?: string;
+  sport?: string;
+  events?: SidecarEvent[];
+  finalScore?: FinalScore;
+  homeIsAthlete?: boolean;
+  outcome?: Outcome;
+  winner?: 'home' | 'opponent' | null;
+  endedBy?: 'pin' | 'decision' | null;
+  athletePinned?: boolean;
+  athleteWasPinned?: boolean;
+  modifiedAt?: number;
 };
 
 // ---------- small utils ----------
@@ -96,7 +120,6 @@ const baseNameNoExt = (p: string) => {
   return i > 0 ? name.slice(0, i) : name;
 };
 
-// hash for unique thumb names even if basenames collide
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -136,7 +159,6 @@ function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
   return task;
 }
 
-// extra helpers for robust move/rename
 async function pathExists(p: string) {
   try {
     const info: any = await FileSystem.getInfoAsync(p);
@@ -244,7 +266,7 @@ async function updateDisplayName(uri: string, newName: string) {
   if (changed) {
     await writeIndexAtomic(next);
   } else {
-    // try to recover if path moved but filename matches current media
+    // recover if path moved but filename matches
     const fileName = uri.split('/').pop() || '';
     const hit = list.find((e) => (e.uri.split('/').pop() || '') === fileName);
     if (hit) {
@@ -289,11 +311,11 @@ async function getOrCreateThumb(videoUri: string, assetId?: string | null): Prom
     await ensureDir(THUMBS_DIR);
     const dest = thumbPathFor(videoUri);
 
-    // already cached?
+    // cached?
     const info: any = await FileSystem.getInfoAsync(dest);
     if (info?.exists) return dest;
 
-    // 1) Try the actual file path first (works for file:// in app storage)
+    // primary
     try {
       await safeThumbFromFileUri(videoUri, dest, 900);
       const ok: any = await FileSystem.getInfoAsync(dest);
@@ -302,10 +324,9 @@ async function getOrCreateThumb(videoUri: string, assetId?: string | null): Prom
       console.log('[thumbs] primary failed for', videoUri, e);
     }
 
-    // 2) Fallback: use Photos asset localUri (best-effort; permission request is platform-safe)
+    // fallback via Photos asset URI
     if (assetId) {
       try {
-        // Request if not granted; ignore result if denied to avoid errors.
         const perm = await MediaLibrary.requestPermissionsAsync();
         if (perm.granted) {
           const asset = await MediaLibrary.getAssetInfoAsync(assetId);
@@ -327,7 +348,7 @@ async function getOrCreateThumb(videoUri: string, assetId?: string | null): Prom
   }
 }
 
-// sweep orphaned thumbs (no corresponding video in current index)
+// sweep orphaned thumbs
 async function sweepOrphanThumbs(indexUris?: string[]) {
   try {
     await ensureDir(THUMBS_DIR);
@@ -360,31 +381,7 @@ async function sweepOrphanThumbs(indexUris?: string[]) {
   }
 }
 
-// ---------- sidecar (score/outcome + gold) ----------
-type SidecarEvent = {
-  t: number;
-  points?: number;
-  actor?: 'home' | 'opponent' | 'neutral';
-  key?: string;
-  label?: string;
-  kind?: string;
-  meta?: Record<string, any>;
-};
-
-type Sidecar = {
-  athlete?: string;
-  sport?: string;
-  events?: SidecarEvent[];
-  finalScore?: FinalScore;
-  homeIsAthlete?: boolean;
-  outcome?: 'W' | 'L' | 'T';
-  winner?: 'home' | 'opponent' | null;
-  endedBy?: 'pin' | 'decision' | null;
-  athletePinned?: boolean;
-  athleteWasPinned?: boolean;
-  modifiedAt?: number;
-};
-
+// ---------- sidecar → scoreboard + tints ----------
 async function readOutcomeFor(
   videoUri: string
 ): Promise<{
@@ -394,6 +391,8 @@ async function readOutcomeFor(
   myScore: number | null;
   oppScore: number | null;
   highlightGold: boolean;
+  eventTint: string | null;
+  goldKind: 'PIN' | 'SUB' | 'HR' | 'GOLD' | null;
 }> {
   try {
     const lastSlash = videoUri.lastIndexOf('/');
@@ -420,7 +419,7 @@ async function readOutcomeFor(
       } catch {}
     }
 
-    // If it's a highlight clip (sport === 'highlights'), there is no match outcome—return neutral.
+    // highlight clips don't carry outcomes/tints
     if (!sc || sc.sport === 'highlights') {
       return {
         finalScore: null,
@@ -429,9 +428,12 @@ async function readOutcomeFor(
         myScore: null,
         oppScore: null,
         highlightGold: false,
+        eventTint: null,
+        goldKind: null,
       };
     }
 
+    // --- compute score if missing ---
     let finalScore: FinalScore | null = sc.finalScore ?? null;
     if (!finalScore) {
       let h = 0,
@@ -447,9 +449,10 @@ async function readOutcomeFor(
     }
 
     const homeIsAthlete = sc.homeIsAthlete !== false;
-    const myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
-    const oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
+    const myScore = finalScore ? (homeIsAthlete ? finalScore.home : finalScore.opponent) : null;
+    const oppScore = finalScore ? (homeIsAthlete ? finalScore.opponent : finalScore.home) : null;
 
+    // --- outcome (W/L/T) with wrestling pin shortcut as before ---
     let outcome: Outcome | null = sc.outcome ?? null;
     let highlightGold = sc.endedBy === 'pin' ? !!sc.athletePinned : false;
 
@@ -474,14 +477,30 @@ async function readOutcomeFor(
         const athletePinned =
           (homeIsAthlete && pinEv.actor === 'home') ||
           (!homeIsAthlete && pinEv.actor === 'opponent');
-        highlightGold = !!athletePinned;
+        highlightGold = !!athletePinned; // pin = gold
         outcome = athletePinned ? 'W' : 'L';
-      } else {
+      } else if (myScore != null && oppScore != null) {
         outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+      } else {
+        outcome = null;
       }
     }
 
-    return { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
+    // --- NEW: per-sport tint + generic gold (pin/sub/HR etc.) ---
+    const { highlightGold: goldFromEvents, goldKind, tint } = getEventTint(sc.events ?? []);
+    // OR the two notions of "gold" together (wrestling pin or sport-generic gold)
+    const isGold = !!(highlightGold || goldFromEvents);
+
+    return {
+      finalScore,
+      homeIsAthlete,
+      outcome,
+      myScore,
+      oppScore,
+      highlightGold: isGold,
+      eventTint: tint ?? null,
+      goldKind: isGold ? (goldKind ?? 'GOLD') : null,
+    };
   } catch {
     return {
       finalScore: null,
@@ -490,6 +509,8 @@ async function readOutcomeFor(
       myScore: null,
       oppScore: null,
       highlightGold: false,
+      eventTint: null,
+      goldKind: null,
     };
   }
 }
@@ -516,7 +537,7 @@ async function _retagVideo(
 
     if (!found && input.assetId) {
       const list = await readIndex();
-      const hit = list.find((m) => m.assetId === input.assetId);
+      const hit = list.find((e) => e.assetId === input.assetId);
       if (hit && (await pathExists(hit.uri))) found = hit.uri;
     }
     if (found) {
@@ -640,176 +661,12 @@ function retagVideo(
   return enqueueFs(() => _retagVideo(input, newAthlete));
 }
 
-// app/(tabs)/library.tsx (Focusing on the UploadButton function only)
-
-// ... (other functions like retagVideo and component imports)
-// ASSUMPTION: The top of the file now includes: import { supabase } from '@/lib/supabase';
-// ASSUMPTION: The file imports 'expo-file-system', 'react', and 'react-native' components
-
-function UploadButton({
-  localUri,
-  sidecar,
-  uploaded,
-  onUploaded,
-}: {
-  localUri: string;
-  sidecar?: unknown;
-  uploaded?: boolean;
-  onUploaded?: (cloudKey: string, url: string) => void;
-}) {
-  // Assuming useState, useEffect, supabase, FileSystem, baseNameNoExt, Text, View, Pressable, 
-  // ActivityIndicator, Alert, Date, Blob, and fetch are imported/available in the scope.
-  const [state, setState] = useState<'idle' | 'uploading' | 'done'>(uploaded ? 'done' : 'idle');
-  const [error, setError] = useState<string | undefined>();
-
-  useEffect(() => {
-    setState(uploaded ? 'done' : 'idle');
-  }, [uploaded]);
-
-  if (state === 'done') {
-    return <Text style={{ fontWeight: '600', color: 'white' }}>✅ Uploaded</Text>;
-  }
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <Pressable
-        onPress={async () => {
-          setError(undefined);
-          setState('uploading');
-          
-          // 1. Get user session (which includes the token data)
-          const { data: { session } } = await supabase.auth.getSession();
-          const user = session?.user;
-
-          if (!user) {
-            setError('User not authenticated for upload');
-            setState('idle');
-            Alert.alert('Authentication Error', 'You must be signed in to upload videos.');
-            return;
-          }
-          
-          // 🛑 CRITICAL FIX: FORCE TOKEN REFRESH
-          const { error: refreshError } = await supabase.auth.refreshSession();
-          if (refreshError) {
-             console.error("[Refresh Error]", refreshError);
-          }
-          
-          // 🛑 DEBUGGING LINE: CHECK THE USER ID BEING SENT
-          console.log(`[DEBUG] User ID for RLS: ${user.id}`); 
-          
-          const fileName = baseNameNoExt(localUri);
-          const timestamp = Date.now();
-          const path = `videos/${user.id}/${timestamp}_${fileName}.mp4`;
-          const sidecarPath = `sidecars/${user.id}/${timestamp}_${fileName}.json`;
-          const sc = (sidecar as any) || undefined;
-          
-          try {
-            // 0) Get Blob from local URI
-            const res = await fetch(localUri);
-            const blob = await res.blob();
-            
-            // 1) Upload video to Supabase Storage (THIS PART SUCCEEDS)
-            const { error: uploadError } = await supabase.storage
-              .from('user-videos') 
-              .upload(path, blob, {
-                contentType: 'video/mp4',
-              });
-
-            if (uploadError) throw uploadError;
-
-            // 2) Upload sidecar JSON if provided (omitted for brevity)
-            if (sidecar) {
-              const sidecarBlob = new Blob([JSON.stringify(sidecar)], { type: 'application/json' });
-              await supabase.storage
-                .from('user-videos')
-                .upload(sidecarPath, sidecarBlob, {
-                  contentType: 'application/json',
-                });
-            }
-
-            // 3) Get public URL and bytes
-            const { data: { publicUrl } } = supabase.storage.from('user-videos').getPublicUrl(path);
-            // Assuming FileSystem.getInfoAsync is available from expo-file-system or similar
-            const info = await FileSystem.getInfoAsync(localUri);
-            const bytes = info.exists ? info.size : 0;
-            
-            const videoTitle = sc?.athlete && sc?.sport 
-                  ? `${sc.athlete} - ${sc.sport}` 
-                  : baseNameNoExt(localUri);
-
-            // 4) Save an index row in Supabase Database (public.videos table)
-
-            // 1. CONSTRUCT THE PAYLOAD OBJECT
-            const payload = {
-                // 1. AUTHENTICATION (NOT NULL)
-                owner_uid: user.id, // Must be a valid UUID string
-
-                // 2. FILE/STORAGE COLUMNS (NOT NULL)
-                b2_key: path, // Must be a non-empty string for the file path
-                bytes: bytes, // Must be a valid number (integer) for file size
-                
-                // 3. VIDEO METADATA COLUMNS
-                title: videoTitle,
-                athlete_name: sc?.athlete || 'Unassigned', 
-                sport: sc?.sport || 'unknown',
-                
-                // Converting recorded_at_ms (number) to required ISO timestamp string
-                recorded_at: new Date(sc?.modifiedAt || Date.now()).toISOString(),
-                
-                // 4. SCORE AND STATUS COLUMNS
-                score_home: 0,
-                score_opponent: 0,
-                home_is_athlete: true,
-                is_public: false,
-            };
-
-            // 🛑 DEBUG STEP: LOGGING THE PAYLOAD
-            console.log("Supabase Insert Payload:", JSON.stringify(payload, null, 2));
-
-
-            // 2. PERFORM THE INSERT
-            // 🎉 FIX B: Add { returning: 'minimal' } to prevent RLS failure from the automatic SELECT
-            // The type cast (as any) is used to clear the TypeScript overload error.
-            const { error: insertError } = await supabase.from('videos').insert(payload, { returning: 'minimal' } as any);
-
-
-            if (insertError) throw insertError;
-            
-            setState('done');
-            onUploaded?.(path, publicUrl); 
-
-          } catch (e: any) {
-            console.error('[Supabase Upload Error]', e);
-            setError(e?.message ?? 'Upload failed');
-            setState('idle');
-            Alert.alert('Upload failed', e?.message ?? 'Please try again while online.');
-          }
-        }}
-        style={{
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          borderRadius: 999,
-          borderWidth: 1,
-          borderColor: 'white',
-          backgroundColor: 'rgba(255,255,255,0.12)',
-        }}
-      >
-        <Text style={{ color: 'white', fontWeight: '700' }}>
-          {state === 'uploading' ? 'Uploading…' : 'Upload'}
-        </Text>
-      </Pressable>
-      {state === 'uploading' && <ActivityIndicator color="white" />}
-      {!!error && <Text style={{ color: 'tomato' }}>{error}</Text>}
-    </View>
-  );
-}
-
+// ---------- component ----------
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const router = useRouter();
 
-  // stable key for uploadedMap: use assetId if present, else uri
   const keyFor = useCallback((r: Row) => r.assetId ?? r.uri, []);
 
   const [rows, setRows] = useState<Row[]>([]);
@@ -821,18 +678,14 @@ export default function LibraryScreen() {
 
   const [uploadedMap, setUploadedMap] = useState<Record<string, { key: string; url: string; at: number }>>({});
 
-  // NEW: Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
   const [titleInput, setTitleInput] = useState('');
 
-  // segmented state
   const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
   const loadingRef = useRef(false);
-
-  // keep a ref of rows for lazy thumb generation to access assetId
   const rowsRef = useRef<Row[]>([]);
   useEffect(() => {
     rowsRef.current = rows;
@@ -861,6 +714,10 @@ export default function LibraryScreen() {
       myScore: scoreBits.myScore,
       oppScore: scoreBits.oppScore,
       highlightGold: scoreBits.highlightGold,
+
+      // NEW:
+      eventTint: scoreBits.eventTint,
+      goldKind: scoreBits.goldKind,
     };
   }, []);
 
@@ -871,9 +728,7 @@ export default function LibraryScreen() {
     try {
       const list: IndexMeta[] = await readIndex();
       const sorted = [...list].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-      const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => {
-        return await buildRow(meta, i < 12);
-      });
+      const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => buildRow(meta, i < 12));
       const filtered = rowsBuilt.filter(Boolean) as Row[];
       filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
       setRows(filtered);
@@ -892,7 +747,6 @@ export default function LibraryScreen() {
         setUploadedMap({});
       }
 
-      // opportunistically sweep orphan thumbs (quietly)
       try {
         await sweepOrphanThumbs(sorted.map((m) => m.uri));
       } catch {}
@@ -901,7 +755,6 @@ export default function LibraryScreen() {
     }
   }, [buildRow]);
 
-  // initial + focus refresh
   useEffect(() => {
     load();
   }, [load]);
@@ -911,7 +764,7 @@ export default function LibraryScreen() {
     }, [load])
   );
 
-  // ----- FAST PATH: patch only the edited row on sidecarUpdated -----
+  // ----- FAST PATCH on sidecarUpdated -----
   const patchRowFromSidecarPayload = useCallback(async (uri: string, sc?: any) => {
     let nextBits:
       | {
@@ -921,6 +774,8 @@ export default function LibraryScreen() {
           myScore: number | null;
           oppScore: number | null;
           highlightGold: boolean;
+          eventTint: string | null;
+          goldKind: 'PIN' | 'SUB' | 'HR' | 'GOLD' | null;
         }
       | null = null;
 
@@ -930,21 +785,32 @@ export default function LibraryScreen() {
         const finalScore: FinalScore | null = sc.finalScore ?? null;
         let myScore: number | null = null,
           oppScore: number | null = null,
-          outcome: Outcome | null = sc.outcome ?? null,
-          highlightGold = false;
+          outcome: Outcome | null = sc.outcome ?? null;
 
         if (finalScore) {
           myScore = homeIsAthlete ? finalScore.home : finalScore.opponent;
           oppScore = homeIsAthlete ? finalScore.opponent : finalScore.home;
         }
 
-        if (sc.endedBy === 'pin') highlightGold = !!sc.athletePinned;
-
+        // pin shortcut
+        let highlightGold = sc.endedBy === 'pin' ? !!sc.athletePinned : false;
         if (!outcome && finalScore) {
           outcome = myScore! > oppScore! ? 'W' : myScore! < oppScore! ? 'L' : 'T';
         }
 
-        nextBits = { finalScore, homeIsAthlete, outcome, myScore, oppScore, highlightGold };
+        const t = getEventTint(sc.events ?? []);
+        const isGold = !!(highlightGold || t.highlightGold);
+
+        nextBits = {
+          finalScore,
+          homeIsAthlete,
+          outcome,
+          myScore,
+          oppScore,
+          highlightGold: isGold,
+          eventTint: t.tint ?? null,
+          goldKind: isGold ? (t.goldKind ?? 'GOLD') : null,
+        };
       } catch {
         nextBits = null;
       }
@@ -959,6 +825,8 @@ export default function LibraryScreen() {
         myScore: b.myScore,
         oppScore: b.oppScore,
         highlightGold: b.highlightGold,
+        eventTint: b.eventTint,
+        goldKind: b.goldKind,
       };
     }
 
@@ -973,6 +841,8 @@ export default function LibraryScreen() {
               myScore: nextBits!.myScore,
               oppScore: nextBits!.oppScore,
               highlightGold: nextBits!.highlightGold,
+              eventTint: nextBits!.eventTint,
+              goldKind: nextBits!.goldKind,
             }
           : r
       )
@@ -1008,29 +878,25 @@ export default function LibraryScreen() {
     }
   }, [load]);
 
-  // delete handler (serialized through FS queue) + thumb cleanup
+  // delete handler + thumb cleanup
   const removeVideo = useCallback(
     async (row: Row) => {
       await enqueueFs(async () => {
         try {
-          // delete the video file
           try {
             await FileSystem.deleteAsync(row.uri, { idempotent: true });
           } catch {}
 
-          // delete the cached thumbnail (if present)
           try {
             const t = thumbPathFor(row.uri);
             const info: any = await FileSystem.getInfoAsync(t);
             if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
           } catch {}
 
-          // drop from index
           const current = await readIndex();
           const updated = current.filter((e) => e.uri !== row.uri);
           await writeIndexAtomic(updated);
 
-          // delete from Photos (if it was saved there)
           if (row.assetId) {
             try {
               const { granted } = await MediaLibrary.requestPermissionsAsync();
@@ -1072,29 +938,6 @@ export default function LibraryScreen() {
       });
     },
     [router]
-  );
-
-  // >>> define doEditAthlete used by the modal (serialized) <<<
-  const doEditAthlete = useCallback(
-    async (row: Row, newAthlete: string) => {
-      try {
-        await retagVideo(
-          {
-            uri: row.uri,
-            oldAthlete: row.athlete,
-            sportKey: row.sport,
-            assetId: row.assetId,
-          },
-          newAthlete
-        );
-        await load();
-      } catch (e: any) {
-        console.log('retag error', e);
-        const msg = e?.message || String(e);
-        Alert.alert('Update failed', msg.includes('Original file not found') ? `${msg}\n\nTap Refresh and try again.` : msg);
-      }
-    },
-    [load]
   );
 
   // ====== GROUPINGS ======
@@ -1156,13 +999,14 @@ export default function LibraryScreen() {
       const dateOnly = when ? when.toLocaleDateString() : '—';
       const timeOnly = when ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
-      // NOTE: date/time removed from subtitleBits on purpose (now shown as badges above)
+      // subtitle (athlete • sport • size)
       const subtitleBits = [
         item.athlete ? `👤 ${item.athlete}` : null,
         item.sport ? `🏷️ ${item.sport}` : null,
         `${bytesToMB(item.size)}`,
       ].filter(Boolean) as string[];
 
+      // score chip
       const chip =
         item.sport !== 'highlights' && item.outcome && item.myScore != null && item.oppScore != null
           ? {
@@ -1172,6 +1016,11 @@ export default function LibraryScreen() {
           : null;
 
       const uploaded = uploadedMap[keyFor(item)];
+
+      // preferred border color from per-sport event tint, else fall back to outcome color
+      const border = item.highlightGold ? 'transparent' : (item.eventTint ?? outcomeColor(item.outcome));
+      // gold badge label (PIN / SUB / HR / GOLD)
+      const goldLabel = item.goldKind ?? 'GOLD';
 
       return (
         <Pressable
@@ -1183,7 +1032,7 @@ export default function LibraryScreen() {
             borderRadius: 12,
             overflow: 'hidden',
             borderWidth: item.highlightGold ? 0 : 2,
-            borderColor: item.highlightGold ? 'transparent' : outcomeColor(item.outcome),
+            borderColor: border,
             backgroundColor: item.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
           }}
         >
@@ -1318,7 +1167,7 @@ export default function LibraryScreen() {
                         borderColor: '#ffffff55',
                       }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '900' }}>PIN</Text>
+                      <Text style={{ color: 'white', fontWeight: '900' }}>{goldLabel}</Text>
                     </View>
                   )}
                 </View>
@@ -1370,39 +1219,10 @@ export default function LibraryScreen() {
                     <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
                   </TouchableOpacity>
 
-                  {/* START: Temporarily disabled UploadButton for closed beta testing */}
-                {/*
-                <View style={{ marginTop: 8, alignItems: 'center' }}>
-                    <UploadButton
-                      localUri={item.uri}
-                      uploaded={!!uploaded}
-                      sidecar={{
-                        videoPath: item.uri,
-                        athlete: item.athlete,
-                        sport: item.sport,
-                        createdAt: item.mtime ?? Date.now(),
-                      }}
-                      onUploaded={(key, url) => {
-                        // keep your local "uploaded" bookkeeping
-                        const mapKey = keyFor(item);
-                        setUploadedMap((prev) => {
-                          const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
-                          AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
-                          return next;
-                        });
-                        // Firestore indexing already happened in saveVideoDoc (inside UploadButton)
-                      }}
-                    />
-                </View>
-                */}
-                {/* END: Temporarily disabled UploadButton */}
-
-                {/* Show a placeholder message instead */}
-                <View style={{ marginTop: 8, alignItems: 'center' }}>
-                    <Text style={{ color: 'gray', fontSize: 10 }}>
-                        Upload Disabled for Beta Testing
-                    </Text>
-                </View>
+                  {/* Uploads still disabled for beta */}
+                  <View style={{ marginTop: 8, alignItems: 'center' }}>
+                    <Text style={{ color: 'gray', fontSize: 10 }}>Upload Disabled for Beta Testing</Text>
+                  </View>
                 </View>
               </View>
             </View>
@@ -1413,7 +1233,7 @@ export default function LibraryScreen() {
     [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor]
   );
 
-  // Lazy thumbnails for viewable rows (now assetId-aware)
+  // Lazy thumbnails for viewable rows (assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
   const onViewableItemsChanged = useRef(
     ({ changed }: { changed: ViewToken[] }) => {
@@ -1505,7 +1325,6 @@ export default function LibraryScreen() {
               No recordings yet. Record a match, then come back.
             </Text>
           }
-          // performance tuning
           initialNumToRender={10}
           windowSize={7}
           maxToRenderPerBatch={10}
@@ -1748,8 +1567,6 @@ export default function LibraryScreen() {
         </View>
       )}
 
-      <Modal visible={false} />
-
       {/* Edit Athlete modal */}
       <Modal visible={!!athletePickerOpen} transparent animationType="fade" onRequestClose={() => setAthletePickerOpen(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
@@ -1759,8 +1576,17 @@ export default function LibraryScreen() {
             <Pressable
               onPress={async () => {
                 if (athletePickerOpen) {
-                  await doEditAthlete(athletePickerOpen, 'Unassigned');
+                  await retagVideo(
+                    {
+                      uri: athletePickerOpen.uri,
+                      oldAthlete: athletePickerOpen.athlete,
+                      sportKey: athletePickerOpen.sport,
+                      assetId: athletePickerOpen.assetId,
+                    },
+                    'Unassigned'
+                  );
                   setAthletePickerOpen(null);
+                  await load();
                 }
               }}
               style={{ paddingVertical: 12 }}
@@ -1773,8 +1599,17 @@ export default function LibraryScreen() {
                 key={a.id}
                 onPress={async () => {
                   if (athletePickerOpen) {
-                    await doEditAthlete(athletePickerOpen, a.name);
+                    await retagVideo(
+                      {
+                        uri: athletePickerOpen.uri,
+                        oldAthlete: athletePickerOpen.athlete,
+                        sportKey: athletePickerOpen.sport,
+                        assetId: athletePickerOpen.assetId,
+                      },
+                      a.name
+                    );
                     setAthletePickerOpen(null);
+                    await load();
                   }
                 }}
                 style={{ paddingVertical: 10 }}
@@ -1804,16 +1639,24 @@ export default function LibraryScreen() {
                   const n = newName.trim();
                   if (!n || !athletePickerOpen) return;
 
-                  // store locally
                   const next = [{ id: `${Date.now()}`, name: n }, ...athleteList];
                   try {
                     await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next));
                   } catch {}
                   setAthleteList(next);
 
-                  await doEditAthlete(athletePickerOpen, n);
+                  await retagVideo(
+                    {
+                      uri: athletePickerOpen.uri,
+                      oldAthlete: athletePickerOpen.athlete,
+                      sportKey: athletePickerOpen.sport,
+                      assetId: athletePickerOpen.assetId,
+                    },
+                    n
+                  );
                   setNewName('');
                   setAthletePickerOpen(null);
+                  await load();
                 }}
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'white' }}
               >
@@ -1824,7 +1667,7 @@ export default function LibraryScreen() {
         </View>
       </Modal>
 
-      {/* NEW: Edit Title modal */}
+      {/* Edit Title modal */}
       <Modal
         visible={!!titleEditRow}
         transparent
@@ -1877,7 +1720,6 @@ export default function LibraryScreen() {
                   }
                   try {
                     await enqueueFs(() => updateDisplayName(titleEditRow.uri, n));
-                    // fast local patch
                     setRows((prev) => prev.map((r) => (r.uri === titleEditRow.uri ? { ...r, displayName: n } : r)));
                   } catch (e: any) {
                     Alert.alert('Rename failed', e?.message ?? 'Could not update title.');

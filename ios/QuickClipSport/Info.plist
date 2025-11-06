@@ -7,7 +7,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>QuickClip</string>
+    <string>QuickClip Sport</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -39,7 +39,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
@@ -52,13 +52,13 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>This app records matches.</string>
+    <string>QuickClip requires camera access to record video and capture sports moments for analysis.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>This app records match audio.</string>
+    <string>QuickClip requires microphone access to record audio synchronized with your video.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>We add your videos to albums for organization.</string>
+    <string>QuickClip saves recorded video clips directly to your Photo Library/Camera Roll.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>We access your library to organize recordings.</string>
+    <string>QuickClip needs access to your Photo Library to load existing videos for review and analysis.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>

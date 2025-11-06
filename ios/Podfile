@@ -13,15 +13,19 @@ install! 'cocoapods',
 
 prepare_react_native_project!
 
-target 'QuickClip' do
+target 'QuickClipSport' do
   use_expo_modules!
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];
   else
     config_command = [
-      'npx', 'expo-modules-autolinking', 'react-native-config',
-      '--json', '--platform', 'ios'
+      'npx',
+      'expo-modules-autolinking',
+      'react-native-config',
+      '--json',
+      '--platform',
+      'ios'
     ]
   end
 
@@ -32,13 +36,16 @@ target 'QuickClip' do
 
   use_react_native!(
     :path => config[:reactNativePath],
-    :hermes_enabled => podfile_properties['expo.jsEngine'].nil? || podfile_properties['expo.jsEngine'] == 'hermes',
+    :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
+    # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/..",
     :privacy_file_aggregation_enabled => podfile_properties['apple.privacyManifestAggregationEnabled'] != 'false',
   )
 
-  # 🔧 Force FFmpegKit to use your forked podspec (avoids the broken 6.0 URL).
-  pod 'ffmpeg-kit-ios-full', :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
+  # ⬇️ Add this pod line (custom podspec URL to avoid the 404 on the upstream release)
+  # Force CocoaPods to use our self-hosted podspec (avoids arthenica 404)
+pod 'ffmpeg-kit-ios-full', :podspec => 'https://raw.githubusercontent.com/luthviar/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
+
 
   post_install do |installer|
     react_native_post_install(
@@ -48,11 +55,21 @@ target 'QuickClip' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
-    # Prevent signing resource bundles for device builds.
-    installer.target_installation_results.pod_target_installation_results.each do |pod_name, target_installation_result|
+    # This is necessary for Xcode 14+, avoids signing resource bundles for device builds
+    installer.target_installation_results.pod_target_installation_results
+      .each do |pod_name, target_installation_result|
       target_installation_result.resource_bundle_targets.each do |resource_bundle_target|
         resource_bundle_target.build_configurations.each do |config|
           config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+        end
+      end
+    end
+
+    # (Optional) Silence old Pods setting too-low iOS targets
+    installer.pods_project.targets.each do |t|
+      t.build_configurations.each do |bc|
+        if bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 15.1
+          bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
         end
       end
     end
