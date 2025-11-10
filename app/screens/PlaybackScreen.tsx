@@ -7,7 +7,6 @@ import {
   GestureHandlerRootView,
   PanGestureHandler,
   PanGestureHandlerGestureEvent,
-  PanGestureHandlerStateChangeEvent,
   State,
 } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,23 +15,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 import type { OverlayEvent } from '../../components/overlays/types';
 
-/* === colors === */
+/* === constants (MUST BE DEFINED EARLY) === */
 const GREEN = '#16a34a';
 const RED   = '#dc2626';
-const GREY  = '#9ca3af';
-
 const SKIP_SEC = 5;         // double-tap skip (5s per your request)
 const BELT_H   = 76;        // event belt height
-
-/* edge/guarding */
 const EDGE_PAD = 24;        // min horizontal padding at belt edges
 const SAFE_MARGIN = 12;     // extra beyond safe-area for all edge buttons
 
 /* ==================== types ==================== */
 type Actor = 'home' | 'opponent' | 'neutral';
-
 type EventRow = {
-  _id?: string; // local id for edits
+  _id?: string;
   t: number;
   kind: string;
   points?: number;
@@ -40,22 +34,18 @@ type EventRow = {
   meta?: any;
   scoreAfter?: { home: number; opponent: number };
 };
-
 type Winner = 'home' | 'opponent' | null;
 type OutcomeLetter = 'W' | 'L' | 'T';
 type EndedBy = 'pin' | 'decision';
-
 type Sidecar = {
   athlete?: string;
   sport?: string;
   style?: string;
   createdAt?: number;
   events?: EventRow[];
-  finalScore?: { home: number; opponent: number }; // keep defined/undefined (not null)
+  finalScore?: { home: number; opponent: number };
   homeIsAthlete?: boolean;
   appVersion?: number;
-
-  // explicit, Library-friendly fields
   outcome?: OutcomeLetter;
   winner?: Winner;
   endedBy?: EndedBy | null;
@@ -63,7 +53,6 @@ type Sidecar = {
   athleteWasPinned?: boolean;
   modifiedAt?: number;
 };
-
 /* ==================== helpers ==================== */
 const fmt = (sec: number) => {
   if (!isFinite(sec) || sec < 0) sec = 0;
@@ -71,7 +60,6 @@ const fmt = (sec: number) => {
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
-
 const abbrKind = (k?: string) => {
   if (!k) return 'EV';
   switch ((k || '').toLowerCase()) {
@@ -88,7 +76,6 @@ const abbrKind = (k?: string) => {
     default:          return k.slice(0, 2).toUpperCase();
   }
 };
-
 function hexToRgba(hex: string, alpha: number) {
   const clean = hex.replace('#', '');
   const r = parseInt(clean.slice(0, 2), 16);
@@ -96,9 +83,7 @@ function hexToRgba(hex: string, alpha: number) {
   const b = parseInt(clean.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${alpha})`;
 }
-
 const PENALTYISH = new Set(['stall', 'stalling', 'caution', 'penalty', 'warning']);
-
 function normSideToken(v: any, homeIsAthlete: boolean): 'home'|'opponent'|null {
   const s = String(v ?? '').trim().toLowerCase();
   if (!s) return null;
@@ -110,14 +95,15 @@ function normSideToken(v: any, homeIsAthlete: boolean): 'home'|'opponent'|null {
   if (['red'].includes(s)) return 'opponent';
   return null;
 }
-
 function inferActor(e: EventRow, homeIsAthlete: boolean): Actor {
+  if (e.meta?.colorFlip) {
+      if (e.actor === 'home' || e.actor === 'opponent' || e.actor === 'neutral') return e.actor;
+      return 'neutral';
+  }
   if (e.actor === 'home' || e.actor === 'opponent' || e.actor === 'neutral') return e.actor;
-
   const kind = String(e.kind || '').toLowerCase();
   const penaltyish = PENALTYISH.has(kind);
   const m = e.meta ?? {};
-
   const to =
     normSideToken(m.to, homeIsAthlete) ??
     normSideToken(m.toSide, homeIsAthlete) ??
@@ -127,7 +113,6 @@ function inferActor(e: EventRow, homeIsAthlete: boolean): Actor {
     normSideToken(m.benefit, homeIsAthlete) ??
     null;
   if (to) return to;
-
   const against =
     normSideToken(m.against, homeIsAthlete) ??
     normSideToken(m.on, homeIsAthlete) ??
@@ -138,26 +123,19 @@ function inferActor(e: EventRow, homeIsAthlete: boolean): Actor {
     null;
   if (against === 'home') return 'opponent';
   if (against === 'opponent') return 'home';
-
   if (penaltyish && typeof e.points === 'number' && e.points > 0) {
     return homeIsAthlete ? 'home' : 'opponent';
   }
   if (penaltyish) return homeIsAthlete ? 'home' : 'opponent';
-
   return 'neutral';
 }
-
 function normalizeEvents(evts: EventRow[], homeIsAthlete: boolean): EventRow[] {
   return evts.map(e => ({ ...e, actor: inferActor(e, homeIsAthlete) }));
 }
-
 const assignIds = (list: EventRow[]) =>
   list.map((e, i) => (e._id ? e : { ...e, _id: `${Math.round(e.t * 1000)}_${i}` }));
-
 const toActor = (a: any): Actor =>
   a === 'home' || a === 'opponent' || a === 'neutral' ? a : 'neutral';
-
-/** recompute final score + pin/decision outcome for the athlete’s perspective */
 function deriveOutcome(
   evts: EventRow[],
   hiA: boolean
@@ -170,8 +148,6 @@ function deriveOutcome(
   athleteWasPinned: boolean;
 } {
   const ordered = [...evts].sort((a, b) => a.t - b.t);
-
-  // accumulate score
   let h = 0, o = 0;
   for (const e of ordered) {
     const pts = typeof e.points === 'number' ? e.points : 0;
@@ -181,17 +157,13 @@ function deriveOutcome(
     }
   }
   const finalScore = { home: h, opponent: o };
-
-  // detect pin/fall from kind or meta
   const pinEv = ordered.find(e => {
     const k = String(e.kind || '').toLowerCase();
     const winBy = String(e?.meta?.winBy || '').toLowerCase();
     const lbl = String(e?.meta?.label || '').toLowerCase();
     return k === 'pin' || k === 'fall' || winBy === 'pin' || lbl.includes('pin') || lbl.includes('fall');
   });
-
   const endedBy: EndedBy = pinEv ? 'pin' : 'decision';
-
   let athletePinned = false;
   let athleteWasPinned = false;
   if (pinEv && (pinEv.actor === 'home' || pinEv.actor === 'opponent')) {
@@ -199,7 +171,6 @@ function deriveOutcome(
     athletePinned = pinEv.actor === mySide;
     athleteWasPinned = !athletePinned;
   }
-
   let outcome: OutcomeLetter;
   if (endedBy === 'pin') {
     outcome = athletePinned ? 'W' : 'L';
@@ -208,16 +179,14 @@ function deriveOutcome(
     const opp = hiA ? o : h;
     outcome = my > opp ? 'W' : my < opp ? 'L' : 'T';
   }
-
   const winner: Winner =
     outcome === 'T'
       ? null
       : ((h > o ? 'home' : 'opponent') as 'home' | 'opponent');
-
   return { finalScore, outcome, winner, endedBy, athletePinned, athleteWasPinned };
 }
 
-/* ==================== bottom event belt (2 lanes + long press) ==================== */
+/* ==================== bottom event belt (LOCAL COMPONENT) ==================== */
 function EventBelt({
   duration,
   current,
@@ -225,6 +194,7 @@ function EventBelt({
   onSeek,
   bottomInset,
   onPillLongPress,
+  homeIsAthlete,
 }: {
   duration: number;
   current: number;
@@ -232,31 +202,27 @@ function EventBelt({
   onSeek: (sec: number) => void;
   bottomInset: number;
   onPillLongPress?: (ev: EventRow) => void;
+  homeIsAthlete: boolean;
 }) {
   const screenW = Dimensions.get('window').width;
-
   const PILL_W = 64;
-  const PILL_H = 28;
-  const PX_PER_SEC = 10;
   const MIN_GAP = 8;
-  const BASE_LEFT = EDGE_PAD; // ensure first pill never hugs the left edge
-
+  const PX_PER_SEC = 10;
+  const BASE_LEFT = EDGE_PAD;
   const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
-  const colorFor = (actor?: string) => (actor === 'home' ? GREEN : RED);
+  const colorFor = (e: EventRow) => {
+    if (e.meta?.myKidColor === 'red') return RED;
+    if (e.meta?.opponentColor === 'green') return GREEN;
+    return e.actor === 'home' ? GREEN : RED;
+  };
 
   const layout = React.useMemo(() => {
     const twoLane = events.map(e =>
       e.actor === 'home' || e.actor === 'opponent' ? e : { ...e, actor: 'opponent' as const }
     );
-
     const indexed = twoLane.map((e, i) => ({ e, i }));
     indexed.sort((a, b) => (a.e.t - b.e.t) || (a.i - b.i));
-
-    // initialize so the very first computed left = BASE_LEFT
-    const lastLeft: Record<'home'|'opponent', number> = {
-      home: BASE_LEFT - PILL_W,
-      opponent: BASE_LEFT - PILL_W,
-    };
+    const lastLeft: Record<'home'|'opponent', number> = { home: BASE_LEFT - PILL_W, opponent: BASE_LEFT - PILL_W };
     const items: Array<{ e: EventRow; x: number; y: number; c: string }> = [];
 
     for (const { e } of indexed) {
@@ -267,9 +233,8 @@ function EventBelt({
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP, BASE_LEFT);
       lastLeft[lane] = placedLeft;
 
-      items.push({ e, x: placedLeft + PILL_W / 2, y: rowY(lane), c: colorFor(lane) });
+      items.push({ e, x: placedLeft + PILL_W / 2, y: rowY(lane), c: colorFor(e) });
     }
-
     const maxCenter = items.length ? Math.max(...items.map(it => it.x)) : 0;
     const contentW = Math.max(screenW, maxCenter + PILL_W / 2 + EDGE_PAD);
     return { items, contentW };
@@ -282,7 +247,7 @@ function EventBelt({
   useEffect(() => {
     if (!duration) return;
     if (userScrolling.current) return;
-    const playheadX = current * 10; // PX_PER_SEC
+    const playheadX = current * 10;
     {
       const targetX = Math.max(0, playheadX - screenW * 0.5);
       const now = Date.now();
@@ -306,7 +271,6 @@ function EventBelt({
         contentContainerStyle={{ height: BELT_H, paddingHorizontal: EDGE_PAD, width: layout.contentW + EDGE_PAD * 2 }}
       >
         <View style={{ width: layout.contentW, height: BELT_H }}>
-          {/* center reference track */}
           <View
             style={{
               position: 'absolute',
@@ -318,8 +282,6 @@ function EventBelt({
               backgroundColor: 'rgba(255,255,255,0.22)',
             }}
           />
-
-          {/* pills */}
           {layout.items.map((it, i) => {
             const isPassed = current >= it.e.t;
             return (
@@ -330,7 +292,7 @@ function EventBelt({
                 delayLongPress={260}
                 style={{
                   position: 'absolute',
-                  left: it.x - 64 / 2, // PILL_W / 2
+                  left: it.x - 64 / 2,
                   top: it.y,
                   width: 64,
                   height: 28,
@@ -358,7 +320,7 @@ function EventBelt({
   );
 }
 
-/* ==================== compact top scrub bar (RNGH) ==================== */
+/* ==================== compact top scrub bar (LOCAL COMPONENT) ==================== */
 function TopScrubber({
   current,
   duration,
@@ -401,7 +363,6 @@ function TopScrubber({
     return (duration || 0) * p;
   }, [duration]);
 
-  // RAF throttle for seeks
   const pendingSecRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const flushSeek = useCallback(() => {
@@ -419,8 +380,6 @@ function TopScrubber({
   }, [flushSeek]);
 
   const begin = () => { onInteracting?.(true); };
-  theend: {
-  }
   const end = () => {
     onInteracting?.(false);
     setTimeout(() => setBubble(null), 300);
@@ -437,7 +396,7 @@ function TopScrubber({
     scheduleSeek(sec);
   };
 
-  const onStateChange = (e: PanGestureHandlerStateChangeEvent) => {
+  const onStateChange = (e: any) => { // PanGestureHandlerStateChangeEvent
     const s = e.nativeEvent.state;
     if (s === State.BEGAN || s === State.ACTIVE) begin();
     if (s === State.END || s === State.CANCELLED || s === State.FAILED) end();
@@ -468,8 +427,7 @@ function TopScrubber({
       >
         <View
           onLayout={(ev) => {
-            // @ts-ignore
-            const w = ev.nativeEvent.layout?.width ?? 0;
+            const w = ev.nativeEvent.layout.width ?? 0;
             layoutWRef.current = Math.max(1, w);
           }}
           style={{ height: 48, justifyContent: 'center' }}
@@ -526,7 +484,7 @@ function TopScrubber({
   );
 }
 
-/* ==================== Quick Edit sheet (Replace/Delete) ==================== */
+/* ==================== Quick Edit sheet (LOCAL COMPONENT) ==================== */
 function QuickEditSheet({
   visible,
   event,
@@ -582,6 +540,7 @@ function QuickEditSheet({
     </View>
   );
 }
+
 
 /* ==================== screen ==================== */
 export default function PlaybackScreen() {
@@ -967,7 +926,7 @@ export default function PlaybackScreen() {
         getCurrentTSec={() => Math.round(now || 0)}
         sport="wrestling"
         style="folkstyle"
-        score={{ home: 0, opponent: 0 }}
+        score={liveScore}
       />
     );
   };
@@ -1087,7 +1046,7 @@ export default function PlaybackScreen() {
               </View>
             </View>
 
-            {/* Top scrub bar */}
+            {/* Top scrub bar (LOCAL COMPONENT) */}
             <TopScrubber
               current={now}
               duration={dur}
@@ -1121,7 +1080,7 @@ export default function PlaybackScreen() {
               </View>
             )}
 
-            {/* bottom event belt */}
+            {/* bottom event belt (LOCAL COMPONENT) */}
             {overlayOn && (
               <EventBelt
                 duration={dur}
@@ -1130,6 +1089,7 @@ export default function PlaybackScreen() {
                 onSeek={onSeek}
                 bottomInset={insets.bottom}
                 onPillLongPress={(ev) => setQuickEditFor(ev)}
+                homeIsAthlete={homeIsAthlete}
               />
             )}
 
@@ -1171,7 +1131,7 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '900' }}>{isPlaying ? 'Pause' : 'Play'}</Text>
             </Pressable>
 
-            {/* Quick Edit (Replace/Delete) */}
+            {/* Quick Edit (Replace/Delete) (LOCAL COMPONENT) */}
             <QuickEditSheet
               visible={!!quickEditFor}
               event={quickEditFor}

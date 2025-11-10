@@ -1,3 +1,5 @@
+// components/overlays/WrestlingFolkstyleOverlay.tsx
+
 import React from 'react';
 import { Animated, Text, TouchableOpacity, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -76,20 +78,34 @@ export default function WrestlingFolkstyleOverlay({
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
-  // colors
-  const GREEN = '#22c55e';
-  const RED = '#ef4444';
+  // base colors
+  const BASE_GREEN = '#22c55e'; // Green
+  const BASE_RED = '#ef4444';   // Red
   const GOLD = '#d4a017';
 
-  // which side is "my kid"
+  // State 1: Which physical side is "my kid" (LOCKED TO ACTOR/LABEL)
   const [myKidSide, setMyKidSide] = React.useState<'left' | 'right'>('left');
+  
+  // State 2: Which color is assigned to "my kid" (FLIPPED by the single button)
+  const [myKidColor, setMyKidColor] = React.useState<'green' | 'red'>('green');
 
+  // Actor mapping is fixed: 'left' or 'right' side determines 'home' or 'opponent'
   const leftActor  = myKidSide === 'left'  ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
-  const leftColor  = myKidSide === 'left'  ? GREEN : RED;
-  const rightColor = myKidSide === 'right' ? GREEN : RED;
+
+  // Title mapping is fixed: 'left' or 'right' side determines 'My Kid' or 'Opponent'
   const leftTitle  = myKidSide === 'left'  ? 'My Kid' : 'Opponent';
   const rightTitle = myKidSide === 'right' ? 'My Kid' : 'Opponent';
+
+  // Color mapping logic: Uses myKidColor state to determine the current visual assignment
+  const HOME_COLOR = myKidColor === 'green' ? BASE_GREEN : BASE_RED;
+  const OPP_COLOR  = myKidColor === 'green' ? BASE_RED : BASE_GREEN;
+
+  // Final column colors: Maps the actor to the current visual color assignment
+  const leftColor  = leftActor  === 'home' ? HOME_COLOR : OPP_COLOR;
+  const rightColor = rightActor === 'home' ? HOME_COLOR : OPP_COLOR;
+
+  const myKidCurrentColor = myKidColor.toUpperCase();
 
   const leftScore  = leftActor  === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
   const rightScore = rightActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
@@ -105,9 +121,24 @@ export default function WrestlingFolkstyleOverlay({
   const showToast = (text: string, tint: string) => setToast({ text, tint });
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
-  const fire = (actor: 'home' | 'opponent' | 'neutral', key: string, label: string, value?: number, meta?: Record<string, any>) => {
+  // FIX: Update fire function to always include myKidColor in event metadata
+  const fire = (
+    actor: 'home' | 'opponent' | 'neutral', 
+    key: string, 
+    label: string, 
+    value?: number, 
+    meta?: Record<string, any>
+  ) => {
     if (!isRecording) return;
-    onEvent({ key, label, actor, value, meta });
+    
+    // Add the current color assignment to the event metadata
+    const finalMeta = {
+      ...(meta || {}), // Preserve existing metadata
+      myKidColor: myKidColor, // 'green' or 'red'
+      opponentColor: myKidColor === 'green' ? 'red' : 'green', // The opponent's color
+    };
+    
+    onEvent({ key, label, actor, value, meta: finalMeta });
   };
 
   const openNF = (side: 'left' | 'right') => { if (!isRecording) return; setNfFor(side); };
@@ -244,7 +275,9 @@ export default function WrestlingFolkstyleOverlay({
             <TouchableOpacity onPress={() => setPinFor(null)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}>
               <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => { fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', myKidSide }); setPinFor(null); showToast(`${title}: PIN`, GOLD); }} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}>
+            <TouchableOpacity 
+              onPress={() => { fire(actor as any, 'pin', 'PIN', 0, { winBy: 'pin', myKidSide }); setPinFor(null); showToast(`${title}: PIN`, GOLD); }} 
+              style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: GOLD }}>
               <Text style={{ color: '#111', fontWeight: '900' }}>Confirm</Text>
             </TouchableOpacity>
           </View>
@@ -304,7 +337,7 @@ export default function WrestlingFolkstyleOverlay({
         <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
         <Circle label="R2" actor={leftActor as any} keyName="reversal" value={2} bg={leftColor} />
         <Circle label="NF" actor={leftActor as any} keyName="nearfall" bg={leftColor} onPressOverride={() => setNfFor('left')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => setScFor('left')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => openSC('left')} />
         <Circle label="PIN" actor={'neutral'} keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
       </View>
       <View style={{ flex: 1 }} />
@@ -322,7 +355,7 @@ export default function WrestlingFolkstyleOverlay({
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
         <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
         <Circle label="NF" actor={rightActor as any} keyName="nearfall" bg={rightColor} onPressOverride={() => setNfFor('right')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => setScFor('right')} />
+        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => openSC('right')} />
         <Circle label="PIN" actor={'neutral'} keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
       </View>
       <View style={{ flex: 1 }} />
@@ -337,10 +370,15 @@ export default function WrestlingFolkstyleOverlay({
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
-      {/* Flip sides control */}
+      {/* Flip colors control (Original 'Flip Sides' location) */}
       <View style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
-        <TouchableOpacity onPress={() => setMyKidSide(s => (s === 'left' ? 'right' : 'left'))} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Sides (My Kid: {myKidSide.toUpperCase()})</Text>
+        <TouchableOpacity 
+          // Flips the color state ('green' <-> 'red')
+          onPress={() => setMyKidColor(c => (c === 'green' ? 'red' : 'green'))} 
+          style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
+        >
+          {/* Text is "Flip Colors" */}
+          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Colors (My Kid: {myKidCurrentColor})</Text>
         </TouchableOpacity>
       </View>
 
