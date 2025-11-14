@@ -29,7 +29,6 @@ export default function RecordingScreen() {
   // 1) Take the initial athlete from the route ONCE
   const initialAthlete = useMemo(
     () => (paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned'),
-    // only depend on the raw param for the initial memo; expo-router won’t re-mount this tab on param changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
@@ -38,12 +37,9 @@ export default function RecordingScreen() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newName, setNewName] = useState('');
-
-  // After the user picks locally once, stop syncing from route params.
   const [controlledByParam, setControlledByParam] = useState(true);
 
-  // If this screen DOES receive a new param later (e.g., deep link), adopt it
-  // only when we haven’t been overridden by a local pick yet.
+  // adopt future param changes only if still controlled by param
   useEffect(() => {
     if (!controlledByParam) return;
     const fromParam = (paramToStr(params.athlete, initialAthlete).trim() || 'Unassigned');
@@ -61,17 +57,14 @@ export default function RecordingScreen() {
     }
   }, []);
 
-  // Initial load on mount
   useEffect(() => { loadAthletes(); }, [loadAthletes]);
 
-  // Refresh the list when the picker opens (catch updates made elsewhere)
   useEffect(() => {
     if (!pickerOpen) return;
     const id = setTimeout(() => loadAthletes(), 50);
     return () => clearTimeout(id);
   }, [pickerOpen, loadAthletes]);
 
-  // Close picker with Android back button
   useEffect(() => {
     if (!pickerOpen) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -84,28 +77,34 @@ export default function RecordingScreen() {
   // ---------- Navigation helpers (always forward the athlete) ----------
   const toCam = (sportKey: string, styleKey: string) =>
     router.push({
-      pathname: '/record/camera' as any,
+      pathname: '/record/camera',
       params: { sport: sportKey, style: styleKey, athlete },
     });
 
   const go = (sport: (typeof SPORTS)[number]) => {
-    if (sport === 'Wrestling') {
-      router.push({
-        pathname: '/screens/wrestlingselection' as any,
-        params: { athlete },
-      });
-      return;
-    }
     switch (sport) {
+      case 'Wrestling':
+        router.push({
+          pathname: '/screens/wrestlingselection',
+          params: { athlete },
+        });
+        break;
+
+      case 'Baseball':
+        router.push({
+          pathname: '/screens/baseballselection',
+          params: { athlete },
+        });
+        break;
+
       case 'Basketball':
         toCam('basketball', 'default');
         break;
-      case 'Baseball':
-        toCam('baseball', 'default');
-        break;
+
       case 'Volleyball':
         toCam('volleyball', 'default');
         break;
+
       case 'BJJ':
         toCam('bjj', 'gi');
         break;
@@ -144,7 +143,6 @@ export default function RecordingScreen() {
         </Text>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-          {/* Avatar */}
           {current?.photoUri ? (
             <Image
               source={{ uri: current.photoUri }}
@@ -328,11 +326,11 @@ export default function RecordingScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator
-        scrollEnabled={!pickerOpen} // freeze scroll while overlay is open
+        scrollEnabled={!pickerOpen}
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingTop: 6,
-          paddingBottom: 32, // extra bottom space for smaller landscape height
+          paddingBottom: 32,
         }}
       >
         <AthleteCard />

@@ -8,7 +8,7 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { JSX, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -19,9 +19,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import HighlightButton from '../../components/HighlightButton';
+import BaseballHittingOverlay from '../../components/overlays/BaseballHittingOverlay';
+import type { OverlayEvent, OverlayProps } from '../../components/overlays/types';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
-import type { OverlayEvent } from '../../components/overlays/types';
 
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
@@ -30,27 +32,43 @@ const INDEX_PATH = VIDEOS_DIR + 'index.json';
 const HIGHLIGHTS_SPORT = 'highlights';
 const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
 
+// ---- Overlay registry (EASY EXTENSION POINT) -----------------
+
+type OverlayComponent = (props: OverlayProps) => JSX.Element;
+
+const overlayRegistry: Record<string, OverlayComponent> = {
+  'wrestling:folkstyle': WrestlingFolkstyleOverlay,
+  'baseball:hitting': BaseballHittingOverlay,
+  // later:
+  // 'baseball:pitching': BaseballPitchingOverlay,
+  // 'basketball:default': BasketballOverlay,
+};
+
 // --- utils
 const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   } catch {}
 };
+
 const slug = (s: string) =>
   (s || '')
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '') || 'unknown';
+
 const tsStamp = () => {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(
-    d.getSeconds(),
-  )}`;
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(
+    d.getMinutes(),
+  )}${p(d.getSeconds())}`;
 };
+
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
+
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
 
 // --- index/media
@@ -62,6 +80,7 @@ type VideoMeta = {
   createdAt: number;
   assetId?: string;
 };
+
 async function readIndex(): Promise<VideoMeta[]> {
   try {
     const info = (await FileSystem.getInfoAsync(INDEX_PATH)) as any;
@@ -73,6 +92,7 @@ async function readIndex(): Promise<VideoMeta[]> {
     return [];
   }
 }
+
 async function writeIndexAtomic(list: VideoMeta[]) {
   const tmp = INDEX_PATH + '.tmp';
   await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
@@ -81,6 +101,7 @@ async function writeIndexAtomic(list: VideoMeta[]) {
   } catch {}
   await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
 }
+
 async function appendVideoIndex(entry: VideoMeta) {
   await ensureDir(VIDEOS_DIR);
   const list = await readIndex();
@@ -93,7 +114,7 @@ async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: 
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted) return undefined;
     const asset = await MediaLibrary.createAssetAsync(fileUri);
-    const athleteAlbum = (athlete?.trim() || 'Unassigned');
+    const athleteAlbum = athlete?.trim() || 'Unassigned';
     const sportAlbum = `${athleteAlbum} - ${(sport?.trim() || 'unknown')}`;
 
     let a = await MediaLibrary.getAlbumAsync(athleteAlbum);
@@ -151,7 +172,13 @@ async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: nu
     const jsonUri = clipUri.replace(/\.[^/.]+$/, '') + '.json';
     await FileSystem.writeAsStringAsync(
       jsonUri,
-      JSON.stringify({ athlete, sport: HIGHLIGHTS_SPORT, createdAt: Date.now(), source: 'auto-clip', window: { t: fromT, duration } }),
+      JSON.stringify({
+        athlete,
+        sport: HIGHLIGHTS_SPORT,
+        createdAt: Date.now(),
+        source: 'auto-clip',
+        window: { t: fromT, duration },
+      }),
     );
   } catch {}
 }
@@ -159,7 +186,14 @@ async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: nu
 async function addClipToIndexAndAlbums(clipUri: string, athlete: string) {
   const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
   const assetId = await importToPhotosAndAlbums(clipUri, athlete, HIGHLIGHTS_SPORT);
-  await appendVideoIndex({ uri: clipUri, displayName, athlete, sport: HIGHLIGHTS_SPORT, createdAt: Date.now(), assetId });
+  await appendVideoIndex({
+    uri: clipUri,
+    displayName,
+    athlete,
+    sport: HIGHLIGHTS_SPORT,
+    createdAt: Date.now(),
+    assetId,
+  });
 }
 
 async function destForHighlight(athlete: string) {
@@ -185,7 +219,9 @@ const processHighlights = async (videoUri: string, markers: number[], durationSe
       continue;
     }
 
-    cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(outPath)}`;
+    cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(
+      outPath,
+    )}`;
     s = await FFmpegKit.execute(cmd);
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
       await addClipToIndexAndAlbums(outPath, athleteName);
@@ -219,13 +255,44 @@ async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
 
 // --- screen
 export default function CameraScreen() {
-  const params = useLocalSearchParams<{ athlete?: string | string[]; sport?: string | string[]; style?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    athlete?: string | string[];
+    sport?: string | string[];
+    style?: string | string[];
+  }>();
+
   const athleteParamIncluded = typeof params.athlete !== 'undefined';
   const athleteParam = paramToStr(params.athlete, 'Unassigned');
+
+  // defaults if nothing passed in
   const sportParam = paramToStr(params.sport, 'wrestling');
   const styleParam = paramToStr(params.style, 'folkstyle');
+
+  // normalized for comparisons / registry lookup
+  const sportNorm = sportParam.toLowerCase();
+  const styleNorm = (styleParam || 'default').toLowerCase();
+
+  // include original for saving payloads / folder names
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
-  const isFolkstyle = sportParam.toLowerCase() === 'wrestling' && styleParam.toLowerCase() === 'folkstyle';
+
+  // look up overlay, e.g. "wrestling:folkstyle", "baseball:hitting"
+  let overlayKey = `${sportNorm}:${styleNorm}`;
+
+  // 🔧 If we're on baseball but don't find a matching overlay, default to hitting
+  if (sportNorm === 'baseball' && !overlayRegistry[overlayKey]) {
+    overlayKey = 'baseball:hitting';
+  }
+
+  const ActiveOverlay = overlayRegistry[overlayKey];
+
+  console.log('[CameraScreen overlay]', {
+    sportParam,
+    styleParam,
+    sportNorm,
+    styleNorm,
+    overlayKey,
+    hasOverlay: !!ActiveOverlay,
+  });
 
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -258,14 +325,15 @@ export default function CameraScreen() {
 
   const camOpacity = useRef(new Animated.Value(0)).current;
   const fadeInCamera = () => {
-    Animated.timing(camOpacity, { 
-      toValue: 1, 
-      duration: 300, 
-      easing: Easing.out(Easing.quad), 
-      useNativeDriver: true 
+    Animated.timing(camOpacity, {
+      toValue: 1,
+      duration: 300,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
     }).start();
   };
 
+  // --- FFmpeg warmup
   useEffect(() => {
     (async () => {
       try {
@@ -278,10 +346,12 @@ export default function CameraScreen() {
     })();
   }, []);
 
+  // --- athlete initial state
   useEffect(() => {
     (async () => {
-      if (athleteParamIncluded) setAthlete((athleteParam || '').trim() || 'Unassigned');
-      else {
+      if (athleteParamIncluded) {
+        setAthlete((athleteParam || '').trim() || 'Unassigned');
+      } else {
         try {
           const last = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
           setAthlete((last || '').trim() || 'Unassigned');
@@ -290,24 +360,25 @@ export default function CameraScreen() {
         }
       }
     })();
-  }, []);
+  }, [athleteParamIncluded, athleteParam]);
 
+  // --- camera permissions and mount
   useEffect(() => {
     (async () => {
       if (!permission) return;
-      
+
       if (!permission.granted && permission.canAskAgain) {
         try {
           const result = await requestPermission();
           if (result.granted) {
-            await new Promise(resolve => setTimeout(resolve, 150));
+            await new Promise((resolve) => setTimeout(resolve, 150));
             setShouldRenderCamera(true);
           }
         } catch (e) {
           console.warn('[permission error]', e);
         }
       } else if (permission.granted) {
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         setShouldRenderCamera(true);
       }
     })();
@@ -322,8 +393,9 @@ export default function CameraScreen() {
       const timer = setTimeout(() => setShouldRenderCamera(true), 150);
       return () => clearTimeout(timer);
     }
-  }, [isFocused, permission?.granted]);
+  }, [isFocused, permission?.granted, camOpacity]);
 
+  // stop recording if we blur
   useEffect(() => {
     if (!isFocused && isRecording) {
       try {
@@ -335,6 +407,7 @@ export default function CameraScreen() {
     }
   }, [isFocused, isRecording]);
 
+  // mic permissions once focused
   useEffect(() => {
     if (isFocused && permission?.granted && !micPerm?.granted) {
       (async () => {
@@ -345,6 +418,7 @@ export default function CameraScreen() {
     }
   }, [isFocused, permission?.granted, micPerm?.granted, requestMicPerm]);
 
+  // cleanup on unmount
   useEffect(
     () => () => {
       try {
@@ -366,13 +440,22 @@ export default function CameraScreen() {
     const t = getCurrentTSec();
     const kind = String(evt.key ?? 'unknown');
     const points = Number.isFinite(evt.value) ? Number(evt.value) : undefined;
-    const actor: 'home' | 'opponent' | 'neutral' = evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
+    const actor: Actor = evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
+
+    // only increment scoreboard for positive point events
     if (typeof points === 'number' && points > 0) {
-      if (actor === 'home') scoreRef.current = { ...scoreRef.current, home: scoreRef.current.home + points };
-      else if (actor === 'opponent') scoreRef.current = { ...scoreRef.current, opponent: scoreRef.current.opponent + points };
+      if (actor === 'home') {
+        scoreRef.current = { ...scoreRef.current, home: scoreRef.current.home + points };
+      } else if (actor === 'opponent') {
+        scoreRef.current = { ...scoreRef.current, opponent: scoreRef.current.opponent + points };
+      }
       setScore(scoreRef.current);
     }
-    eventsRef.current = [...eventsRef.current, { t, kind, points, actor, meta: evt as any, scoreAfter: { ...scoreRef.current } }];
+
+    eventsRef.current = [
+      ...eventsRef.current,
+      { t, kind, points, actor, meta: evt as any, scoreAfter: { ...scoreRef.current } },
+    ];
   };
 
   const startNewSegment = async () => {
@@ -387,6 +470,7 @@ export default function CameraScreen() {
 
     try {
       if (typeof cam.startRecording === 'function') {
+        // CameraView.startRecording path
         cam.startRecording({
           mute: false,
           onRecordingFinished: async (res: any) => {
@@ -410,6 +494,7 @@ export default function CameraScreen() {
           },
         });
       } else if (typeof cam.recordAsync === 'function') {
+        // recordAsync path
         recordPromiseRef.current = cam
           .recordAsync({ mute: false })
           .then(async (res: any) => {
@@ -487,7 +572,9 @@ export default function CameraScreen() {
 
   const handleResume = async () => {
     if (!isRecording || !isPaused) return;
-    if (pauseStartedAtRef.current) totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    if (pauseStartedAtRef.current) {
+      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    }
     pauseStartedAtRef.current = null;
     setIsPaused(false);
     await startNewSegment();
@@ -496,7 +583,9 @@ export default function CameraScreen() {
   const handleStop = async () => {
     if (!isRecording || isProcessing) return;
 
-    if (isPaused && pauseStartedAtRef.current) totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    if (isPaused && pauseStartedAtRef.current) {
+      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    }
     pauseStartedAtRef.current = null;
 
     await stopCurrentSegment();
@@ -514,7 +603,10 @@ export default function CameraScreen() {
     try {
       await finalizeRecording(segmentsToProcess, chosenAthlete, sportKey, currentMarkers, currentEvents, finalScore);
     } catch (error) {
-      Alert.alert('A critical error occurred', 'The recording was interrupted during file processing. Please check logs.');
+      Alert.alert(
+        'A critical error occurred',
+        'The recording was interrupted during file processing. Please check logs.',
+      );
       console.error('Finalize Recording Error:', error);
     } finally {
       setIsProcessing(false);
@@ -570,8 +662,8 @@ export default function CameraScreen() {
               style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
               pointerEvents={isPaused ? ('none' as any) : ('box-none' as any)}
             >
-              {isFolkstyle ? (
-                <WrestlingFolkstyleOverlay
+              {ActiveOverlay ? (
+                <ActiveOverlay
                   isRecording={isRecording}
                   onEvent={handleOverlayEvent}
                   getCurrentTSec={getCurrentTSec}
@@ -580,10 +672,28 @@ export default function CameraScreen() {
                   score={score}
                 />
               ) : (
-                <Text style={{ color: 'white', position: 'absolute', top: insets.top + 12, left: 12 }}>Plain camera</Text>
+                <Text
+                  style={{
+                    color: 'white',
+                    position: 'absolute',
+                    top: insets.top + 12,
+                    left: 12,
+                  }}
+                >
+                  Plain camera
+                </Text>
               )}
+
               {isRecording && isPaused && (
-                <View style={{ position: 'absolute', top: insets.top + 12, left: 0, right: 0, alignItems: 'center' }}>
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: insets.top + 12,
+                    left: 0,
+                    right: 0,
+                    alignItems: 'center',
+                  }}
+                >
                   <Text
                     style={{
                       color: 'white',
@@ -602,7 +712,14 @@ export default function CameraScreen() {
           )}
         </>
       ) : (
-        <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'black',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
           <Text style={{ color: 'white', fontSize: 18 }}>
             {permission?.granted ? 'Preparing camera…' : 'Waiting for camera permissions...'}
           </Text>
@@ -625,7 +742,9 @@ export default function CameraScreen() {
         >
           <ActivityIndicator size="large" color="#FFF" />
           <Text style={{ color: 'white', marginTop: 20, fontWeight: '700' }}>Saving and processing video...</Text>
-          <Text style={{ color: 'gray', marginTop: 5, fontSize: 12 }}>This may take a moment depending on recording length.</Text>
+          <Text style={{ color: 'gray', marginTop: 5, fontSize: 12 }}>
+            This may take a moment depending on recording length.
+          </Text>
         </View>
       )}
 
@@ -635,7 +754,11 @@ export default function CameraScreen() {
           <TouchableOpacity
             onPress={() => {
               if (isProcessing) {
-                Alert.alert('Please Wait', 'Recording is currently being saved and processed.', [{ text: 'OK' }]);
+                Alert.alert(
+                  'Please Wait',
+                  'Recording is currently being saved and processed.',
+                  [{ text: 'OK' }],
+                );
               } else {
                 (navigation as any)?.goBack?.();
               }
@@ -742,7 +865,12 @@ export default function CameraScreen() {
               <TouchableOpacity
                 onPress={handleResume}
                 disabled={isProcessing}
-                style={{ paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'white', borderRadius: 999 }}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  backgroundColor: 'white',
+                  borderRadius: 999,
+                }}
               >
                 <Text style={{ color: 'black', fontWeight: '800' }}>Resume</Text>
               </TouchableOpacity>
@@ -751,7 +879,12 @@ export default function CameraScreen() {
             <TouchableOpacity
               onPress={handleStop}
               disabled={isProcessing}
-              style={{ paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'white', borderRadius: 999 }}
+              style={{
+                paddingVertical: 12,
+                paddingHorizontal: 20,
+                backgroundColor: 'white',
+                borderRadius: 999,
+              }}
             >
               <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
             </TouchableOpacity>
