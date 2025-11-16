@@ -12,10 +12,6 @@ import BaseballHittingPlaybackModule from '../../components/modules/baseball/Bas
 import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
 import TopScrubber from '../../components/playback/TopScrubber';
 
-// If you have more later:
-// import BaseballPitchingPlaybackModule from '../../components/modules/baseball/BaseballPitchingPlaybackModule';
-// import VolleyballPlaybackModule from '../../components/modules/volleyball/VolleyballPlaybackModule';
-
 import type { OverlayEvent, PlaybackModuleProps } from '../../components/modules/types';
 
 /* === constants (shared chrome only) === */
@@ -43,13 +39,13 @@ type EndedBy = 'pin' | 'decision';
 
 type Sidecar = {
   athlete?: string;
-  sport?: string; // e.g. "wrestling", "baseball", "volleyball"
-  style?: string; // e.g. "folkstyle", "hitting", "pitching"
+  sport?: string;
+  style?: string;
   createdAt?: number;
   events?: EventRow[];
   finalScore?: { home: number; opponent: number };
-  homeIsAthlete?: boolean; // written during recording
-  homeColorIsGreen?: boolean; // written during recording (visual preference)
+  homeIsAthlete?: boolean;
+  homeColorIsGreen?: boolean;
   appVersion?: number;
   outcome?: OutcomeLetter;
   winner?: Winner;
@@ -251,10 +247,10 @@ function EventBelt({
     if (userScrolling.current) return;
     const playheadX = current * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
-    const now = Date.now();
-    if (now - lastAuto.current > 120) {
+    const nowMs = Date.now();
+    if (nowMs - lastAuto.current > 120) {
       scrollRef.current?.scrollTo({ x: targetX, animated: false });
-      lastAuto.current = now;
+      lastAuto.current = nowMs;
     }
   }, [current, duration, screenW]);
 
@@ -306,10 +302,10 @@ function EventBelt({
                 }}
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
-  {`${abbrKind(it.e.kind)}${
-    typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''
-  }`}
-</Text>
+                  {`${abbrKind(it.e.kind)}${
+                    typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''
+                  }`}
+                </Text>
 
                 <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>{fmt(it.e.t)}</Text>
               </Pressable>
@@ -430,7 +426,7 @@ export default function PlaybackScreen() {
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
 
-  // skip HUD state
+  // skip HUD state (reserved)
   const [skipHUD, setSkipHUD] = useState<{ side: 'left' | 'right'; total: number; shownAt: number } | null>(null);
   const skipHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showSkipHud = (side: 'left' | 'right', add: number) => {
@@ -759,14 +755,22 @@ export default function PlaybackScreen() {
   };
 
   const handleOverlayEventFromModule = (evt: OverlayEvent) => {
-    const actor: Actor = toActor(evt.actor);
+    const actor: Actor = toActor((evt as any).actor);
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
-    const points = typeof evt.value === 'number' ? evt.value : undefined;
+    const points = typeof (evt as any).value === 'number' ? (evt as any).value : undefined;
+
+    // FLATTEN META: take evt.meta as row.meta, plus label
+    const baseMeta = ((evt as any).meta ?? {}) as Record<string, any>;
+    const label = (evt as any).label;
+    const metaForRow = {
+      ...(label ? { label } : {}),
+      ...baseMeta,
+    };
 
     const tNow = Math.max(0, Math.min(getLiveDuration(), now || 0));
 
     if (editSubmode === 'add') {
-      const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: evt as any };
+      const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
       const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
       setEvents(next);
       saveSidecar(next);
@@ -777,7 +781,14 @@ export default function PlaybackScreen() {
     if (editSubmode === 'replace' && editTargetId) {
       const nextBase: EventRow[] = events.map(e =>
         e._id === editTargetId
-          ? ({ ...e, t: tNow, kind, points, actor, meta: evt as any } as EventRow)
+          ? ({
+              ...e,
+              t: tNow,
+              kind,
+              points,
+              actor,
+              meta: metaForRow,
+            } as EventRow)
           : e
       );
       const next: EventRow[] = accumulate(nextBase.sort((a, b) => a.t - b.t));
@@ -787,7 +798,7 @@ export default function PlaybackScreen() {
       return;
     }
 
-    const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: evt as any };
+    const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
     const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
     setEvents(next);
     saveSidecar(next);
@@ -797,12 +808,60 @@ export default function PlaybackScreen() {
   const moduleKey = `${(sport || '').toLowerCase()}:${(style || 'default').toLowerCase()}`;
   const ModuleCmp = ModuleRegistry[moduleKey];
 
+  // === COLOR MAPPING FOR BELT ===
+  // Use per-event myKidColor/opponentColor if present, then fall back.
   const colorForPill = useCallback(
     (e: EventRow) => {
-      const isHome = e.actor === 'home';
-      return isHome ? (homeColorIsGreen ? GREEN : RED) : homeColorIsGreen ? RED : GREEN;
+      const meta = (e.meta ?? {}) as any;
+      const inner = (meta.meta ?? {}) as any; // support older shape: meta.meta.myKidColor
+
+      const pickColor = (which: 'myKidColor' | 'opponentColor'): string | undefined => {
+        const raw = meta[which] ?? inner[which];
+        if (!raw) return undefined;
+        const v = String(raw).toLowerCase();
+        if (v === 'green') return GREEN;
+        if (v === 'red') return RED;
+        return undefined;
+      };
+
+      const mk = pickColor('myKidColor');
+      const ok = pickColor('opponentColor');
+
+      const isAthleteActor =
+        (e.actor === 'home' && homeIsAthlete) ||
+        (e.actor === 'opponent' && !homeIsAthlete);
+
+      // If per-event colors exist, use them
+      if (mk || ok) {
+        const athleteColor = mk;
+        const opponentColor = ok;
+
+        if (isAthleteActor && athleteColor) return athleteColor;
+        if (!isAthleteActor && opponentColor) return opponentColor;
+      }
+
+      // Fallback: color based on global "homeColorIsGreen" + who's the athlete
+      const colorIsGreen = homeColorIsGreen !== false; // default true
+      const athleteColor = colorIsGreen ? GREEN : RED;
+      const opponentColor = colorIsGreen ? RED : GREEN;
+
+      const kind = String(e.kind || '').toLowerCase();
+      const pts = typeof e.points === 'number' ? e.points : 0;
+
+      // Scoring events: my kid vs opponent
+      if (pts > 0) {
+        return isAthleteActor ? athleteColor : opponentColor;
+      }
+
+      // Penalties / stalling: treat as "bad" for my kid
+      if (PENALTYISH.has(kind)) {
+        return opponentColor;
+      }
+
+      // Neutral / unknown
+      return 'rgba(148,163,184,0.9)';
     },
-    [homeColorIsGreen]
+    [homeIsAthlete, homeColorIsGreen]
   );
 
   return (
@@ -906,9 +965,7 @@ export default function PlaybackScreen() {
               </Text>
             </Pressable>
 
-            {/* Top scrubber — behaves exactly like other chrome:
-                visible whenever chromeVisible is true (paused OR playing),
-                hides after the same timeout, reappears on tap. */}
+            {/* Top scrubber */}
             {chromeVisible && (
               <TopScrubber
                 current={now}
