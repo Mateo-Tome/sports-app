@@ -94,14 +94,6 @@ const abbrKind = (k?: string) => {
   }
 };
 
-function hexToRgba(hex: string, alpha: number) {
-  const clean = hex.replace('#', '');
-  const r = parseInt(clean.slice(0, 2), 16);
-  const g = parseInt(clean.slice(2, 4), 16);
-  const b = parseInt(clean.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
 const PENALTYISH = new Set(['stall', 'stalling', 'caution', 'penalty', 'warning']);
 
 function toActor(a: any): Actor {
@@ -215,7 +207,7 @@ function EventBelt({
   events: EventRow[];
   onSeek: (sec: number) => void;
   bottomInset: number;
-  colorFor: (e: EventRow) => string; // module or global can decide colors
+  colorFor: (e: EventRow) => string;
   onPillLongPress: (ev: EventRow) => void;
 }) {
   const screenW = Dimensions.get('window').width;
@@ -257,7 +249,7 @@ function EventBelt({
   useEffect(() => {
     if (!duration) return;
     if (userScrolling.current) return;
-    const playheadX = current * 10;
+    const playheadX = current * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
     const now = Date.now();
     if (now - lastAuto.current > 120) {
@@ -300,9 +292,9 @@ function EventBelt({
                 delayLongPress={280}
                 style={{
                   position: 'absolute',
-                  left: it.x - 64 / 2,
+                  left: it.x - PILL_W / 2,
                   top: it.y,
-                  width: 64,
+                  width: PILL_W,
                   height: 28,
                   borderRadius: 999,
                   alignItems: 'center',
@@ -314,10 +306,11 @@ function EventBelt({
                 }}
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
-                  {`${abbrKind(it.e.kind)}${
-                    typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''
-                  }`}
-                </Text>
+  {`${abbrKind(it.e.kind)}${
+    typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''
+  }`}
+</Text>
+
                 <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>{fmt(it.e.t)}</Text>
               </Pressable>
             );
@@ -400,12 +393,9 @@ function QuickEditSheet({
 }
 
 /* ==================== MODULE REGISTRY ==================== */
-// A simple resolver so each sport/style can render a different module.
 const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
   'wrestling:folkstyle': WrestlingFolkstylePlaybackModule,
   'baseball:hitting': BaseballHittingPlaybackModule,
-  // 'baseball:pitching':  BaseballPitchingPlaybackModule,
-  // 'volleyball:default': VolleyballPlaybackModule,
 };
 
 /* ==================== screen ==================== */
@@ -426,7 +416,6 @@ export default function PlaybackScreen() {
   const [debugMsg, setDebugMsg] = useState<string>('');
   const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(undefined);
 
-  // Loaded from sidecar recorded at capture time:
   const [homeIsAthlete, setHomeIsAthlete] = useState<boolean>(true);
   const [homeColorIsGreen, setHomeColorIsGreen] = useState<boolean>(true);
   const [sport, setSport] = useState<string | undefined>(undefined);
@@ -435,13 +424,13 @@ export default function PlaybackScreen() {
   const [overlayOn, setOverlayOn] = useState(true);
   const [isScrubbing, setIsScrubbing] = useState(false);
 
-  // edit state (shared)
+  // edit state
   const [editMode, setEditMode] = useState(false);
   const [editSubmode, setEditSubmode] = useState<'add' | 'replace' | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
 
-  // skip HUD
+  // skip HUD state
   const [skipHUD, setSkipHUD] = useState<{ side: 'left' | 'right'; total: number; shownAt: number } | null>(null);
   const skipHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showSkipHud = (side: 'left' | 'right', add: number) => {
@@ -517,7 +506,6 @@ export default function PlaybackScreen() {
     } catch {}
   };
 
-  // accumulate and produce running score (used for belt + live chip)
   const accumulate = (evts: EventRow[]) => {
     let h = 0,
       o = 0;
@@ -669,7 +657,7 @@ export default function PlaybackScreen() {
     })();
   }, [videoPath]);
 
-  // live score (shared)
+  // live score
   const liveScore = useMemo(() => {
     if (!events.length) return { home: 0, opponent: 0 };
     let s = { home: 0, opponent: 0 };
@@ -681,19 +669,7 @@ export default function PlaybackScreen() {
     return s;
   }, [events, now]);
 
-  const myScore = homeIsAthlete ? liveScore.home : liveScore.opponent;
-  const oppScore = homeIsAthlete ? liveScore.opponent : liveScore.home;
-
-  const outcomeChip = useMemo(() => {
-    if (!finalScore) return null;
-    const a = homeIsAthlete ? finalScore.home : finalScore.opponent;
-    const b = homeIsAthlete ? finalScore.opponent : finalScore.home;
-    const out = a > b ? 'W' : a < b ? 'L' : 'T';
-    const color = out === 'W' ? GREEN : out === 'L' ? RED : '#f59e0b';
-    return { out, a, b, color };
-  }, [finalScore, homeIsAthlete]);
-
-  // chrome show/hide
+  // chrome show/hide (scrubber + play/pause + edit use this)
   const [chromeVisible, setChromeVisible] = useState(true);
   const HIDE_AFTER_MS = 2200;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -719,7 +695,7 @@ export default function PlaybackScreen() {
     return clearHideTimer;
   }, [isPlaying, showChrome, editMode]);
 
-  // Tap zones
+  // Tap zones (double tap skip; single tap shows chrome)
   const lastTapLeft = useRef(0);
   const lastTapRight = useRef(0);
   const DOUBLE_MS = 260;
@@ -811,7 +787,6 @@ export default function PlaybackScreen() {
       return;
     }
 
-    // If module emits without calling enterAddMode/enterReplaceMode, treat as add.
     const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: evt as any };
     const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
     setEvents(next);
@@ -822,7 +797,6 @@ export default function PlaybackScreen() {
   const moduleKey = `${(sport || '').toLowerCase()}:${(style || 'default').toLowerCase()}`;
   const ModuleCmp = ModuleRegistry[moduleKey];
 
-  // Shared belt color: default wrestling convention using sidecar visual flag.
   const colorForPill = useCallback(
     (e: EventRow) => {
       const isHome = e.actor === 'home';
@@ -871,10 +845,10 @@ export default function PlaybackScreen() {
           </Pressable>
         )}
 
-        {/* Interaction layers (disabled during edit) */}
+        {/* Interaction layers */}
         {!editMode && (
           <>
-            {/* TWO half-screen tap zones */}
+            {/* tap zones */}
             <View
               style={{
                 position: 'absolute',
@@ -910,7 +884,7 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
             </Pressable>
 
-            {/* overlay toggle (shared) */}
+            {/* overlay toggle */}
             <Pressable
               onPress={() => setOverlayOn(v => !v)}
               style={{
@@ -932,93 +906,76 @@ export default function PlaybackScreen() {
               </Text>
             </Pressable>
 
-            {/* FINAL outcome chip (if score-y sports want it) */}
-            {outcomeChip && (
-              <View
-                pointerEvents="none"
-                style={{
-                  position: 'absolute',
-                  top: insets.top + SAFE_MARGIN,
-                  left: 0,
-                  right: 0,
-                  alignItems: 'center',
+            {/* Top scrubber — behaves exactly like other chrome:
+                visible whenever chromeVisible is true (paused OR playing),
+                hides after the same timeout, reappears on tap. */}
+            {chromeVisible && (
+              <TopScrubber
+                current={now}
+                duration={dur}
+                onSeek={t => {
+                  onSeek(t);
+                  showChrome();
                 }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 999,
-                    backgroundColor: hexToRgba(outcomeChip.color, 0.22),
-                    borderWidth: 1,
-                    borderColor: hexToRgba(outcomeChip.color, 0.4),
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '900' }}>
-                    {outcomeChip.out} {outcomeChip.a}–{outcomeChip.b}
-                  </Text>
-                </View>
-              </View>
+                insets={insets}
+                visible={true}
+                onInteracting={setIsScrubbing}
+              />
             )}
 
-            {/* LIVE score chip (non-blocking for modules) */}
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: insets.top + 50,
-                left: insets.left + SAFE_MARGIN,
-                right: insets.right + SAFE_MARGIN,
-              }}
-            >
-              <View
+            {/* Bottom-left Edit button */}
+            {!atVideoEnd && !editMode && (
+              <Pressable
+                onPress={() => {
+                  enterAddMode();
+                  showChrome();
+                }}
                 style={{
                   position: 'absolute',
-                  left: 0,
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 12,
-                  backgroundColor: hexToRgba(GREEN, 0.22),
+                  left: insets.left + SAFE_MARGIN,
+                  bottom: insets.bottom + (overlayOn ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(245,158,11,0.95)',
                   borderWidth: 1,
-                  borderColor: hexToRgba(GREEN, 0.4),
+                  borderColor: 'rgba(0,0,0,0.4)',
+                  opacity: chromeVisible ? 1 : 0,
                 }}
+                pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: 'white', fontWeight: '900' }}>
-                  {displayAthlete} • {homeIsAthlete ? myScore : oppScore}
-                </Text>
-              </View>
-              <View
+                <Text style={{ color: '#111', fontWeight: '900' }}>Edit</Text>
+              </Pressable>
+            )}
+
+            {/* Bottom-right Play/Pause button */}
+            {!atVideoEnd && (
+              <Pressable
+                onPress={() => {
+                  onPlayPause();
+                  showChrome();
+                }}
                 style={{
                   position: 'absolute',
-                  right: 0,
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 12,
-                  backgroundColor: hexToRgba(RED, 0.22),
+                  right: insets.right + SAFE_MARGIN,
+                  bottom: insets.bottom + (overlayOn ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(0,0,0,0.6)',
                   borderWidth: 1,
-                  borderColor: hexToRgba(RED, 0.4),
+                  borderColor: 'rgba(255,255,255,0.25)',
+                  opacity: chromeVisible ? 1 : 0,
                 }}
+                pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: 'white', fontWeight: '900' }}>
-                  Opponent • {homeIsAthlete ? oppScore : myScore}
+                <Text style={{ color: '#fff', fontWeight: '900' }}>
+                  {isPlaying ? '❚❚ Pause' : '▶ Play'}
                 </Text>
-              </View>
-            </View>
+              </Pressable>
+            )}
 
-            {/* Top scrub bar (shared) */}
-            <TopScrubber
-              current={now}
-              duration={dur}
-              onSeek={t => {
-                onSeek(t);
-                showChrome();
-              }}
-              insets={insets}
-              visible={chromeVisible}
-              onInteracting={setIsScrubbing}
-            />
-
-            {/* bottom event belt (shared) */}
+            {/* bottom event belt */}
             {overlayOn && (
               <EventBelt
                 duration={dur}
@@ -1031,7 +988,7 @@ export default function PlaybackScreen() {
               />
             )}
 
-            {/* Quick Edit (Replace/Delete) (shared) */}
+            {/* Quick Edit sheet */}
             <QuickEditSheet
               visible={!!quickEditFor}
               event={quickEditFor}
@@ -1041,7 +998,7 @@ export default function PlaybackScreen() {
                 if (!quickEditFor) return;
                 const next: EventRow[] = events.filter(e => e._id !== quickEditFor._id);
                 const ordered = [...next].sort((a, b) => a.t - b.t);
-                const withScores = ordered.map(e => e); // accumulate will happen inside saveSidecar
+                const withScores = ordered.map(e => e);
                 setEvents(withScores);
                 saveSidecar(withScores);
                 setQuickEditFor(null);
@@ -1062,7 +1019,7 @@ export default function PlaybackScreen() {
           </>
         )}
 
-        {/* === SPORT-SPECIFIC MODULE LAYER === */}
+        {/* SPORT-SPECIFIC MODULE */}
         {ModuleCmp && (
           <ModuleCmp
             now={now}
@@ -1082,6 +1039,7 @@ export default function PlaybackScreen() {
             finalScore={finalScore}
             editMode={editMode}
             editSubmode={editSubmode}
+            athleteName={displayAthlete}
           />
         )}
 
@@ -1102,7 +1060,6 @@ export default function PlaybackScreen() {
                 backgroundColor: 'rgba(0,0,0,0.15)',
               }}
             />
-            {/* Tap to exit */}
             <Pressable
               onPress={() => {
                 setEditMode(false);

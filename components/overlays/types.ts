@@ -1,25 +1,38 @@
-// Shared overlay types
+// components/overlays/types.ts
 
-export type Actor = 'home' | 'opponent' | 'neutral';
+export type OverlayActor = 'home' | 'opponent' | 'neutral';
 
 export type OverlayEvent = {
-  key: string;                 // normalized action key (e.g., 'takedown', 'nearfall')
-  label?: string;              // display label (e.g., 'T3', 'NF')
-  value?: number;              // points (2/3/4 etc). Omit for non-scoring like stalling
-  actor?: Actor;               // who the action belongs to
-  [k: string]: any;            // any extra metadata
+  actor?: OverlayActor;
+  key?: string;
+  kind?: string;
+  value?: number;
+  label?: string;
+  winBy?: string;
+  [k: string]: any;
+};
+
+export type OverlayScore = {
+  home: number;
+  opponent: number;
 };
 
 export type OverlayProps = {
+  /** Is the camera actively recording right now? */
   isRecording: boolean;
-  onEvent: (evt: OverlayEvent) => void;
-  getCurrentTSec: () => number;
+
+  /** Sport key, e.g. "wrestling", "baseball" */
   sport: string;
+
+  /** Style/variant key, e.g. "folkstyle", "hitting" */
   style: string;
-  isPaused?: boolean;
-  // NEW: live running score (from camera)
-  score?: { home: number; opponent: number };
+
+  /** Optional live score while recording (if that sport uses it) */
+  score?: OverlayScore;
+
+  /** Get current time (in seconds) from the recording screen */
+  getCurrentTSec: () => number;
+
+  /** Called whenever the overlay fires an event (takedown, pin, hit, etc.) */
+  onEvent: (evt: OverlayEvent) => void;
 };
-
-
-
