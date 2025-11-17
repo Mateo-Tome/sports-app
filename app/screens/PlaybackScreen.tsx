@@ -925,12 +925,31 @@ export default function PlaybackScreen() {
   const ModuleCmp = ModuleRegistry[moduleKey];
 
   // === COLOR MAPPING FOR BELT ===
-  // Use per-event myKidColor/opponentColor if present, then fall back.
+  // 1) If a sport explicitly gives us a color (pillColor / color / tint / etc.), use that.
+  // 2) Otherwise, fall back to the legacy wrestling-style logic (myKidColor + homeColorIsGreen).
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
-      const inner = (meta.meta ?? {}) as any; // support older shape: meta.meta.myKidColor
+      const inner = (meta.meta ?? {}) as any; // support older nested shape
 
+      // --- Step 1: sport-agnostic explicit colors ---
+      const explicit =
+        meta.pillColor ??
+        inner.pillColor ??
+        meta.color ??
+        inner.color ??
+        meta.tint ??
+        inner.tint ??
+        meta.buttonColor ??
+        inner.buttonColor ??
+        meta.chipColor ??
+        inner.chipColor;
+
+      if (typeof explicit === 'string' && explicit.trim().length > 0) {
+        return explicit;
+      }
+
+      // --- Step 2: legacy wrestling-style fallback using myKidColor/opponentColor ---
       const pickColor = (which: 'myKidColor' | 'opponentColor'): string | undefined => {
         const raw = meta[which] ?? inner[which];
         if (!raw) return undefined;
