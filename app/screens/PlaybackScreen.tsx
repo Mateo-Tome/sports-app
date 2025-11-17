@@ -22,6 +22,9 @@ const BELT_H = 76;
 const EDGE_PAD = 24;
 const SAFE_MARGIN = 12;
 
+/* === overlay visibility modes (score vs belt) === */
+type OverlayMode = 'all' | 'noBelt' | 'noScore' | 'off';
+
 /* ==================== shared types ==================== */
 type Actor = 'home' | 'opponent' | 'neutral';
 type EventRow = {
@@ -388,6 +391,96 @@ function QuickEditSheet({
   );
 }
 
+/* ==================== Overlay mode popup ==================== */
+function OverlayModeMenu({
+  visible,
+  mode,
+  onSelect,
+  onClose,
+  insets,
+}: {
+  visible: boolean;
+  mode: OverlayMode;
+  onSelect: (m: OverlayMode) => void;
+  onClose: () => void;
+  insets: { top: number; right: number; bottom: number; left: number };
+}) {
+  if (!visible) return null;
+
+  // super short labels: All / Score / Belt / Off
+  const options: { key: OverlayMode; label: string }[] = [
+    { key: 'all', label: 'All' },       // score + belt
+    { key: 'noBelt', label: 'Score' },  // score only
+    { key: 'noScore', label: 'Belt' },  // belt only
+    { key: 'off', label: 'Off' },       // everything off
+  ];
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 70,
+      }}
+    >
+      <Pressable
+        onPress={onClose}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+        }}
+      />
+
+      <View
+        pointerEvents="auto"
+        style={{
+          position: 'absolute',
+          top: insets.top + SAFE_MARGIN + 36,
+          right: insets.right + SAFE_MARGIN,
+          borderRadius: 12,
+          backgroundColor: 'rgba(0,0,0,0.9)',
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.25)',
+          paddingVertical: 6,
+          paddingHorizontal: 8,
+          minWidth: 120, // much narrower than before
+        }}
+      >
+        {options.map(opt => {
+          const isActive = opt.key === mode;
+          return (
+            <Pressable
+              key={opt.key}
+              onPress={() => {
+                onSelect(opt.key);
+              }}
+              style={{
+                paddingVertical: 4,
+                paddingHorizontal: 6,
+                borderRadius: 8,
+                backgroundColor: isActive ? 'rgba(59,130,246,0.35)' : 'transparent',
+                marginBottom: 2,
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+
 /* ==================== MODULE REGISTRY ==================== */
 const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
   'wrestling:folkstyle': WrestlingFolkstylePlaybackModule,
@@ -417,7 +510,30 @@ export default function PlaybackScreen() {
   const [sport, setSport] = useState<string | undefined>(undefined);
   const [style, setStyle] = useState<string | undefined>(undefined);
 
-  const [overlayOn, setOverlayOn] = useState(true);
+  // overlay visibility mode (drives ALL sports)
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
+  const [overlayMenuOpen, setOverlayMenuOpen] = useState(false);
+
+  // derived flags
+  // overlayOn = sport-specific overlays (scoreboard, pills, etc.)
+  const overlayOn = overlayMode === 'all' || overlayMode === 'noBelt';
+  // event belt visibility is driven separately
+  const showEventBelt = overlayMode === 'all' || overlayMode === 'noScore';
+
+  const overlayLabel = useMemo(() => {
+    switch (overlayMode) {
+      case 'all':
+        return 'Overlay: All';
+      case 'noBelt':
+        return 'Score Only';
+      case 'noScore':
+        return 'Belt Only';
+      case 'off':
+      default:
+        return 'Overlay: Off';
+    }
+  }, [overlayMode]);
+
   const [isScrubbing, setIsScrubbing] = useState(false);
 
   // edit state
@@ -724,7 +840,7 @@ export default function PlaybackScreen() {
   };
 
   const SCRUB_RESERVED_TOP = insets.top + 150;
-  const tapZoneBottomGap = (overlayOn ? BELT_H : 0) + insets.bottom;
+  const tapZoneBottomGap = (showEventBelt ? BELT_H : 0) + insets.bottom;
 
   // ====== editing from modules ======
   const genId = () => Math.random().toString(36).slice(2, 9);
@@ -943,9 +1059,9 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
             </Pressable>
 
-            {/* overlay toggle */}
+            {/* overlay toggle (opens mode popup) */}
             <Pressable
-              onPress={() => setOverlayOn(v => !v)}
+              onPress={() => setOverlayMenuOpen(v => !v)}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
@@ -961,9 +1077,21 @@ export default function PlaybackScreen() {
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
               <Text style={{ color: 'white', fontWeight: '800' }}>
-                {overlayOn ? 'Overlay: On' : 'Overlay: Off'}
+                {overlayLabel} ▾
               </Text>
             </Pressable>
+
+            {/* Overlay mode menu */}
+            <OverlayModeMenu
+              visible={overlayMenuOpen && chromeVisible}
+              mode={overlayMode}
+              insets={insets}
+              onClose={() => setOverlayMenuOpen(false)}
+              onSelect={m => {
+                setOverlayMode(m);
+                setOverlayMenuOpen(false);
+              }}
+            />
 
             {/* Top scrubber */}
             {chromeVisible && (
@@ -990,7 +1118,7 @@ export default function PlaybackScreen() {
                 style={{
                   position: 'absolute',
                   left: insets.left + SAFE_MARGIN,
-                  bottom: insets.bottom + (overlayOn ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
                   paddingHorizontal: 14,
                   paddingVertical: 10,
                   borderRadius: 999,
@@ -1015,7 +1143,7 @@ export default function PlaybackScreen() {
                 style={{
                   position: 'absolute',
                   right: insets.right + SAFE_MARGIN,
-                  bottom: insets.bottom + (overlayOn ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
                   paddingHorizontal: 14,
                   paddingVertical: 10,
                   borderRadius: 999,
@@ -1033,7 +1161,7 @@ export default function PlaybackScreen() {
             )}
 
             {/* bottom event belt */}
-            {overlayOn && (
+            {showEventBelt && (
               <EventBelt
                 duration={dur}
                 current={now}
