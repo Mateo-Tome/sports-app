@@ -89,7 +89,7 @@ export default function BaseballHittingOverlay({
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
 
-  // layout padding
+  // layout paddings to avoid header + bottom controls from camera screen
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
   const TOP = insets.top + 52;
@@ -100,20 +100,20 @@ export default function BaseballHittingOverlay({
   const GAP = 10;
   const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
   const SIZE = Math.max(44, Math.min(70, maxSize));
-  const BTN_SIZE = Math.round(SIZE * 0.75);
+  const BTN_SIZE = Math.round(SIZE * 0.75); // 25% smaller
 
   // colors
-  const BALL_COLOR = '#22c55e';
-  const STRIKE_COLOR = '#ef4444';
-  const FOUL_COLOR = '#eab308';
-  const HIT_COLOR = '#22c55e';
-  const OUT_COLOR = '#f97316';
-  const HR_COLOR = '#eab308';
-  const WALK_COLOR = '#0ea5e9';
-  const K_COLOR = '#CF1020';
+  const BALL_COLOR = '#22c55e';     // green
+  const STRIKE_COLOR = '#ef4444';   // red
+  const FOUL_COLOR = '#eab308';     // yellow
+  const HIT_COLOR = '#22c55e';      // green
+  const OUT_COLOR = '#f97316';      // orange
+  const HR_COLOR = '#eab308';       // yellow/gold
+  const WALK_COLOR = '#0ea5e9';     // cyan/blue for walk
+  const K_COLOR = '#CF1020';        // fire truck red
   const FRAME_COLOR = 'rgba(255,255,255,0.35)';
 
-  // map keys to pill colors
+  // key → belt color
   const KEY_COLOR: Record<string, string> = {
     ball: BALL_COLOR,
     strike: STRIKE_COLOR,
@@ -132,10 +132,11 @@ export default function BaseballHittingOverlay({
   const [outs, setOuts] = React.useState(0);
 
   // popups
-  const [resultChooserOpen, setResultChooserOpen] = React.useState(false);
-  const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false);
+  const [resultChooserOpen, setResultChooserOpen] = React.useState(false);     // combined Hit + Out
+  const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false); // K popup
   const [hrConfirmOpen, setHrConfirmOpen] = React.useState(false);
-  const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
+  const [toast, setToast] =
+    React.useState<null | { text: string; tint: string }>(null);
 
   const showToast = (text: string, tint: string) => setToast({ text, tint });
   const CHOOSER_TOP = isPortrait ? TOP + 40 : TOP + 10;
@@ -146,7 +147,7 @@ export default function BaseballHittingOverlay({
     setFouls(0);
   };
 
-  // UPDATED FIRE — adds pillColor + tint + chipColor for the BELT
+  // fire event → BELT (with color meta)
   const fire = (
     key: string,
     label: string,
@@ -167,7 +168,6 @@ export default function BaseballHittingOverlay({
         tint: color,
         buttonColor: color,
         chipColor: color,
-
         balls,
         strikes,
         fouls,
@@ -177,11 +177,11 @@ export default function BaseballHittingOverlay({
     });
   };
 
-  // ---- Handlers ----
+  // --- Count actions -------------------------------------------------------
 
   const onBall = () => {
     if (!isRecording) return;
-    setBalls(prev => {
+    setBalls((prev) => {
       const next = Math.min(prev + 1, 4);
       fire('ball', 'Ball', { ballsAfter: next });
       showToast(`Ball ${next}`, BALL_COLOR);
@@ -191,7 +191,7 @@ export default function BaseballHittingOverlay({
 
   const onStrike = () => {
     if (!isRecording) return;
-    setStrikes(prev => {
+    setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('strike', 'Strike', { strikesAfter: next });
       showToast(`Strike ${next}`, STRIKE_COLOR);
@@ -201,9 +201,9 @@ export default function BaseballHittingOverlay({
 
   const onFoul = () => {
     if (!isRecording) return;
-    setFouls(prevFouls => {
+    setFouls((prevFouls) => {
       let nextStrikes: number;
-      setStrikes(prevStrikes => {
+      setStrikes((prevStrikes) => {
         nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
         fire('foul', 'Foul Ball', {
           foulsAfter: prevFouls + 1,
@@ -219,7 +219,7 @@ export default function BaseballHittingOverlay({
 
   const incrementOuts = (type: string) => {
     if (!isRecording) return;
-    setOuts(prev => {
+    setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('out', 'Out', { type, outsAfter: next });
       showToast(type, OUT_COLOR);
@@ -239,7 +239,7 @@ export default function BaseballHittingOverlay({
         : type === 'triple'
         ? 'Triple'
         : 'Bunt',
-      HIT_COLOR
+      HIT_COLOR,
     );
     resetCount();
   };
@@ -260,21 +260,36 @@ export default function BaseballHittingOverlay({
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
     if (!isRecording) return;
-    setOuts(prev => {
+    setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('strikeout', 'Strikeout', { kind, outsAfter: next });
-      showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', K_COLOR);
+      fire('strikeout', 'Strikeout', {
+        kind,
+        outsAfter: next,
+      });
+      const label = kind === 'swinging' ? 'K Swinging' : 'K Looking';
+      showToast(label, K_COLOR);
       return next;
     });
     resetCount();
   };
 
-  // ---- UI COMPONENTS ----
+  // --- Shared button components -------------------------------------------
 
-  const Circle = ({ label, bg, onPress }: any) => (
+  const Circle = ({
+    label,
+    bg,
+    onPress,
+  }: {
+    label: string;
+    bg: string;
+    onPress: () => void;
+  }) => (
     <TouchableOpacity
       disabled={!isRecording}
-      onPress={() => isRecording && onPress()}
+      onPress={() => {
+        if (!isRecording) return;
+        onPress();
+      }}
       style={{
         width: BTN_SIZE,
         height: BTN_SIZE,
@@ -324,9 +339,290 @@ export default function BaseballHittingOverlay({
     </View>
   );
 
-  // popups (unchanged — omitted for brevity, they are the same in your file)
+  // --- Combined Hit + Out chooser -----------------------------------------
 
-  // ---- Count bar ----
+  const HitOutChooser = () => {
+    if (!resultChooserOpen) return null;
+
+    const HitChip = ({
+      label,
+      type,
+    }: {
+      label: string;
+      type: 'single' | 'double' | 'triple' | 'bunt';
+    }) => (
+      <TouchableOpacity
+        onPress={() => {
+          setResultChooserOpen(false);
+          recordHit(type);
+        }}
+        style={{
+          height: 40,
+          paddingHorizontal: 12,
+          borderRadius: 999,
+          backgroundColor: HIT_COLOR,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginHorizontal: 6,
+          marginVertical: 4,
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 },
+          shadowRadius: 3,
+          elevation: 2,
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
+      </TouchableOpacity>
+    );
+
+    const OutChip = ({ label }: { label: string }) => (
+      <TouchableOpacity
+        onPress={() => {
+          setResultChooserOpen(false);
+          incrementOuts(label);
+        }}
+        style={{
+          height: 40,
+          paddingHorizontal: 14,
+          borderRadius: 999,
+          backgroundColor: OUT_COLOR,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginHorizontal: 6,
+          marginVertical: 4,
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 },
+          shadowRadius: 3,
+          elevation: 2,
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <PopupFrame>
+        <View style={{ alignItems: 'center' }}>
+          <Text
+            style={{
+              color: 'white',
+              fontWeight: '900',
+              fontSize: 14,
+              marginBottom: 6,
+              textAlign: 'center',
+            }}
+          >
+            Select Result
+          </Text>
+
+          {/* Hits */}
+          <Text
+            style={{
+              color: 'rgba(255,255,255,0.8)',
+              fontWeight: '700',
+              marginTop: 4,
+              marginBottom: 2,
+            }}
+          >
+            Hits
+          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <HitChip label="Single" type="single" />
+            <HitChip label="Double" type="double" />
+            <HitChip label="Triple" type="triple" />
+            <HitChip label="Bunt" type="bunt" />
+          </View>
+
+          {/* Outs */}
+          <Text
+            style={{
+              color: 'rgba(255,255,255,0.8)',
+              fontWeight: '700',
+              marginTop: 8,
+              marginBottom: 2,
+            }}
+          >
+            Outs
+          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <OutChip label="Ground Out" />
+            <OutChip label="Flyout" />
+            <OutChip label="Fielder's Choice" />
+          </View>
+
+          <TouchableOpacity
+            onPress={() => setResultChooserOpen(false)}
+            style={{
+              marginTop: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: 'rgba(255,255,255,0.1)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </PopupFrame>
+    );
+  };
+
+  // --- Strikeout chooser (K) -----------------------------------------------
+
+  const StrikeoutChooser = () => {
+    if (!strikeoutChooserOpen) return null;
+
+    const KChip = ({
+      label,
+      kind,
+    }: {
+      label: string;
+      kind: 'swinging' | 'looking';
+    }) => (
+      <TouchableOpacity
+        onPress={() => {
+          setStrikeoutChooserOpen(false);
+          recordStrikeout(kind);
+        }}
+        style={{
+          height: 40,
+          paddingHorizontal: 14,
+          borderRadius: 999,
+          backgroundColor: K_COLOR,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginHorizontal: 6,
+          marginVertical: 4,
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowOffset: { width: 0, height: 2 },
+          shadowRadius: 3,
+          elevation: 2,
+        }}
+      >
+        <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <PopupFrame>
+        <View style={{ alignItems: 'center' }}>
+          <Text
+            style={{
+              color: 'white',
+              fontWeight: '900',
+              fontSize: 14,
+              marginBottom: 6,
+              textAlign: 'center',
+            }}
+          >
+            Strikeout Type
+          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <KChip label="K Swinging" kind="swinging" />
+            <KChip label="K Looking" kind="looking" />
+          </View>
+          <TouchableOpacity
+            onPress={() => setStrikeoutChooserOpen(false)}
+            style={{
+              marginTop: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: 'rgba(255,255,255,0.1)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </PopupFrame>
+    );
+  };
+
+  // --- Homerun confirm -----------------------------------------------------
+
+  const HomerunConfirm = () => {
+    if (!hrConfirmOpen) return null;
+
+    return (
+      <PopupFrame>
+        <View style={{ alignItems: 'center' }}>
+          <Text
+            style={{
+              color: 'white',
+              fontWeight: '900',
+              fontSize: 14,
+              marginBottom: 10,
+              textAlign: 'center',
+            }}
+          >
+            Confirm Home Run?
+          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => setHrConfirmOpen(false)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 999,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                borderWidth: 1,
+                borderColor: FRAME_COLOR,
+                marginRight: 8,
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setHrConfirmOpen(false);
+                recordHomerun();
+              }}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 999,
+                backgroundColor: HR_COLOR,
+              }}
+            >
+              <Text style={{ color: '#111', fontWeight: '900' }}>Confirm HR</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </PopupFrame>
+    );
+  };
+
+  // --- Count bar at top center --------------------------------------------
 
   const CountBar = () => (
     <View
@@ -351,17 +647,25 @@ export default function BaseballHittingOverlay({
       >
         <Text style={{ fontSize: 14 }}>
           <Text style={{ color: 'white', fontWeight: '800' }}>Balls: </Text>
-          <Text style={{ color: BALL_COLOR, fontWeight: '900' }}>{balls}</Text>
-          <Text>   </Text>
+          <Text style={{ color: BALL_COLOR, fontWeight: '900' }}>
+            {balls}
+          </Text>
+          <Text style={{ color: 'white' }}>   </Text>
           <Text style={{ color: 'white', fontWeight: '800' }}>Strikes: </Text>
-          <Text style={{ color: STRIKE_COLOR, fontWeight: '900' }}>{strikes}</Text>
-          <Text>   </Text>
+          <Text style={{ color: STRIKE_COLOR, fontWeight: '900' }}>
+            {strikes}
+          </Text>
+          <Text style={{ color: 'white' }}>   </Text>
           <Text style={{ color: 'white', fontWeight: '800' }}>Fouls: </Text>
-          <Text style={{ color: FOUL_COLOR, fontWeight: '900' }}>{fouls}</Text>
+          <Text style={{ color: FOUL_COLOR, fontWeight: '900' }}>
+            {fouls}
+          </Text>
         </Text>
       </View>
     </View>
   );
+
+  // --- Layout: left & right stacks ----------------------------------------
 
   const LeftStack = () => (
     <View
@@ -395,24 +699,52 @@ export default function BaseballHittingOverlay({
       }}
     >
       <View style={{ gap: GAP }}>
-        <Circle label="Result" bg={HIT_COLOR} onPress={() => setResultChooserOpen(true)} />
-        <Circle label="K" bg={K_COLOR} onPress={() => setStrikeoutChooserOpen(true)} />
-        <Circle label="HR" bg={HR_COLOR} onPress={() => setHrConfirmOpen(true)} />
-        <Circle label="Walk" bg={WALK_COLOR} onPress={recordWalk} />
+        {/* Combined Hit + Out */}
+        <Circle
+          label="Result"
+          bg={HIT_COLOR}
+          onPress={() => setResultChooserOpen(true)}
+        />
+
+        {/* Strikeout K button */}
+        <Circle
+          label="K"
+          bg={K_COLOR}
+          onPress={() => setStrikeoutChooserOpen(true)}
+        />
+
+        <Circle
+          label="HR"
+          bg={HR_COLOR}
+          onPress={() => setHrConfirmOpen(true)}
+        />
+        <Circle
+          label="Walk"
+          bg={WALK_COLOR}
+          onPress={recordWalk}
+        />
       </View>
     </View>
   );
 
   return (
-    <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} pointerEvents="box-none">
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+      }}
+    >
       <CountBar />
 
-      {/* Popups */}
-      {resultChooserOpen && null /* keep yours here */}
-      {strikeoutChooserOpen && null /* keep yours here */}
-      {hrConfirmOpen && null /* keep yours here */}
+      <HitOutChooser />
+      <StrikeoutChooser />
+      <HomerunConfirm />
 
-      {toast && (
+      {toast ? (
         <FlashToast
           text={toast.text}
           tint={toast.tint}
@@ -420,7 +752,7 @@ export default function BaseballHittingOverlay({
           center
           onDone={() => setToast(null)}
         />
-      )}
+      ) : null}
 
       <LeftStack />
       <RightStack />
