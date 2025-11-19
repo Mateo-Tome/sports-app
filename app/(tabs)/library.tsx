@@ -1659,33 +1659,40 @@ export default function LibraryScreen() {
                       Edit Athlete
                     </Text>
                   </TouchableOpacity>
+{/* Upload disabled for TestFlight v1 */}
+{false && (
+  <View style={{ marginTop: 8, alignItems: 'center' }}>
+    <UploadButton
+      localUri={item.uri}
+      uploaded={!!uploaded}
+      sidecar={{
+        videoPath: item.uri,
+        athlete: item.athlete,
+        sport: item.sport,
+        createdAt: item.mtime ?? Date.now(),
+      }}
+      onUploaded={(key, url) => {
+        const mapKey = keyFor(item);
+        setUploadedMap((prev) => {
+          const next = {
+            ...prev,
+            [mapKey]: { key, url, at: Date.now() },
+          };
+          AsyncStorage.setItem(
+            UPLOADED_MAP_KEY,
+            JSON.stringify(next),
+          ).catch(() => {});
+          return next;
+        });
+      }}
+    />
+  </View>
+)}
 
-                  <View style={{ marginTop: 8, alignItems: 'center' }}>
-                    <UploadButton
-                      localUri={item.uri}
-                      uploaded={!!uploaded}
-                      sidecar={{
-                        videoPath: item.uri,
-                        athlete: item.athlete,
-                        sport: item.sport,
-                        createdAt: item.mtime ?? Date.now(),
-                      }}
-                      onUploaded={(key, url) => {
-                        const mapKey = keyFor(item);
-                        setUploadedMap((prev) => {
-                          const next = {
-                            ...prev,
-                            [mapKey]: { key, url, at: Date.now() },
-                          };
-                          AsyncStorage.setItem(
-                            UPLOADED_MAP_KEY,
-                            JSON.stringify(next),
-                          ).catch(() => {});
-                          return next;
-                        });
-                      }}
-                    />
-                  </View>
+
+
+
+
                 </View>
               </View>
             </View>
