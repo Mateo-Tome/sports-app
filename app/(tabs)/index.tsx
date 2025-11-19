@@ -36,8 +36,6 @@ function imagesMediaTypesLegacy(): any {
   return MT?.Images ?? MT?.images ?? undefined; // fallback to picker default if missing
 }
 
-
-
 async function ensurePickerPermissions(): Promise<boolean> {
   try {
     let cam = await ImagePicker.getCameraPermissionsAsync();
@@ -109,7 +107,6 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ['Cancel', 'Take Photo', 'Choose from Library'],
-          // cancel index
           cancelButtonIndex: 0,
           userInterfaceStyle: 'dark',
         },
@@ -214,6 +211,7 @@ export default function HomeAthletes() {
       console.log('athletes load error:', e);
     }
   }, []);
+
   useEffect(() => {
     load();
   }, [load]);
@@ -281,10 +279,13 @@ export default function HomeAthletes() {
   // ROUTE: Quick Record -> plain camera (no overlay)
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
-    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'plain', style: 'none' } });
+    router.push({
+      pathname: '/record/camera',
+      params: { athlete: 'Unassigned', sport: 'plain', style: 'none' },
+    });
   };
 
-  // ✅ ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
+  // ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
   const recordWithAthlete = async (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
     await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
@@ -338,7 +339,11 @@ export default function HomeAthletes() {
       if (kind === 'primary') {
         style = { ...base, backgroundColor: '#DC2626', borderColor: '#DC2626' }; // red-600
       } else if (kind === 'danger') {
-        style = { ...base, backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.35)' };
+        style = {
+          ...base,
+          backgroundColor: 'transparent',
+          borderColor: 'rgba(255,255,255,0.35)',
+        };
       } else {
         style = {
           ...base,
@@ -391,10 +396,19 @@ export default function HomeAthletes() {
             </View>
           )}
           <View style={{ flex: 1 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }} numberOfLines={1}>
+            <Text
+              style={{ color: 'white', fontSize: 18, fontWeight: '900' }}
+              numberOfLines={1}
+            >
               {a.name}
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
+            <Text
+              style={{
+                color: 'rgba(255,255,255,0.7)',
+                fontSize: 12,
+                marginTop: 2,
+              }}
+            >
               Record or manage athlete
             </Text>
           </View>
@@ -402,22 +416,42 @@ export default function HomeAthletes() {
 
         {/* Actions */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-          <ActionBtn label="Record" kind="primary" onPress={() => recordWithAthlete(a.name)} />
+          <ActionBtn
+            label="Record"
+            kind="primary"
+            onPress={() => recordWithAthlete(a.name)}
+          />
           <ActionBtn
             label={a.photoUri ? 'Change Photo' : 'Set Photo'}
             onPress={() => setPhotoForAthlete(a.id)}
           />
           <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
           {isWide ? (
-            <ActionBtn label="Delete" kind="danger" onPress={() => deleteAthleteShell(a.id)} />
+            <ActionBtn
+              label="Delete"
+              kind="danger"
+              onPress={() => deleteAthleteShell(a.id)}
+            />
           ) : (
             <ActionBtn label="More" onPress={openMore} />
           )}
         </View>
 
         {/* Rename modal */}
-        <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
+        <Modal
+          transparent
+          visible={editOpen}
+          animationType="fade"
+          onRequestClose={() => setEditOpen(false)}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              justifyContent: 'center',
+              padding: 24,
+            }}
+          >
             <View
               style={{
                 backgroundColor: '#121212',
@@ -427,7 +461,11 @@ export default function HomeAthletes() {
                 borderColor: 'rgba(255,255,255,0.15)',
               }}
             >
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Rename Athlete</Text>
+              <Text
+                style={{ color: 'white', fontSize: 18, fontWeight: '800' }}
+              >
+                Rename Athlete
+              </Text>
               <TextInput
                 value={renameInput}
                 onChangeText={setRenameInput}
@@ -443,7 +481,14 @@ export default function HomeAthletes() {
                   color: 'white',
                 }}
               />
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'flex-end',
+                  gap: 12,
+                  marginTop: 14,
+                }}
+              >
                 <TouchableOpacity
                   onPress={() => setEditOpen(false)}
                   style={{
@@ -453,16 +498,29 @@ export default function HomeAthletes() {
                     backgroundColor: 'rgba(255,255,255,0.12)',
                   }}
                 >
-                  <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+                  <Text
+                    style={{ color: 'white', fontWeight: '700' }}
+                  >
+                    Cancel
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
                     await renameAthlete(a.id, renameInput);
                     setEditOpen(false);
                   }}
-                  style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 999,
+                    backgroundColor: 'white',
+                  }}
                 >
-                  <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
+                  <Text
+                    style={{ color: 'black', fontWeight: '800' }}
+                  >
+                    Save
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -485,19 +543,36 @@ export default function HomeAthletes() {
           gap: 10,
         }}
       >
-        <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
+        <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>
+          Athletes
+        </Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
             onPress={recordNoAthlete}
-            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#DC2626' }}
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor: '#DC2626',
+            }}
           >
-            <Text style={{ color: 'white', fontWeight: '900' }}>Quick Record</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>
+              Quick Record
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setAddOpen(true)}
-            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: 'white',
+            }}
           >
-            <Text style={{ color: 'white', fontWeight: '900' }}>Add Athlete</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>
+              Add Athlete
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -509,19 +584,42 @@ export default function HomeAthletes() {
         renderItem={({ item }) => <AthleteCard a={item} />}
         refreshing={refreshing}
         onRefresh={onRefresh}
-        contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}
+        contentContainerStyle={{
+          paddingBottom: tabBarHeight + insets.bottom + 24,
+        }}
         scrollIndicatorInsets={{ bottom: tabBarHeight + insets.bottom }}
-        ListFooterComponent={<View style={{ height: tabBarHeight + insets.bottom + 8 }} />}
+        ListFooterComponent={
+          <View style={{ height: tabBarHeight + insets.bottom + 8 }} />
+        }
         ListEmptyComponent={
-          <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
+          <Text
+            style={{
+              color: 'white',
+              opacity: 0.7,
+              textAlign: 'center',
+              marginTop: 40,
+            }}
+          >
             No athletes yet. Tap “Add Athlete”, then “Record”.
           </Text>
         }
       />
 
       {/* Add Athlete Modal */}
-      <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
+      <Modal
+        visible={addOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddOpen(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
           <View
             style={{
               backgroundColor: '#121212',
@@ -531,8 +629,18 @@ export default function HomeAthletes() {
               borderColor: 'rgba(255,255,255,0.15)',
             }}
           >
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Add Athlete</Text>
-            <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>
+            <Text
+              style={{ color: 'white', fontSize: 18, fontWeight: '800' }}
+            >
+              Add Athlete
+            </Text>
+            <Text
+              style={{
+                color: 'white',
+                opacity: 0.7,
+                marginTop: 8,
+              }}
+            >
               Enter a name and (optionally) pick a photo.
             </Text>
             <TextInput
@@ -550,7 +658,14 @@ export default function HomeAthletes() {
                 color: 'white',
               }}
             />
-            <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View
+              style={{
+                marginTop: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
               {pendingPhoto ? (
                 <Image
                   source={{ uri: pendingPhoto }}
@@ -586,12 +701,21 @@ export default function HomeAthletes() {
                   borderColor: 'white',
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '800' }}>
+                <Text
+                  style={{ color: 'white', fontWeight: '800' }}
+                >
                   {pendingPhoto ? 'Change Photo' : 'Pick Photo'}
                 </Text>
               </TouchableOpacity>
             </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                gap: 12,
+                marginTop: 14,
+              }}
+            >
               <TouchableOpacity
                 onPress={() => {
                   setAddOpen(false);
@@ -604,13 +728,26 @@ export default function HomeAthletes() {
                   backgroundColor: 'rgba(255,255,255,0.12)',
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+                <Text
+                  style={{ color: 'white', fontWeight: '700' }}
+                >
+                  Cancel
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={addAthlete}
-                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                  backgroundColor: 'white',
+                }}
               >
-                <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
+                <Text
+                  style={{ color: 'black', fontWeight: '800' }}
+                >
+                  Save
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
