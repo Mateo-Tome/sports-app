@@ -127,7 +127,13 @@ function inferActor(e: EventRow, homeIsAthlete: boolean): Actor {
   if (to) return to;
 
   const against =
-    norm(m.against) ?? norm(m.on) ?? norm(m.calledOn) ?? norm(m.penalized) ?? norm(m.who) ?? norm(m.side) ?? null;
+    norm(m.against) ??
+    norm(m.on) ??
+    norm(m.calledOn) ??
+    norm(m.penalized) ??
+    norm(m.who) ??
+    norm(m.side) ??
+    null;
   if (against === 'home') return 'opponent';
   if (against === 'opponent') return 'home';
 
@@ -214,8 +220,50 @@ function EventBelt({
   const MIN_GAP = 8;
   const PX_PER_SEC = 10;
   const BASE_LEFT = EDGE_PAD;
+  const SCROLL_GRACE_MS = 1200; // how long after manual scroll before auto-centering resumes
 
   const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
+
+  // helper: detect period marker + label (e.g. "P1", "P2", "P3")
+  const getPeriodLabel = (e: EventRow): string | null => {
+    const meta = (e.meta ?? {}) as any;
+    const label = String(meta.label ?? '').trim();
+
+    // 1) If we already have periodNumber / period, prefer that
+    const rawPeriod =
+      typeof meta.period === 'number'
+        ? meta.period
+        : typeof meta.periodNumber === 'number'
+        ? meta.periodNumber
+        : undefined;
+
+    if (typeof rawPeriod === 'number' && rawPeriod > 0) {
+      return `P${rawPeriod}`;
+    }
+
+    // 2) Try to infer from label: "P1", "P 2", "Period 3"
+    if (label) {
+      const fromLabel =
+        label.match(/^p\s*(\d+)/i) ||
+        label.match(/^period\s*(\d+)/i);
+
+      if (fromLabel && fromLabel[1]) {
+        const pn = parseInt(fromLabel[1], 10);
+        if (!Number.isNaN(pn) && pn > 0) {
+          return `P${pn}`;
+        }
+      }
+    }
+
+    // 3) Fallback to kind: "period1", "period 1"
+    const k = String(e.kind || '').toLowerCase();
+    const m = k.match(/^period\s*(\d+)/);
+    if (m && m[1]) {
+      return `P${m[1]}`;
+    }
+
+    return null;
+  };
 
   const layout = React.useMemo(() => {
     const twoLane = events.map(e =>
@@ -224,7 +272,15 @@ function EventBelt({
     const indexed = twoLane.map((e, i) => ({ e, i }));
     indexed.sort((a, b) => a.e.t - b.e.t || a.i - b.i);
     const lastLeft: Record<'home' | 'opponent', number> = { home: BASE_LEFT - PILL_W, opponent: BASE_LEFT - PILL_W };
-    const items: Array<{ e: EventRow; x: number; y: number; c: string }> = [];
+
+    const items: Array<{
+      e: EventRow;
+      x: number;
+      y: number;
+      c: string;
+      isPeriod: boolean;
+      periodLabel?: string;
+    }> = [];
 
     for (const { e } of indexed) {
       const lane = (e.actor === 'home' ? 'home' : 'opponent') as 'home' | 'opponent';
@@ -234,7 +290,15 @@ function EventBelt({
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP, BASE_LEFT);
       lastLeft[lane] = placedLeft;
 
-      items.push({ e, x: placedLeft + PILL_W / 2, y: rowY(lane), c: colorFor(e) });
+      const periodLabel = getPeriodLabel(e);
+      items.push({
+        e,
+        x: placedLeft + PILL_W / 2,
+        y: rowY(lane),
+        c: colorFor(e),
+        isPeriod: !!periodLabel,
+        periodLabel: periodLabel || undefined,
+      });
     }
     const maxCenter = items.length ? Math.max(...items.map(it => it.x)) : 0;
     const contentW = Math.max(screenW, maxCenter + PILL_W / 2 + EDGE_PAD);
@@ -244,13 +308,31 @@ function EventBelt({
   const scrollRef = useRef<ScrollView>(null);
   const userScrolling = useRef(false);
   const lastAuto = useRef(0);
+  const lastUserScroll = useRef(0);
+
+  const markUserScroll = () => {
+    userScrolling.current = true;
+    lastUserScroll.current = Date.now();
+  };
+  const endUserScroll = () => {
+    userScrolling.current = false;
+    lastUserScroll.current = Date.now();
+  };
 
   useEffect(() => {
     if (!duration) return;
+
+    const nowMs = Date.now();
+
+    // 1) If user is actively dragging, don't auto-center
     if (userScrolling.current) return;
+
+    // 2) If they *recently* scrolled (within grace window), don't auto-center yet
+    if (nowMs - lastUserScroll.current < SCROLL_GRACE_MS) return;
+
     const playheadX = current * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
-    const nowMs = Date.now();
+
     if (nowMs - lastAuto.current > 120) {
       scrollRef.current?.scrollTo({ x: targetX, animated: false });
       lastAuto.current = nowMs;
@@ -263,13 +345,20 @@ function EventBelt({
         ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
-        onScrollBeginDrag={() => (userScrolling.current = true)}
-        onScrollEndDrag={() => (userScrolling.current = false)}
-        onMomentumScrollBegin={() => (userScrolling.current = true)}
-        onMomentumScrollEnd={() => (userScrolling.current = false)}
+        onScrollBeginDrag={markUserScroll}
+        onScrollEndDrag={endUserScroll}
+        onMomentumScrollBegin={markUserScroll}
+        onMomentumScrollEnd={endUserScroll}
+        onScroll={() => {
+          // continuously refresh "lastUserScroll" while they drag
+          if (userScrolling.current) {
+            lastUserScroll.current = Date.now();
+          }
+        }}
         contentContainerStyle={{ height: BELT_H, paddingHorizontal: EDGE_PAD, width: layout.contentW + EDGE_PAD * 2 }}
       >
         <View style={{ width: layout.contentW, height: BELT_H }}>
+          {/* center rail */}
           <View
             style={{
               position: 'absolute',
@@ -283,6 +372,47 @@ function EventBelt({
           />
           {layout.items.map((it, i) => {
             const isPassed = current >= it.e.t;
+
+            // PERIOD = white pill centered between rows, pressable
+            if (it.isPeriod) {
+              const numLabel =
+                (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
+
+              return (
+                <Pressable
+                  key={`${it.e._id ?? 'period'}-${i}`}
+                  onPress={() => onSeek(it.e.t)}
+                  onLongPress={() => onPillLongPress(it.e)}
+                  delayLongPress={280}
+                  style={{
+                    position: 'absolute',
+                    left: it.x - PILL_W / 2,
+                    top: BELT_H / 2 - 14, // center vertically
+                    width: PILL_W,
+                    height: 28,
+                    borderRadius: 999,
+                    backgroundColor: '#ffffff',
+                    borderWidth: 1,
+                    borderColor: 'rgba(148,163,184,0.9)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: isPassed ? 0.9 : 1,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: '#111',
+                      fontWeight: '900',
+                      fontSize: 14,
+                    }}
+                  >
+                    {numLabel || it.periodLabel}
+                  </Text>
+                </Pressable>
+              );
+            }
+
+            // NORMAL EVENT PILL
             return (
               <Pressable
                 key={`${it.e._id ?? 'n'}-${i}`}
@@ -407,12 +537,11 @@ function OverlayModeMenu({
 }) {
   if (!visible) return null;
 
-  // super short labels: All / Score / Belt / Off
   const options: { key: OverlayMode; label: string }[] = [
-    { key: 'all', label: 'All' },       // score + belt
-    { key: 'noBelt', label: 'Score' },  // score only
-    { key: 'noScore', label: 'Belt' },  // belt only
-    { key: 'off', label: 'Off' },       // everything off
+    { key: 'all', label: 'All' },
+    { key: 'noBelt', label: 'Score' },
+    { key: 'noScore', label: 'Belt' },
+    { key: 'off', label: 'Off' },
   ];
 
   return (
@@ -450,7 +579,7 @@ function OverlayModeMenu({
           borderColor: 'rgba(255,255,255,0.25)',
           paddingVertical: 6,
           paddingHorizontal: 8,
-          minWidth: 120, // much narrower than before
+          minWidth: 120,
         }}
       >
         {options.map(opt => {
@@ -469,9 +598,7 @@ function OverlayModeMenu({
                 marginBottom: 2,
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
-                {opt.label}
-              </Text>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{opt.label}</Text>
             </Pressable>
           );
         })}
@@ -479,7 +606,6 @@ function OverlayModeMenu({
     </View>
   );
 }
-
 
 /* ==================== MODULE REGISTRY ==================== */
 const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
@@ -514,10 +640,7 @@ export default function PlaybackScreen() {
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
   const [overlayMenuOpen, setOverlayMenuOpen] = useState(false);
 
-  // derived flags
-  // overlayOn = sport-specific overlays (scoreboard, pills, etc.)
   const overlayOn = overlayMode === 'all' || overlayMode === 'noBelt';
-  // event belt visibility is driven separately
   const showEventBelt = overlayMode === 'all' || overlayMode === 'noScore';
 
   const overlayLabel = useMemo(() => {
@@ -684,7 +807,7 @@ export default function PlaybackScreen() {
     }
     const lastSlash = videoPath.lastIndexOf('/');
     const lastDot = videoPath.lastIndexOf('.');
-    const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
+       const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
     const guessSidecar = `${base}.json`;
 
     const tryReadSidecar = async (p: string) => {
@@ -739,8 +862,8 @@ export default function PlaybackScreen() {
         return;
       }
 
-      const hiA = parsed.homeIsAthlete !== false; // default true
-      const hcG = parsed.homeColorIsGreen !== false; // default true
+      const hiA = parsed.homeIsAthlete !== false;
+      const hcG = parsed.homeColorIsGreen !== false;
 
       setHomeIsAthlete(hiA);
       setHomeColorIsGreen(hcG);
@@ -781,7 +904,7 @@ export default function PlaybackScreen() {
     return s;
   }, [events, now]);
 
-  // chrome show/hide (scrubber + play/pause + edit use this)
+  // chrome show/hide
   const [chromeVisible, setChromeVisible] = useState(true);
   const HIDE_AFTER_MS = 2200;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -807,7 +930,7 @@ export default function PlaybackScreen() {
     return clearHideTimer;
   }, [isPlaying, showChrome, editMode]);
 
-  // Tap zones (double tap skip; single tap shows chrome)
+  // Tap zones (double tap skip)
   const lastTapLeft = useRef(0);
   const lastTapRight = useRef(0);
   const DOUBLE_MS = 260;
@@ -875,13 +998,29 @@ export default function PlaybackScreen() {
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
     const points = typeof (evt as any).value === 'number' ? (evt as any).value : undefined;
 
-    // FLATTEN META: take evt.meta as row.meta, plus label
     const baseMeta = ((evt as any).meta ?? {}) as Record<string, any>;
-    const label = (evt as any).label;
-    const metaForRow = {
-      ...(label ? { label } : {}),
+    const label = (evt as any).label as string | undefined;
+
+    const metaForRow: Record<string, any> = {
       ...baseMeta,
     };
+
+    if (label) {
+      metaForRow.label = label;
+
+      const periodMatch =
+        label.match(/^p\s*(\d+)/i) ||
+        label.match(/^period\s*(\d+)/i);
+
+      if (periodMatch && periodMatch[1]) {
+        const pn = parseInt(periodMatch[1], 10);
+        if (!Number.isNaN(pn)) {
+          if (metaForRow.periodNumber == null && metaForRow.period == null) {
+            metaForRow.periodNumber = pn;
+          }
+        }
+      }
+    }
 
     const tNow = Math.max(0, Math.min(getLiveDuration(), now || 0));
 
@@ -925,14 +1064,11 @@ export default function PlaybackScreen() {
   const ModuleCmp = ModuleRegistry[moduleKey];
 
   // === COLOR MAPPING FOR BELT ===
-  // 1) If a sport explicitly gives us a color (pillColor / color / tint / etc.), use that.
-  // 2) Otherwise, fall back to the legacy wrestling-style logic (myKidColor + homeColorIsGreen).
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
-      const inner = (meta.meta ?? {}) as any; // support older nested shape
+      const inner = (meta.meta ?? {}) as any;
 
-      // --- Step 1: sport-agnostic explicit colors ---
       const explicit =
         meta.pillColor ??
         inner.pillColor ??
@@ -949,7 +1085,6 @@ export default function PlaybackScreen() {
         return explicit;
       }
 
-      // --- Step 2: legacy wrestling-style fallback using myKidColor/opponentColor ---
       const pickColor = (which: 'myKidColor' | 'opponentColor'): string | undefined => {
         const raw = meta[which] ?? inner[which];
         if (!raw) return undefined;
@@ -963,10 +1098,8 @@ export default function PlaybackScreen() {
       const ok = pickColor('opponentColor');
 
       const isAthleteActor =
-        (e.actor === 'home' && homeIsAthlete) ||
-        (e.actor === 'opponent' && !homeIsAthlete);
+        (e.actor === 'home' && homeIsAthlete) || (e.actor === 'opponent' && !homeIsAthlete);
 
-      // If per-event colors exist, use them
       if (mk || ok) {
         const athleteColor = mk;
         const opponentColor = ok;
@@ -975,25 +1108,21 @@ export default function PlaybackScreen() {
         if (!isAthleteActor && opponentColor) return opponentColor;
       }
 
-      // Fallback: color based on global "homeColorIsGreen" + who's the athlete
-      const colorIsGreen = homeColorIsGreen !== false; // default true
+      const colorIsGreen = homeColorIsGreen !== false;
       const athleteColor = colorIsGreen ? GREEN : RED;
       const opponentColor = colorIsGreen ? RED : GREEN;
 
       const kind = String(e.kind || '').toLowerCase();
       const pts = typeof e.points === 'number' ? e.points : 0;
 
-      // Scoring events: my kid vs opponent
       if (pts > 0) {
         return isAthleteActor ? athleteColor : opponentColor;
       }
 
-      // Penalties / stalling: treat as "bad" for my kid
       if (PENALTYISH.has(kind)) {
         return opponentColor;
       }
 
-      // Neutral / unknown
       return 'rgba(148,163,184,0.9)';
     },
     [homeIsAthlete, homeColorIsGreen]
@@ -1078,7 +1207,7 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
             </Pressable>
 
-            {/* overlay toggle (opens mode popup) */}
+            {/* overlay toggle */}
             <Pressable
               onPress={() => setOverlayMenuOpen(v => !v)}
               style={{
@@ -1095,12 +1224,9 @@ export default function PlaybackScreen() {
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>
-                {overlayLabel} ▾
-              </Text>
+              <Text style={{ color: 'white', fontWeight: '800' }}>{overlayLabel} ▾</Text>
             </Pressable>
 
-            {/* Overlay mode menu */}
             <OverlayModeMenu
               visible={overlayMenuOpen && chromeVisible}
               mode={overlayMode}
@@ -1202,9 +1328,8 @@ export default function PlaybackScreen() {
                 if (!quickEditFor) return;
                 const next: EventRow[] = events.filter(e => e._id !== quickEditFor._id);
                 const ordered = [...next].sort((a, b) => a.t - b.t);
-                const withScores = ordered.map(e => e);
-                setEvents(withScores);
-                saveSidecar(withScores);
+                setEvents(ordered);
+                saveSidecar(ordered);
                 setQuickEditFor(null);
               }}
               onReplace={() => {

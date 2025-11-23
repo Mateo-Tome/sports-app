@@ -89,6 +89,9 @@ export default function WrestlingFolkstyleOverlay({
   // State 2: Which color is assigned to "my kid" (FLIPPED by the single button)
   const [myKidColor, setMyKidColor] = React.useState<'green' | 'red'>('green');
 
+  // NEW: period tracker (P1, P2, P3, ...)
+  const [period, setPeriod] = React.useState<number>(1);
+
   // Actor mapping is fixed: 'left' or 'right' side determines 'home' or 'opponent'
   const leftActor  = myKidSide === 'left'  ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
@@ -139,6 +142,15 @@ export default function WrestlingFolkstyleOverlay({
     };
     
     onEvent({ key, label, actor, value, meta: finalMeta });
+  };
+
+  // NEW: period advance handler – fires an event for playback to use as a divider
+  const handleNextPeriod = () => {
+    if (!isRecording) return;
+    const next = period + 1;
+    setPeriod(next);
+    fire('neutral', 'period', `P${next}`, undefined, { period: next });
+    showToast(`Period ${next}`, '#ffffff');
   };
 
   const openNF = (side: 'left' | 'right') => { if (!isRecording) return; setNfFor(side); };
@@ -361,10 +373,10 @@ export default function WrestlingFolkstyleOverlay({
       <View style={{ flex: 1 }} />
       {/* pill stays on left of the RIGHT column; also nudged 10px further left */}
       <ScorePill value={rightScore} border={rightColor} extraStyle={{
-    alignSelf: 'flex-end', // move to the right edge of the right column
-    marginLeft: 0,         // override the default -10 left nudge inside ScorePill
-    marginRight: -5,      // push it further right; tweak -20..-60 as you like
-  }}/>
+        alignSelf: 'flex-end', // move to the right edge of the right column
+        marginLeft: 0,         // override the default -10 left nudge inside ScorePill
+        marginRight: -5,       // tweak as you like
+      }}/>
     </View>
   );
 
@@ -379,6 +391,35 @@ export default function WrestlingFolkstyleOverlay({
         >
           {/* Text is "Flip Colors" */}
           <Text style={{ color: 'white', fontWeight: '700' }}>Flip Colors (My Kid: {myKidCurrentColor})</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* NEW: Period tracker button (top-right, small & out of the way) */}
+      <View
+        style={{
+          position: 'absolute',
+          top: -36,
+          right: EDGE_R,
+          alignItems: 'flex-end',
+        }}
+        pointerEvents="box-none"
+      >
+        <TouchableOpacity
+          onPress={handleNextPeriod}
+          disabled={!isRecording}
+          style={{
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.2)',
+            borderWidth: 1,
+            borderColor: 'white',
+            opacity: isRecording ? 1 : 0.6,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>
+            P{period}
+          </Text>
         </TouchableOpacity>
       </View>
 

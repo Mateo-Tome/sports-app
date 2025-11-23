@@ -684,30 +684,35 @@ export default function CameraScreen() {
                 </Text>
               )}
 
-              {isRecording && isPaused && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: insets.top + 12,
-                    left: 0,
-                    right: 0,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: 'white',
-                      fontWeight: '900',
-                      backgroundColor: 'rgba(0,0,0,0.6)',
-                      paddingHorizontal: 12,
-                      paddingVertical: 6,
-                      borderRadius: 999,
-                    }}
-                  >
-                    Paused
-                  </Text>
-                </View>
-              )}
+{isRecording && isPaused && (
+  <View
+    style={{
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      justifyContent: 'center',
+      alignItems: 'center',
+    }}
+    pointerEvents="none"
+  >
+    <Text
+      style={{
+        color: 'white',
+        fontWeight: '900',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 999,
+        fontSize: 32, // ~2x bigger than before
+      }}
+    >
+      Paused
+    </Text>
+  </View>
+)}
+
             </View>
           )}
         </>
