@@ -11,6 +11,7 @@ ENV['RCT_NEW_ARCH_ENABLED'] = '0' if podfile_properties['newArchEnabled'] == 'fa
 ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
 
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
+project 'sportapp.xcodeproj'   # ✅ REQUIRED FOR COCOAPODS TO TARGET CORRECT PROJECT
 
 install! 'cocoapods',
   :deterministic_uuids => false
