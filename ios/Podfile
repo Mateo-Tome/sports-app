@@ -1,5 +1,6 @@
-# 🚩 CRITICAL FIX: This line tells 'ffmpeg-kit-react-native' to use your custom pod.
-ENV['FFMPEG_KIT_PACKAGE'] = 'ffmpeg-kit-ios-full'
+# Tell ffmpeg-kit what package we want (not strictly required with manual subspec,
+# but harmless and documents intent).
+ENV['FFMPEG_KIT_PACKAGE'] = 'full'
 
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
 require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
@@ -11,7 +12,6 @@ ENV['RCT_NEW_ARCH_ENABLED'] = '0' if podfile_properties['newArchEnabled'] == 'fa
 ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
 
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
-project 'sportapp.xcodeproj'   # ✅ REQUIRED FOR COCOAPODS TO TARGET CORRECT PROJECT
 
 install! 'cocoapods',
   :deterministic_uuids => false
@@ -21,11 +21,18 @@ prepare_react_native_project!
 target 'sportapp' do
   use_expo_modules!
 
-  # ✅ FFmpegKit secured via Mateo-Tome fork (ONLY KEEP THIS LINE)
+  # ✅ Use your custom FULL build, from your GitHub podspec
   pod 'ffmpeg-kit-ios-full',
       :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
-  
-  # Ensure NO OTHER FFmpeg pod lines exist here! (e.g., no ffmpeg-kit-ios-https)
+
+  # ✅ Manually link ffmpeg-kit-react-native and FORCE the "full" subspec.
+  # Autolinking for this lib is disabled in react-native.config.js, so this is
+  # the ONLY ffmpeg-kit-react-native pod that gets added.
+  pod 'ffmpeg-kit-react-native/full',
+      :path => '../node_modules/ffmpeg-kit-react-native'
+
+  # ⛔️ DO NOT add any `ffmpeg-kit-ios-https` pods here.
+  # ⛔️ DO NOT add plain `pod 'ffmpeg-kit-react-native'` with no subspec.
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"]

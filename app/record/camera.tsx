@@ -14,6 +14,7 @@ import {
   Alert,
   Animated,
   Easing,
+  NativeModules,
   Text,
   TouchableOpacity,
   View,
@@ -43,6 +44,9 @@ const overlayRegistry: Record<string, OverlayComponent> = {
   // 'baseball:pitching': BaseballPitchingOverlay,
   // 'basketball:default': BasketballOverlay,
 };
+// --- debug: check that the native FFmpeg module exists
+console.log('[FFmpegKit native module]', NativeModules.FFmpegKitReactNative);
+
 
 // --- utils
 const ensureDir = async (dir: string) => {
