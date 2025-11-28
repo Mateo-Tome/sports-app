@@ -1,3 +1,4 @@
+// app/(tabs)/_layout.tsx
 import { HapticTab } from '@/components/HapticTab';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
@@ -47,6 +48,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="video.fill" color={color} />
           ),
+          // hide this tab button on web (optional)
           ...(Platform.OS === 'web' ? { tabBarButton: () => null } : {}),
         }}
       />

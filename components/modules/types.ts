@@ -1,18 +1,14 @@
 // components/modules/types.ts
-export type Actor = 'home' | 'opponent' | 'neutral';
 
-export type EventRow = {
-  _id?: string;
-  t: number;
-  kind: string;
-  points?: number;
-  actor?: Actor;
-  meta?: any;
-  scoreAfter?: { home: number; opponent: number };
-};
+import type { EdgeInsets } from 'react-native-safe-area-context';
 
+/**
+ * Lightweight copy of OverlayEvent for playback modules.
+ * (Structurally compatible with components/overlays/types.ts,
+ * but kept separate to avoid circular imports.)
+ */
 export type OverlayEvent = {
-  actor?: Actor;
+  actor?: 'home' | 'opponent' | 'neutral';
   key?: string;
   kind?: string;
   value?: number;
@@ -21,39 +17,121 @@ export type OverlayEvent = {
   [k: string]: any;
 };
 
+/**
+ * Props passed from PlaybackScreen into each sport-specific playback module.
+ *
+ * Used by:
+ * - WrestlingFolkstylePlaybackModule
+ * - BaseballHittingPlaybackModule
+ * - Any future sport modules
+ */
 export type PlaybackModuleProps = {
-  // readonly player state
+  /**
+   * Current playback time in seconds.
+   */
   now: number;
+
+  /**
+   * Total duration in seconds (may be 0 while video is still loading).
+   */
   duration: number;
-  events: EventRow[];
 
-  // from sidecar
-  homeIsAthlete: boolean;
-  homeColorIsGreen?: boolean; // optional
+  /**
+   * Ordered list of scoring / meta events for this match/game.
+   */
+  events: any[];
 
-  // optional score if a sport uses it
-  finalScore?: { home: number; opponent: number };
-
-  // shared chrome state
+  /**
+   * Whether the overlay UI (scoreboard, pills, etc.) should be visible.
+   */
   overlayOn: boolean;
-  insets: { top: number; right: number; bottom: number; left: number };
 
-  // actions
-  onSeek: (sec: number) => void;
-  onPlayPause: () => void;
-  isPlaying: boolean;
+  /**
+   * Safe area insets for laying out UI around notches / home bar.
+   */
+  insets: EdgeInsets;
 
-  // editing hooks (modules can use or ignore)
-  enterAddMode: () => void;
+  /**
+   * Callback to seek the video.
+   */
+  onSeek?: (sec: number) => void;
+
+  /**
+   * Callback to toggle play/pause.
+   */
+  onPlayPause?: () => void;
+
+  /**
+   * Whether the video is currently playing.
+   */
+  isPlaying?: boolean;
+
+  /**
+   * Whether the "home" side is the athlete's side.
+   */
+  homeIsAthlete: boolean;
+
+  /**
+   * Global color mapping: when true, home side uses GREEN and opponent uses RED.
+   */
+  homeColorIsGreen: boolean;
+
+  /**
+   * Live score as of "now".
+   */
+  liveScore?: {
+    home: number;
+    opponent: number;
+  };
+
+  /**
+   * Final score from the sidecar / derived outcome.
+   */
+  finalScore?: {
+    home: number;
+    opponent: number;
+  };
+
+  /**
+   * Whether we are currently in edit mode (adding/replacing events).
+   */
+  editMode?: boolean;
+
+  /**
+   * If in edit mode, whether the module should add or replace an event.
+   */
+  editSubmode?: 'add' | 'replace' | null;
+
+  /**
+   * Hook into PlaybackScreen's "enter add mode" helper,
+   * if a module wants to trigger it.
+   */
+  enterAddMode?: () => void;
+
+  /**
+   * Fired when the module wants to append/replace an event.
+   *
+   * PlaybackScreen translates this OverlayEvent into an EventRow
+   * and updates the sidecar.
+   */
   onOverlayEvent?: (evt: OverlayEvent) => void;
 
-  // belt long-press -> quick edit
-  onPillLongPress: (ev: EventRow) => void;
+  /**
+   * Optional handler for long-pressing an event pill (if the
+   * module wants to leverage it).
+   */
+  onPillLongPress?: (evt: any) => void;
 
-  // live score if applicable
-  liveScore?: { home: number; opponent: number };
+  /**
+   * Display name for the primary athlete ("my kid").
+   *
+   * This is what WrestlingFolkstylePlaybackModule and PlaybackScreen
+   * both rely on.
+   */
+  athleteName?: string;
 
-  // NEW: editing state visible to sport modules
-  editMode?: boolean;
-  editSubmode?: 'add' | 'replace' | null;
+  /**
+   * Allow extra sport-specific props without breaking type checking.
+   */
+  [key: string]: any;
 };

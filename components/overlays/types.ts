@@ -17,6 +17,10 @@ export type OverlayScore = {
   opponent: number;
 };
 
+/**
+ * Props used by recording overlays (e.g. WrestlingFolkstyleOverlay)
+ * while the camera is actively recording.
+ */
 export type OverlayProps = {
   /** Is the camera actively recording right now? */
   isRecording: boolean;
