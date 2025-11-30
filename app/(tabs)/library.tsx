@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import React, {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -34,11 +34,13 @@ import {
   ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { computeSportColor } from '../../lib/sportColors/computeSportColor';
 import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
 
-// NEW: sport-specific Library cards
-import { BaseballHittingLibraryCard } from '../../components/modules/baseball/BaseballHittingLibraryCard';
-import { WrestlingFolkstyleLibraryCard } from '../../components/modules/wrestling/WrestlingFolkstyleLibraryCard';
+
+
+// 👇 NEW: shared sport-card registry (decides which per-sport card to render)
+import { getSportCardComponent } from '../../components/library/SportCardRegistry';
 
 const DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = DIR + 'index.json';
@@ -412,178 +414,7 @@ type OutcomeBits = {
   edgeColor: string | null;
 };
 
-// ---- SPORT COLOR HELPERS --------------------------------------------------
 
-// Base colors (keep these consistent with overlays)
-const COLOR_GREEN = '#16a34a'; // W / good
-const COLOR_RED = '#dc2626'; // L / bad
-const COLOR_YELLOW = '#eab308'; // tie / neutral
-const COLOR_GOLD = '#facc15'; // special highlight (pin / HR / sub)
-
-// Sports that can just piggy-back on W/L/T coloring
-const WL_SPORT_KEYWORDS = [
-  'volleyball',
-  'pickleball',
-  'fencing',
-  'muay',
-  'boxing',
-  'kickboxing',
-  'karate',
-  'taekwondo',
-];
-
-// tiny helper: walk events from end to front
-function findLastEvent(
-  events: SidecarEvent[] | undefined,
-  pred: (e: SidecarEvent) => boolean,
-): SidecarEvent | null {
-  if (!events?.length) return null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (pred(ev)) return ev;
-  }
-  return null;
-}
-
-/**
- * Given a sidecar + basic outcome, decide:
- * - edgeColor: border color for Library card
- * - highlightGold: whether to show gold gradient
- *
- * This is the ONLY place you touch when adding new sports.
- * For a new sport you either:
- * - Add a new block below (e.g. baseball pitching, BJJ)
- * - Or just append a keyword to WL_SPORT_KEYWORDS if W/L/T is enough.
- */
-function computeSportColor(
-  sc: Sidecar,
-  baseOutcome: Outcome | null,
-  baseHighlightGold: boolean,
-  finalScore: FinalScore | null,
-): { edgeColor: string | null; highlightGold: boolean } {
-  const sportStr = String(sc.sport ?? '').toLowerCase();
-  const events = sc.events ?? [];
-  let edgeColor: string | null = null;
-  let highlightGold = baseHighlightGold;
-
-  const isWrestling = sportStr.startsWith('wrestling');
-  const isBaseballLike =
-    sportStr.includes('baseball') || sportStr.includes('softball');
-  const isHitting =
-    sportStr.includes('hitting') ||
-    sportStr.includes('batting') ||
-    sportStr.includes('at-bat');
-  const isPitching = sportStr.includes('pitch') || sportStr.includes('pitching');
-
-  const isBjj =
-    sportStr.includes('bjj') ||
-    sportStr.includes('jiu-jitsu') ||
-    sportStr.includes('jiujitsu');
-
-  const isWLSport =
-    WL_SPORT_KEYWORDS.some((k) => sportStr.includes(k)) || isBjj || isWrestling;
-
-  // --- Baseball / Softball Hitting ----------------------------------------
-  if (isBaseballLike && isHitting && !isPitching) {
-    const last = findLastEvent(events, (e) => !!e.key);
-    const key = String(last?.key ?? '').toLowerCase();
-
-    if (key === 'homerun' || key === 'home_run' || key === 'hr') {
-      edgeColor = COLOR_GOLD;
-      highlightGold = true; // HR gets the gold glow
-    } else if (
-      key === 'hit' ||
-      key === 'single' ||
-      key === 'double' ||
-      key === 'triple' ||
-      key === 'bunt'
-    ) {
-      edgeColor = COLOR_GREEN; // good outcome at bat
-    } else if (key === 'walk') {
-      edgeColor = COLOR_YELLOW; // neutral-ish
-    } else if (key === 'strikeout' || key === 'k') {
-      edgeColor = COLOR_RED; // bad outcome
-    }
-
-    return { edgeColor, highlightGold };
-  }
-
-  // --- Baseball / Softball Pitching ---------------------------------------
-  if (isBaseballLike && isPitching && !isHitting) {
-    const last = findLastEvent(events, (e) => !!e.key);
-    const key = String(last?.key ?? '').toLowerCase();
-
-    // Here we assume:
-    // - strikeout = good (green)
-    // - walk issued = bad (red)
-    // - homerun_allowed = very bad (red, no gold)
-    if (key === 'strikeout' || key === 'k') {
-      edgeColor = COLOR_GREEN;
-    } else if (key === 'walk' || key === 'bb') {
-      edgeColor = COLOR_RED;
-    } else if (key === 'homerun_allowed' || key === 'hr_allowed') {
-      edgeColor = COLOR_RED;
-    }
-    return { edgeColor, highlightGold };
-  }
-
-  // --- BJJ / Grappling -----------------------------------------------------
-  if (isBjj) {
-    const last = findLastEvent(events, (e) => !!e.key || !!e.kind || !!e.label);
-    const key = String(last?.key ?? '').toLowerCase();
-    const kind = String(last?.kind ?? '').toLowerCase();
-    const label = String(last?.label ?? '').toLowerCase();
-    const winBy = String(last?.meta?.winBy ?? '').toLowerCase();
-
-    const actor = last?.actor; // home / opponent
-
-    const isSub =
-      key.includes('sub') ||
-      kind.includes('sub') ||
-      label.includes('sub') ||
-      winBy.includes('sub') ||
-      winBy.includes('submission');
-
-    if (isSub && (actor === 'home' || actor === 'opponent')) {
-      const homeIsAthlete = sc.homeIsAthlete !== false;
-      const athleteWonBySub =
-        (homeIsAthlete && actor === 'home') ||
-        (!homeIsAthlete && actor === 'opponent');
-      if (athleteWonBySub) {
-        edgeColor = COLOR_GREEN;
-        highlightGold = true; // submission win = gold glow
-      } else {
-        edgeColor = COLOR_RED;
-      }
-    }
-
-    // fallback to W/L/T if no sub-specific event
-    if (!edgeColor && baseOutcome) {
-      edgeColor =
-        baseOutcome === 'W'
-          ? COLOR_GREEN
-          : baseOutcome === 'L'
-          ? COLOR_RED
-          : COLOR_YELLOW;
-    }
-
-    return { edgeColor, highlightGold };
-  }
-
-  // --- Generic W/L/T sports (volleyball, pickleball, muay thai, fencing...) ----
-  if (isWLSport && baseOutcome) {
-    edgeColor =
-      baseOutcome === 'W'
-        ? COLOR_GREEN
-        : baseOutcome === 'L'
-        ? COLOR_RED
-        : COLOR_YELLOW;
-    return { edgeColor, highlightGold };
-  }
-
-  // --- Default: no special color, caller will fall back to W/L/T mapping ----
-  return { edgeColor, highlightGold };
-}
 
 // Main outcome reader: now ALSO computes sport-specific edgeColor
 async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
@@ -961,106 +792,6 @@ function UploadButton({
   );
 }
 
-// ====== SPORT CARD REGISTRY (NEW) ==========================================
-
-type SportChip = { text: string; color: string };
-
-type SportCardProps = {
-  row: Row;
-  subtitle: string;
-  chip?: SportChip | null;
-};
-
-// default / generic card (used for highlights or unknown sports)
-const DefaultLibraryCard: React.FC<SportCardProps> = ({
-  row,
-  subtitle,
-  chip,
-}) => {
-  return (
-    <View>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <Text
-          style={{
-            color: 'white',
-            fontWeight: '700',
-            flexShrink: 1,
-          }}
-          numberOfLines={2}
-        >
-          {row.displayName}
-        </Text>
-
-        {chip && (
-          <View
-            style={{
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 999,
-              backgroundColor: `${chip.color}22`,
-              borderWidth: 1,
-              borderColor: `${chip.color}66`,
-            }}
-          >
-            <Text style={{ color: 'white', fontWeight: '900' }}>
-              {chip.text}
-            </Text>
-          </View>
-        )}
-
-        {row.highlightGold && (
-          <View
-            style={{
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 999,
-              backgroundColor: '#00000033',
-              borderWidth: 1,
-              borderColor: '#ffffff55',
-            }}
-          >
-            <Text style={{ color: 'white', fontWeight: '900' }}>
-              PIN / HR / SUB
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <Text
-        style={{
-          color: 'white',
-          opacity: 0.85,
-          marginTop: 4,
-        }}
-        numberOfLines={1}
-      >
-        {subtitle}
-      </Text>
-    </View>
-  );
-};
-
-function getSportCardComponent(row: Row): React.ComponentType<SportCardProps> {
-  const s = (row.sport || '').toLowerCase();
-
-  if (s.includes('baseball') && s.includes('hitting')) {
-    return BaseballHittingLibraryCard as React.ComponentType<SportCardProps>;
-  }
-
-  if (s.startsWith('wrestling')) {
-    return WrestlingFolkstyleLibraryCard as React.ComponentType<SportCardProps>;
-  }
-
-  // fallback: generic
-  return DefaultLibraryCard;
-}
-
 // ===========================================================================
 
 export default function LibraryScreen() {
@@ -1398,12 +1129,13 @@ export default function LibraryScreen() {
   // ====== FlatList helpers ======
   const outcomeColor = (o?: Outcome | null) =>
     o === 'W'
-      ? COLOR_GREEN
+      ? '#16a34a' // green
       : o === 'L'
-      ? COLOR_RED
+      ? '#dc2626' // red
       : o === 'T'
-      ? COLOR_YELLOW
+      ? '#eab308' // yellow
       : 'rgba(255,255,255,0.25)';
+
 
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
