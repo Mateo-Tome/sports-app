@@ -31,7 +31,7 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
 
-    // 👇 Tell Gradle to also look in android/libs for local AARs
+    // Also look in android/libs for local AARs (used by ffmpeg-kit)
     flatDir {
       dirs "$rootDir/libs"
     }
