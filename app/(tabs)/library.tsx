@@ -18,6 +18,12 @@ import {
   writeIndexAtomic,
   type IndexMeta,
 } from '../../lib/library/indexStore';
+import {
+  getOrCreateThumb,
+  sweepOrphanThumbs,
+  thumbPathFor,
+} from '../../lib/library/thumbs';
+
 
 
 
@@ -110,7 +116,6 @@ const hash = (s: string) => {
 };
 const thumbNameFor = (videoUri: string) =>
   `${baseNameNoExt(videoUri)}_${hash(videoUri)}.jpg`;
-const thumbPathFor = (videoUri: string) => `${THUMBS_DIR}${thumbNameFor(videoUri)}`;
 
 // ----- bounded concurrency helper -----
 async function mapLimit<T, R>(
@@ -250,90 +255,6 @@ async function safeThumbFromFileUri(videoUri: string, dest: string, atMs = 900) 
   }
 }
 
-async function getOrCreateThumb(
-  videoUri: string,
-  assetId?: string | null,
-): Promise<string | null> {
-  try {
-    await ensureDir(THUMBS_DIR);
-    const dest = thumbPathFor(videoUri);
-
-    // already cached?
-    const info: any = await FileSystem.getInfoAsync(dest);
-    if (info?.exists) return dest;
-
-    // 1) Try the actual file path first (works for file:// in app storage)
-    try {
-      await safeThumbFromFileUri(videoUri, dest, 900);
-      const ok: any = await FileSystem.getInfoAsync(dest);
-      if (ok?.exists) return dest;
-    } catch (e) {
-      console.log('[thumbs] primary failed for', videoUri, e);
-    }
-
-    // 2) Fallback: use Photos asset localUri (best-effort; permission request is platform-safe)
-    if (assetId) {
-      try {
-        // Request if not granted; ignore result if denied to avoid errors.
-        const perm = await MediaLibrary.requestPermissionsAsync();
-        if (perm.granted) {
-          const asset = await MediaLibrary.getAssetInfoAsync(assetId);
-          const local = asset?.localUri || asset?.uri;
-          if (local) {
-            await safeThumbFromFileUri(local, dest, 900);
-            const ok2: any = await FileSystem.getInfoAsync(dest);
-            if (ok2?.exists) return dest;
-          }
-        }
-      } catch (e2) {
-        console.log('[thumbs] asset fallback failed', assetId, e2);
-      }
-    }
-
-    return null;
-  } catch (e) {
-    console.log('[thumbs] error', e);
-    return null;
-  }
-}
-
-// sweep orphaned thumbs (no corresponding video in current index)
-async function sweepOrphanThumbs(indexUris?: string[]) {
-  try {
-    await ensureDir(THUMBS_DIR);
-    // @ts-ignore
-    const files: string[] = await (FileSystem as any).readDirectoryAsync(
-      THUMBS_DIR,
-    );
-    if (!files?.length) return 0;
-
-    const allowed = new Set(
-      (indexUris ?? (await readIndex()).map((m) => m.uri)).map((u) =>
-        thumbNameFor(u).replace(/\.jpg$/i, '').toLowerCase(),
-      ),
-    );
-
-    let removed = 0;
-    await mapLimit(
-      files.filter((f) => f.toLowerCase().endsWith('.jpg')),
-      4,
-      async (f) => {
-        const base = f.replace(/\.jpg$/i, '').toLowerCase();
-        if (!allowed.has(base)) {
-          try {
-            await FileSystem.deleteAsync(`${THUMBS_DIR}${f}`, {
-              idempotent: true,
-            });
-            removed++;
-          } catch {}
-        }
-      },
-    );
-    return removed;
-  } catch {
-    return 0;
-  }
-}
 
 // ---------- sidecar (score/outcome + gold + edgeColor) ----------
 type SidecarEvent = {
