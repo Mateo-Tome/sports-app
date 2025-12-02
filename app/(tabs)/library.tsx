@@ -12,6 +12,13 @@ import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { UploadButton } from '../../components/library/UploadButton';
+import {
+  readIndex,
+  updateDisplayName,
+  writeIndexAtomic,
+  type IndexMeta,
+} from '../../lib/library/indexStore';
+
 
 
 import {
@@ -49,14 +56,7 @@ const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
-type IndexMeta = {
-  uri: string;
-  displayName: string;
-  athlete: string;
-  sport: string;
-  createdAt: number;
-  assetId?: string;
-};
+
 
 type FinalScore = { home: number; opponent: number };
 type Outcome = 'W' | 'L' | 'T';
@@ -213,53 +213,6 @@ async function findByLooseBasename(
   return null;
 }
 
-// ---------- index helpers ----------
-async function readIndex(): Promise<IndexMeta[]> {
-  try {
-    const info: any = await FileSystem.getInfoAsync(INDEX_PATH);
-    if (!info?.exists) return [];
-    const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
-    const list = JSON.parse(raw || '[]');
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
-}
-async function writeIndexAtomic(list: IndexMeta[]) {
-  const tmp = INDEX_PATH + '.tmp';
-  await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
-  try {
-    await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true });
-  } catch {}
-  await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
-}
-
-// --- update displayName for a single entry (by uri)
-async function updateDisplayName(uri: string, newName: string) {
-  const list = await readIndex();
-  let changed = false;
-  const next = list.map((e) => {
-    if (e.uri === uri) {
-      changed = true;
-      return { ...e, displayName: newName };
-    }
-    return e;
-  });
-  if (changed) {
-    await writeIndexAtomic(next);
-  } else {
-    // try to recover if path moved but filename matches current media
-    const fileName = uri.split('/').pop() || '';
-    const hit = list.find((e) => (e.uri.split('/').pop() || '') === fileName);
-    if (hit) {
-      const next2 = list.map((e) =>
-        e === hit ? { ...e, displayName: newName } : e,
-      );
-      await writeIndexAtomic(next2);
-    }
-  }
-  return true;
-}
 
 // ---------- thumbs (assetId aware) ----------
 async function fileExists(uri: string) {
