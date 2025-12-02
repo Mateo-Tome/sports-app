@@ -11,6 +11,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import { UploadButton } from '../../components/library/UploadButton';
+
+
 import {
   useCallback,
   useEffect,
@@ -19,7 +22,6 @@ import {
   useState,
 } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   DeviceEventEmitter,
   FlatList,
@@ -31,11 +33,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ViewToken,
+  ViewToken
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { computeSportColor } from '../../lib/sportColors/computeSportColor';
-import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
 
 
 
@@ -415,7 +416,6 @@ type OutcomeBits = {
 };
 
 
-
 // Main outcome reader: now ALSO computes sport-specific edgeColor
 async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
   try {
@@ -727,70 +727,8 @@ function retagVideo(
   return enqueueFs(() => _retagVideo(input, newAthlete));
 }
 
-function UploadButton({
-  localUri,
-  sidecar,
-  uploaded,
-  onUploaded,
-}: {
-  localUri: string;
-  sidecar?: unknown;
-  uploaded?: boolean;
-  onUploaded?: (cloudKey: string, url: string) => void;
-}) {
-  const [state, setState] = useState<'idle' | 'uploading' | 'done'>(
-    uploaded ? 'done' : 'idle',
-  );
-  const [error, setError] = useState<string | undefined>();
 
-  useEffect(() => {
-    setState(uploaded ? 'done' : 'idle');
-  }, [uploaded]);
 
-  if (state === 'done') {
-    return (
-      <Text style={{ fontWeight: '600', color: 'white' }}>✅ Uploaded</Text>
-    );
-  }
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <Pressable
-        onPress={async () => {
-          setError(undefined);
-          setState('uploading');
-          try {
-            const { key, url } = await uploadFileOnTap(localUri);
-            if (sidecar) await uploadJSONOnTap(sidecar, 'sidecars/');
-            setState('done');
-            onUploaded?.(key, url);
-          } catch (e: any) {
-            setError(e?.message ?? 'Upload failed');
-            setState('idle');
-            Alert.alert(
-              'Upload failed',
-              e?.message ?? 'Please try again while online.',
-            );
-          }
-        }}
-        style={{
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          borderRadius: 999,
-          borderWidth: 1,
-          borderColor: 'white',
-          backgroundColor: 'rgba(255,255,255,0.12)',
-        }}
-      >
-        <Text style={{ color: 'white', fontWeight: '700' }}>
-          {state === 'uploading' ? 'Uploading…' : 'Upload'}
-        </Text>
-      </Pressable>
-      {state === 'uploading' && <ActivityIndicator />}
-      {!!error && <Text style={{ color: 'tomato' }}>{error}</Text>}
-    </View>
-  );
-}
 
 // ===========================================================================
 
