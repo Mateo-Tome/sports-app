@@ -7,10 +7,12 @@ import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
-import { UploadButton } from '../../components/library/UploadButton';
+import {
+  LibraryVideoRow,
+  type LibraryRow,
+} from '../../components/library/LibraryVideoRow';
 import {
   readIndex,
   updateDisplayName,
@@ -23,11 +25,6 @@ import {
   sweepOrphanThumbs,
   thumbPathFor,
 } from '../../lib/library/thumbs';
-
-
-
-
-
 
 import {
   useCallback,
@@ -48,44 +45,15 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ViewToken
+  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-
-
-
-// 👇 NEW: shared sport-card registry (decides which per-sport card to render)
-import { getSportCardComponent } from '../../components/library/SportCardRegistry';
 
 const DIR = FileSystem.documentDirectory + 'videos/';
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
-
-
-type FinalScore = { home: number; opponent: number };
-type Outcome = 'W' | 'L' | 'T';
-
-type Row = {
-  uri: string;
-  displayName: string;
-  athlete: string;
-  sport: string;
-  size: number | null;
-  mtime: number | null;
-  thumbUri?: string | null;
-  assetId?: string | undefined;
-
-  finalScore?: FinalScore | null;
-  homeIsAthlete?: boolean;
-  outcome?: Outcome;
-  myScore?: number | null;
-  oppScore?: number | null;
-
-  highlightGold?: boolean;
-  edgeColor?: string | null; // sport-specific border color
-};
+type Row = LibraryRow;
 
 // ---------- small utils ----------
 const ensureDir = async (dir: string) => {
@@ -99,8 +67,6 @@ const slug = (s: string) =>
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '') || 'unknown';
-const bytesToMB = (b?: number | null) =>
-  b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB';
 
 // ----- bounded concurrency helper -----
 async function mapLimit<T, R>(
@@ -110,13 +76,15 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let i = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (true) {
-      const idx = i++;
-      if (idx >= items.length) break;
-      results[idx] = await worker(items[idx], idx);
-    }
-  });
+  const workers = new Array(Math.min(limit, items.length))
+    .fill(0)
+    .map(async () => {
+      while (true) {
+        const idx = i++;
+        if (idx >= items.length) break;
+        results[idx] = await worker(items[idx], idx);
+      }
+    });
   await Promise.all(workers);
   return results;
 }
@@ -141,7 +109,11 @@ async function pathExists(p: string) {
     return false;
   }
 }
-async function pickUniqueDest(dir: string, baseName: string, extWithDot: string) {
+async function pickUniqueDest(
+  dir: string,
+  baseName: string,
+  extWithDot: string,
+) {
   let n = 0;
   while (true) {
     const name =
@@ -159,12 +131,16 @@ async function findByFilename(fileName: string): Promise<string | null> {
       const aDir = `${DIR}${a}/`;
       try {
         // @ts-ignore
-        const sports: string[] = await (FileSystem as any).readDirectoryAsync(aDir);
+        const sports: string[] = await (FileSystem as any).readDirectoryAsync(
+          aDir,
+        );
         for (const s of sports) {
           const sDir = `${aDir}${s}/`;
           try {
             // @ts-ignore
-            const files: string[] = await (FileSystem as any).readDirectoryAsync(sDir);
+            const files: string[] = await (FileSystem as any).readDirectoryAsync(
+              sDir,
+            );
             const cand = files.find((f) => f === fileName);
             if (cand) return sDir + cand;
           } catch {}
@@ -185,12 +161,16 @@ async function findByLooseBasename(
       const aDir = `${DIR}${a}/`;
       try {
         // @ts-ignore
-        const sports: string[] = await (FileSystem as any).readDirectoryAsync(aDir);
+        const sports: string[] = await (FileSystem as any).readDirectoryAsync(
+          aDir,
+        );
         for (const s of sports) {
           const sDir = `${aDir}${s}/`;
           try {
             // @ts-ignore
-            const files: string[] = await (FileSystem as any).readDirectoryAsync(sDir);
+            const files: string[] = await (FileSystem as any).readDirectoryAsync(
+              sDir,
+            );
             const cand = files.find(
               (f) =>
                 f === `${baseNoExt}${extWithDot}` ||
@@ -375,9 +355,6 @@ function retagVideo(
   return enqueueFs(() => _retagVideo(input, newAthlete));
 }
 
-
-
-
 // ===========================================================================
 
 export default function LibraryScreen() {
@@ -419,39 +396,42 @@ export default function LibraryScreen() {
   }, [rows]);
 
   // ---------- build 1 row ----------
-  const buildRow = useCallback(async (meta: IndexMeta, eagerThumb: boolean) => {
-    const info: any = await FileSystem.getInfoAsync(meta.uri);
-    if (!info?.exists) return null;
+  const buildRow = useCallback(
+    async (meta: IndexMeta, eagerThumb: boolean) => {
+      const info: any = await FileSystem.getInfoAsync(meta.uri);
+      if (!info?.exists) return null;
 
-    const scoreBits = await readOutcomeFor(meta.uri);
-    const thumb = eagerThumb
-      ? await getOrCreateThumb(meta.uri, meta.assetId)
-      : null;
+      const scoreBits = await readOutcomeFor(meta.uri);
+      const thumb = eagerThumb
+        ? await getOrCreateThumb(meta.uri, meta.assetId)
+        : null;
 
-    const row: Row = {
-      uri: meta.uri,
-      displayName:
-        meta.displayName || (meta.uri.split('/').pop() || 'video'),
-      athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
-      sport: (meta.sport || 'unknown').trim() || 'unknown',
-      assetId: meta.assetId,
-      size: info?.size ?? null,
-      mtime: info?.modificationTime
-        ? Math.round((info.modificationTime as number) * 1000)
-        : meta.createdAt ?? null,
-      thumbUri: thumb,
+      const row: Row = {
+        uri: meta.uri,
+        displayName:
+          meta.displayName || (meta.uri.split('/').pop() || 'video'),
+        athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
+        sport: (meta.sport || 'unknown').trim() || 'unknown',
+        assetId: meta.assetId,
+        size: info?.size ?? null,
+        mtime: info?.modificationTime
+          ? Math.round((info.modificationTime as number) * 1000)
+          : meta.createdAt ?? null,
+        thumbUri: thumb,
 
-      finalScore: scoreBits.finalScore,
-      homeIsAthlete: scoreBits.homeIsAthlete,
-      outcome: scoreBits.outcome ?? undefined,
-      myScore: scoreBits.myScore,
-      oppScore: scoreBits.oppScore,
-      highlightGold: scoreBits.highlightGold,
-      edgeColor: scoreBits.edgeColor,
-    };
+        finalScore: scoreBits.finalScore,
+        homeIsAthlete: scoreBits.homeIsAthlete,
+        outcome: scoreBits.outcome ?? undefined,
+        myScore: scoreBits.myScore,
+        oppScore: scoreBits.oppScore,
+        highlightGold: scoreBits.highlightGold,
+        edgeColor: scoreBits.edgeColor,
+      };
 
-    return row;
-  }, []);
+      return row;
+    },
+    [],
+  );
 
   // ---------- initial load with bounded concurrency & eager thumbs for first 12 ----------
   const load = useCallback(async () => {
@@ -545,7 +525,11 @@ export default function LibraryScreen() {
       'This removes the file, its index entry, and its cached thumbnail.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => removeVideo(row),
+        },
       ],
     );
   }, []);
@@ -712,306 +696,47 @@ export default function LibraryScreen() {
     setTitleInput(row.displayName || '');
   }, []);
 
-  // ====== FlatList helpers ======
-  const outcomeColor = (o?: Outcome | null) =>
-    o === 'W'
-      ? '#16a34a' // green
-      : o === 'L'
-      ? '#dc2626' // red
-      : o === 'T'
-      ? '#eab308' // yellow
-      : 'rgba(255,255,255,0.25)';
-
-
+  // ====== FlatList row renderer (now delegates to LibraryVideoRow) ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
-      // split date/time for fixed badges
-      const when = item.mtime ? new Date(item.mtime) : null;
-      const dateOnly = when ? when.toLocaleDateString() : '—';
-      const timeOnly = when
-        ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '—';
-
-      const subtitleBits = [
-        item.athlete ? `👤 ${item.athlete}` : null,
-        item.sport ? `🏷️ ${item.sport}` : null,
-        `${bytesToMB(item.size)}`,
-      ].filter(Boolean);
-      const subtitle = subtitleBits.join(' • ');
-
-      const chip =
-        item.sport !== 'highlights' &&
-        item.outcome &&
-        item.myScore != null &&
-        item.oppScore != null
-          ? {
-              text: `${item.outcome} ${item.myScore}–${item.oppScore}`,
-              color: outcomeColor(item.outcome),
-            }
-          : null;
-
-      const uploaded = uploadedMap[keyFor(item)];
-      const rowEdgeColor =
-        item.edgeColor ?? outcomeColor(item.outcome ?? null);
-
-      const SportCard = getSportCardComponent(item);
+      const uploaded = !!uploadedMap[keyFor(item)];
 
       return (
-        <Pressable
-          onPress={() => routerPushPlayback(item)}
-          style={{
-            padding: 0,
-            marginHorizontal: 16,
-            marginVertical: 8,
-            borderRadius: 12,
-            overflow: 'hidden',
-            borderWidth: item.highlightGold ? 0 : 2,
-            borderColor: item.highlightGold ? 'transparent' : rowEdgeColor,
-            backgroundColor: item.highlightGold
-              ? 'transparent'
-              : 'rgba(255,255,255,0.06)',
+        <LibraryVideoRow
+          row={item}
+          uploaded={uploaded}
+          onPressPlay={() => routerPushPlayback(item)}
+          onPressDelete={() => confirmRemove(item)}
+          onPressEditAthlete={() => setAthletePickerOpen(item)}
+          onPressEditTitle={() => openEditName(item)}
+          onPressSaveToPhotos={() => saveToPhotos(item.uri)}
+          onUploaded={(key, url) => {
+            const mapKey = keyFor(item);
+            setUploadedMap((prev) => {
+              const next = {
+                ...prev,
+                [mapKey]: { key, url, at: Date.now() },
+              };
+              AsyncStorage.setItem(
+                UPLOADED_MAP_KEY,
+                JSON.stringify(next),
+              ).catch(() => {});
+              return next;
+            });
           }}
-        >
-          {item.highlightGold && (
-            <>
-              <LinearGradient
-                colors={['#f7d774', '#d4a017', '#b88912']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                }}
-              />
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  backgroundColor: 'rgba(0,0,0,0.08)',
-                }}
-              />
-            </>
-          )}
-
-          <View style={{ padding: 12 }}>
-            {/* Header row: date/time on the left, Edit Title on the right */}
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 8,
-              }}
-            >
-              <View
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-              >
-                <View
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 10,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.2)',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '800' }}>
-                    {dateOnly}
-                  </Text>
-                </View>
-                <View
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 10,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.2)',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '800' }}>
-                    {timeOnly}
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => openEditName(item)}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
-                  borderWidth: 1,
-                  borderColor: 'white',
-                }}
-              >
-                <Text style={{ color: 'white', fontWeight: '900' }}>
-                  Edit Title
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              {/* thumbnail */}
-              {item.thumbUri ? (
-                <Image
-                  key={item.thumbUri || item.uri}
-                  source={{ uri: item.thumbUri }}
-                  style={{
-                    width: 96,
-                    height: 54,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(255,255,255,0.1)',
-                  }}
-                  contentFit="cover"
-                  transition={100}
-                />
-              ) : (
-                <View
-                  style={{
-                    width: 96,
-                    height: 54,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(255,255,255,0.1)',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: 'white',
-                      opacity: 0.6,
-                      fontSize: 12,
-                    }}
-                  >
-                    No preview
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ flex: 1 }}>
-                {/* SPORT-SPECIFIC CONTENT (title + chips + subtitle) */}
-                <SportCard row={item} subtitle={subtitle} chip={chip} />
-
-                {/* Shared actions row (same across all sports) */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    gap: 12,
-                    marginTop: 10,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <TouchableOpacity
-                    onPress={() => saveToPhotos(item.uri)}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 999,
-                      backgroundColor: 'white',
-                    }}
-                  >
-                    <Text
-                      style={{ color: 'black', fontWeight: '700' }}
-                    >
-                      Save to Photos
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => routerPushPlayback(item)}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 999,
-                      backgroundColor: 'rgba(255,255,255,0.12)',
-                      borderWidth: 1,
-                      borderColor: 'white',
-                    }}
-                  >
-                    <Text
-                      style={{ color: 'white', fontWeight: '700' }}
-                    >
-                      Play
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => confirmRemove(item)}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 999,
-                      backgroundColor: 'rgba(220,0,0,0.9)',
-                    }}
-                  >
-                    <Text
-                      style={{ color: 'white', fontWeight: '800' }}
-                    >
-                      Delete
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setAthletePickerOpen(item)}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 999,
-                      backgroundColor: 'rgba(255,255,255,0.12)',
-                      borderWidth: 1,
-                      borderColor: 'white',
-                    }}
-                  >
-                    <Text
-                      style={{ color: 'white', fontWeight: '700' }}
-                    >
-                      Edit Athlete
-                    </Text>
-                  </TouchableOpacity>
-
-                  <View style={{ marginTop: 8, alignItems: 'center' }}>
-                    <UploadButton
-                      localUri={item.uri}
-                      uploaded={!!uploaded}
-                      sidecar={{
-                        videoPath: item.uri,
-                        athlete: item.athlete,
-                        sport: item.sport,
-                        createdAt: item.mtime ?? Date.now(),
-                      }}
-                      onUploaded={(key, url) => {
-                        const mapKey = keyFor(item);
-                        setUploadedMap((prev) => {
-                          const next = {
-                            ...prev,
-                            [mapKey]: { key, url, at: Date.now() },
-                          };
-                          AsyncStorage.setItem(
-                            UPLOADED_MAP_KEY,
-                            JSON.stringify(next),
-                          ).catch(() => {});
-                          return next;
-                        });
-                      }}
-                    />
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
-        </Pressable>
+        />
       );
     },
-    [routerPushPlayback, saveToPhotos, confirmRemove, uploadedMap, keyFor, openEditName],
+    [
+      uploadedMap,
+      keyFor,
+      routerPushPlayback,
+      confirmRemove,
+      openEditName,
+      saveToPhotos,
+      setAthletePickerOpen,
+      setUploadedMap,
+    ],
   );
 
   // Lazy thumbnails for viewable rows (now assetId-aware)
@@ -1066,9 +791,7 @@ export default function LibraryScreen() {
           justifyContent: 'space-between',
         }}
       >
-        <Text
-          style={{ color: 'white', fontSize: 20, fontWeight: '900' }}
-        >
+        <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
           Library
         </Text>
         <TouchableOpacity
@@ -1081,9 +804,7 @@ export default function LibraryScreen() {
             borderColor: 'white',
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '800' }}>
-            Refresh
-          </Text>
+          <Text style={{ color: 'white', fontWeight: '800' }}>Refresh</Text>
         </TouchableOpacity>
       </View>
 
@@ -1108,7 +829,8 @@ export default function LibraryScreen() {
               paddingVertical: 8,
               paddingHorizontal: 12,
               borderRadius: 999,
-              backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
+              backgroundColor:
+                view === k ? 'white' : 'rgba(255,255,255,0.12)',
               borderWidth: 1,
               borderColor: 'white',
             }}
@@ -1314,9 +1036,7 @@ export default function LibraryScreen() {
                   borderColor: 'white',
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '800' }}>
-                  Back
-                </Text>
+                <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
               </TouchableOpacity>
               <Text
                 style={{
@@ -1468,9 +1188,7 @@ export default function LibraryScreen() {
                   borderColor: 'white',
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '800' }}>
-                  Back
-                </Text>
+                <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
               </TouchableOpacity>
               <Text
                 style={{
@@ -1523,9 +1241,7 @@ export default function LibraryScreen() {
               }}
             >
               <Text style={{ color: 'white', fontWeight: '800' }}>{s}</Text>
-              <Text
-                style={{ color: 'white', opacity: 0.7 }}
-              >
+              <Text style={{ color: 'white', opacity: 0.7 }}>
                 {rowsBySport[s].length} videos
               </Text>
             </Pressable>
@@ -1556,9 +1272,7 @@ export default function LibraryScreen() {
                 borderColor: 'white',
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>
-                Back
-              </Text>
+              <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
             </TouchableOpacity>
             <Text
               style={{
