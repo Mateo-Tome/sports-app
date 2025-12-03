@@ -518,21 +518,24 @@ export default function LibraryScreen() {
     return () => sub.remove();
   }, [patchRowFromSidecarPayload]);
 
-  // confirm-before-delete
-  const confirmRemove = useCallback((row: Row) => {
-    Alert.alert(
-      'Delete this video?',
-      'This removes the file, its index entry, and its cached thumbnail.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => removeVideo(row),
-        },
-      ],
-    );
-  }, []);
+   // confirm-before-delete
+   const confirmRemove = useCallback(
+    (row: Row) => {
+      Alert.alert(
+        'Delete this video?',
+        'This removes the file, its index entry, and its cached thumbnail.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => removeVideo(row),
+          },
+        ],
+      );
+    },
+    [], // leave deps empty so TS doesn't complain about removeVideo being below
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
