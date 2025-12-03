@@ -10,7 +10,6 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { UploadButton } from '../../components/library/UploadButton';
 import {
   readIndex,
@@ -60,8 +59,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSportCardComponent } from '../../components/library/SportCardRegistry';
 
 const DIR = FileSystem.documentDirectory + 'videos/';
-const INDEX_PATH = DIR + 'index.json';
-const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
@@ -104,19 +101,6 @@ const slug = (s: string) =>
     .replace(/(^-|-$)/g, '') || 'unknown';
 const bytesToMB = (b?: number | null) =>
   b == null ? '—' : (b / (1024 * 1024)).toFixed(2) + ' MB';
-const baseNameNoExt = (p: string) => {
-  const name = p.split('/').pop() || '';
-  const i = name.lastIndexOf('.');
-  return i > 0 ? name.slice(0, i) : name;
-};
-// hash for unique thumb names even if basenames collide
-const hash = (s: string) => {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
-};
-const thumbNameFor = (videoUri: string) =>
-  `${baseNameNoExt(videoUri)}_${hash(videoUri)}.jpg`;
 
 // ----- bounded concurrency helper -----
 async function mapLimit<T, R>(
@@ -220,42 +204,6 @@ async function findByLooseBasename(
   } catch {}
   return null;
 }
-
-
-// ---------- thumbs (assetId aware) ----------
-async function fileExists(uri: string) {
-  try {
-    const info: any = await FileSystem.getInfoAsync(uri, {
-      size: false as any,
-    });
-    return !!info?.exists;
-  } catch {
-    return false;
-  }
-}
-
-async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
-  const { uri: tmp } = await VideoThumbnails.getThumbnailAsync(uri, {
-    time: t,
-    quality: 0.6,
-  });
-  await FileSystem.copyAsync({ from: tmp, to: dest });
-}
-
-async function safeThumbFromFileUri(videoUri: string, dest: string, atMs = 900) {
-  if (!(await fileExists(videoUri))) {
-    await new Promise((r) => setTimeout(r, 200));
-    if (!(await fileExists(videoUri))) {
-      throw new Error('File missing or not yet written: ' + videoUri);
-    }
-  }
-  try {
-    await tryMakeThumbFrom(videoUri, dest, atMs);
-  } catch {
-    await tryMakeThumbFrom(videoUri, dest, 0);
-  }
-}
-
 
 // ---------- retag / move ----------
 async function _retagVideo(
