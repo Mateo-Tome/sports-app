@@ -3,7 +3,10 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import type { CameraView } from 'expo-camera';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import ZoomableCameraView from '../../components/ZoomableCameraView';
+
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
@@ -634,29 +637,30 @@ export default function CameraScreen() {
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       {isFocused && shouldRenderCamera ? (
         <>
-          <Animated.View style={{ flex: 1, opacity: camOpacity }}>
-            <CameraView
-              ref={cameraRef}
-              style={{ flex: 1 }}
-              facing="back"
-              mode="video"
-              onCameraReady={() => {
-                console.log('[camera ready]');
-                setCameraReady(true);
-                fadeInCamera();
-              }}
-              onMountError={(e: any) => {
-                const msg = e?.message || (e as any)?.nativeEvent?.message || 'Camera mount error';
-                console.warn('[camera mount error]', e);
-                Alert.alert('Camera error', msg);
-                setCameraReady(false);
-                setTimeout(() => {
-                  setShouldRenderCamera(false);
-                  setTimeout(() => setShouldRenderCamera(true), 500);
-                }, 1000);
-              }}
-            />
-          </Animated.View>
+        <Animated.View style={{ flex: 1, opacity: camOpacity }}>
+  <ZoomableCameraView
+    ref={cameraRef}
+    style={{ flex: 1 }}
+    facing="back"
+    mode="video"
+    onCameraReady={() => {
+      console.log('[camera ready]');
+      setCameraReady(true);
+      fadeInCamera();
+    }}
+    onMountError={(e: any) => {
+      const msg = e?.message || (e as any)?.nativeEvent?.message || 'Camera mount error';
+      console.warn('[camera mount error]', e);
+      Alert.alert('Camera error', msg);
+      setCameraReady(false);
+      setTimeout(() => {
+        setShouldRenderCamera(false);
+        setTimeout(() => setShouldRenderCamera(true), 500);
+      }, 1000);
+    }}
+  />
+</Animated.View>
+
           {cameraReady && !isProcessing && (
             <View
               style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
