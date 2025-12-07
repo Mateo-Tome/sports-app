@@ -8,7 +8,6 @@ import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import ZoomableCameraView from '../../components/ZoomableCameraView';
 
 import * as FileSystem from 'expo-file-system';
-import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
 import { JSX, useEffect, useRef, useState } from 'react';
@@ -31,14 +30,15 @@ import type {
 } from '../../components/overlays/types';
 import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
 
-// ✅ NEW: use the extracted stitcher helper
+// ✅ extracted helpers
 import { stitchSegmentsWithFallback } from '../../lib/recording/segmentStitcher';
+import {
+  processHighlights,
+  saveToAppStorage,
+} from '../../lib/recording/videoStorage';
 
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
-const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
-const INDEX_PATH = VIDEOS_DIR + 'index.json';
-const HIGHLIGHTS_SPORT = 'highlights';
 const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
 
 // ---- Overlay registry (EASY EXTENSION POINT) -----------------
@@ -53,19 +53,13 @@ const overlayRegistry: Record<string, OverlayComponent> = {
   // 'basketball:default': BasketballOverlay,
 };
 
-// --- utils
+// --- utils (local to camera for segments/timing) ----
+
 const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   } catch {}
 };
-
-const slug = (s: string) =>
-  (s || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || 'unknown';
 
 const tsStamp = () => {
   const d = new Date();
@@ -79,112 +73,17 @@ const tsStamp = () => {
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
 
-const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
-
-// --- index/media
-type VideoMeta = {
-  uri: string;
-  displayName: string;
-  athlete: string;
-  sport: string;
-  createdAt: number;
-  assetId?: string;
-};
-
-async function readIndex(): Promise<VideoMeta[]> {
-  try {
-    const info = (await FileSystem.getInfoAsync(INDEX_PATH)) as any;
-    if (!info?.exists) return [];
-    const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
-    const list = JSON.parse(raw || '[]');
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
+// we still keep waitFor here (used by stopCurrentSegment)
+async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
+  const start = Date.now();
+  while (!pred()) {
+    await new Promise((r) => setTimeout(r, pollMs));
+    if (Date.now() - start > timeoutMs) break;
   }
 }
 
-async function writeIndexAtomic(list: VideoMeta[]) {
-  const tmp = INDEX_PATH + '.tmp';
-  await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
-  try {
-    await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true });
-  } catch {}
-  await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
-}
+// --- types used by overlays & sidecar payload ----
 
-async function appendVideoIndex(entry: VideoMeta) {
-  await ensureDir(VIDEOS_DIR);
-  const list = await readIndex();
-  list.unshift(entry);
-  await writeIndexAtomic(list);
-}
-
-async function importToPhotosAndAlbums(
-  fileUri: string,
-  athlete: string,
-  sport: string,
-) {
-  try {
-    const { granted } = await MediaLibrary.requestPermissionsAsync();
-    if (!granted) return undefined;
-    const asset = await MediaLibrary.createAssetAsync(fileUri);
-    const athleteAlbum = athlete?.trim() || 'Unassigned';
-    const sportAlbum = `${athleteAlbum} - ${sport?.trim() || 'unknown'}`;
-
-    let a = await MediaLibrary.getAlbumAsync(athleteAlbum);
-    if (!a) a = await MediaLibrary.createAlbumAsync(athleteAlbum, asset, false);
-    else await MediaLibrary.addAssetsToAlbumAsync([asset], a, false);
-
-    let s = await MediaLibrary.getAlbumAsync(sportAlbum);
-    if (!s) s = await MediaLibrary.createAlbumAsync(sportAlbum, asset, false);
-    else await MediaLibrary.addAssetsToAlbumAsync([asset], s, false);
-
-    return asset.id;
-  } catch {
-    return undefined;
-  }
-}
-
-const saveToAppStorage = async (
-  srcUri?: string | null,
-  athleteRaw?: string,
-  sportRaw?: string,
-) => {
-  if (!srcUri) {
-    Alert.alert('No video URI', 'Recording did not return a file path.');
-    return {
-      appUri: null as string | null,
-      assetId: undefined as string | undefined,
-    };
-  }
-  const athlete = (athleteRaw || '').trim() || 'Unassigned';
-  const sport = (sportRaw || '').trim() || 'unknown';
-  const dir = `${VIDEOS_DIR}${slug(athlete)}/${slug(sport)}/`;
-  await ensureDir(dir);
-  const ext = srcUri.split('.').pop()?.split('?')[0] || 'mp4';
-  const filename = `match_${tsStamp()}.${ext}`;
-  const destUri = dir + filename;
-
-  await FileSystem.copyAsync({ from: srcUri, to: destUri });
-  try {
-    await FileSystem.deleteAsync(srcUri, { idempotent: true });
-  } catch {}
-
-  const displayName = `${athlete} - ${sport} - ${new Date().toLocaleString()}`;
-  const assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
-  await appendVideoIndex({
-    uri: destUri,
-    displayName,
-    athlete,
-    sport,
-    createdAt: Date.now(),
-    assetId,
-  });
-
-  return { appUri: destUri, assetId };
-};
-
-// --- sidecar/highlights
 type Actor = 'home' | 'opponent' | 'neutral';
 type MatchEvent = {
   t: number;
@@ -195,99 +94,8 @@ type MatchEvent = {
   scoreAfter?: { home: number; opponent: number };
 };
 
-async function writeHighlightSidecar(
-  clipUri: string,
-  athlete: string,
-  fromT: number,
-  duration: number,
-) {
-  try {
-    const jsonUri = clipUri.replace(/\.[^/.]+$/, '') + '.json';
-    await FileSystem.writeAsStringAsync(
-      jsonUri,
-      JSON.stringify({
-        athlete,
-        sport: HIGHLIGHTS_SPORT,
-        createdAt: Date.now(),
-        source: 'auto-clip',
-        window: { t: fromT, duration },
-      }),
-    );
-  } catch {}
-}
+// --- screen ---------------------------------------------------
 
-async function addClipToIndexAndAlbums(clipUri: string, athlete: string) {
-  const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
-  const assetId = await importToPhotosAndAlbums(
-    clipUri,
-    athlete,
-    HIGHLIGHTS_SPORT,
-  );
-  await appendVideoIndex({
-    uri: clipUri,
-    displayName,
-    athlete,
-    sport: HIGHLIGHTS_SPORT,
-    createdAt: Date.now(),
-    assetId,
-  });
-}
-
-async function destForHighlight(athlete: string) {
-  const base = `${VIDEOS_DIR}${slug(athlete)}/${slug(HIGHLIGHTS_SPORT)}/`;
-  await ensureDir(base);
-  return base;
-}
-
-const processHighlights = async (
-  videoUri: string,
-  markers: number[],
-  durationSec: number,
-  athleteName: string,
-) => {
-  if (!markers.length) return [];
-  const destDir = await destForHighlight(athleteName);
-  const results: { url: string; markerTime: number }[] = [];
-  for (let i = 0; i < markers.length; i++) {
-    const start = Math.max(0, markers[i]);
-    const outPath = `${destDir}clip_${i + 1}_${tsStamp()}.mp4`;
-
-    let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(
-      videoUri,
-    )} -c copy ${q(outPath)}`;
-    let s = await FFmpegKit.execute(cmd);
-    if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName);
-      await writeHighlightSidecar(outPath, athleteName, start, durationSec);
-      results.push({ url: outPath, markerTime: start });
-      continue;
-    }
-
-    cmd = `-y -ss ${start} -t ${durationSec} -i ${q(
-      videoUri,
-    )} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(
-      outPath,
-    )}`;
-    s = await FFmpegKit.execute(cmd);
-    if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName);
-      await writeHighlightSidecar(outPath, athleteName, start, durationSec);
-      results.push({ url: outPath, markerTime: start });
-    }
-  }
-  return results;
-};
-
-// ⬇️ we KEEP waitFor (still used), but REMOVE the old concatSegments here
-async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
-  const start = Date.now();
-  while (!pred()) {
-    await new Promise((r) => setTimeout(r, pollMs));
-    if (Date.now() - start > timeoutMs) break;
-  }
-}
-
-// --- screen
 export default function CameraScreen() {
   const params = useLocalSearchParams<{
     athlete?: string | string[];
@@ -1047,6 +855,8 @@ export default function CameraScreen() {
     </View>
   );
 }
+
+// ---------- finalizeRecording stays here, but calls helpers ----------
 
 async function finalizeRecording(
   segments: string[],
