@@ -19,7 +19,7 @@ import {
   type IndexMeta,
 } from '../../lib/library/indexStore';
 
-// UPDATED: default import
+// retagging logic
 import retagVideo from '../../lib/library/retag';
 
 import { readOutcomeFor } from '../../lib/library/sidecars';
@@ -51,7 +51,6 @@ import {
   ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
 
 const DIR = FileSystem.documentDirectory + 'videos/';
 const ATHLETES_KEY = 'athletes:list';
@@ -114,7 +113,7 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
-  // NEW: Title editor modal state
+  // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
   const [titleInput, setTitleInput] = useState('');
 
@@ -319,7 +318,7 @@ export default function LibraryScreen() {
           Alert.alert('Deleted', 'Video removed.');
           await load();
         } catch (e: any) {
-          console.log('delete error:', e);
+          console.log('delete error', e);
           Alert.alert('Delete failed', String(e?.message ?? e));
         }
       });
@@ -385,46 +384,54 @@ export default function LibraryScreen() {
     [load],
   );
 
-  // ====== GROUPINGS ======
-  const allRows = useMemo(
-    () => [...rows].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)),
-    [rows],
-  );
+  // ====== GROUPINGS (inline helper instead of separate module) ======
+  const {
+    allRows,
+    rowsByAthlete,
+    rowsBySport,
+    athleteSportsMap,
+  } = useMemo(() => {
+    // Sort newest first
+    const allRowsLocal: Row[] = [...rows].sort(
+      (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
+    );
 
-  const rowsByAthlete = useMemo(() => {
-    const map: Record<string, Row[]> = {};
-    for (const r of allRows) {
-      const k = r.athlete || 'Unassigned';
-      (map[k] ||= []).push(r);
-    }
-    return map;
-  }, [allRows]);
+    const rowsByAthleteLocal: Record<string, Row[]> = {};
+    const rowsBySportLocal: Record<string, Row[]> = {};
+    const athleteSportsMapLocal: Record<string, Record<string, Row[]>> = {};
 
-  const rowsBySport = useMemo(() => {
-    const map: Record<string, Row[]> = {};
-    for (const r of allRows) {
-      const k = r.sport || 'unknown';
-      (map[k] ||= []).push(r);
-    }
-    return map;
-  }, [allRows]);
+    for (const r of allRowsLocal) {
+      const athlete = r.athlete || 'Unassigned';
+      const sport = r.sport || 'unknown';
 
-  const athleteSportsMap = useMemo(() => {
-    const m: Record<string, Record<string, Row[]>> = {};
-    for (const r of allRows) {
-      const a = r.athlete || 'Unassigned';
-      const s = r.sport || 'unknown';
-      (m[a] ||= {});
-      (m[a][s] ||= []);
-      m[a][s].push(r);
+      // By athlete
+      (rowsByAthleteLocal[athlete] ||= []).push(r);
+
+      // By sport
+      (rowsBySportLocal[sport] ||= []).push(r);
+
+      // Nested athlete ➜ sport ➜ rows
+      (athleteSportsMapLocal[athlete] ||= {});
+      (athleteSportsMapLocal[athlete][sport] ||= []);
+      athleteSportsMapLocal[athlete][sport].push(r);
     }
-    for (const a of Object.keys(m)) {
-      for (const s of Object.keys(m[a])) {
-        m[a][s].sort((x, y) => (y.mtime ?? 0) - (x.mtime ?? 0));
+
+    // Ensure athleteSportsMap lists are also sorted newest-first
+    for (const a of Object.keys(athleteSportsMapLocal)) {
+      for (const s of Object.keys(athleteSportsMapLocal[a])) {
+        athleteSportsMapLocal[a][s].sort(
+          (x, y) => (y.mtime ?? 0) - (x.mtime ?? 0),
+        );
       }
     }
-    return m;
-  }, [allRows]);
+
+    return {
+      allRows: allRowsLocal,
+      rowsByAthlete: rowsByAthleteLocal,
+      rowsBySport: rowsBySportLocal,
+      athleteSportsMap: athleteSportsMapLocal,
+    };
+  }, [rows]);
 
   const photoFor = useCallback(
     (name: string) =>
@@ -437,7 +444,7 @@ export default function LibraryScreen() {
     setTitleInput(row.displayName || '');
   }, []);
 
-  // ====== FlatList row renderer (now delegates to LibraryVideoRow) ======
+  // ====== FlatList row renderer (delegates to LibraryVideoRow) ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
       const uploaded = !!uploadedMap[keyFor(item)];
@@ -480,7 +487,7 @@ export default function LibraryScreen() {
     ],
   );
 
-  // Lazy thumbnails for viewable rows (now assetId-aware)
+  // Lazy thumbnails for viewable rows (assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
   const onViewableItemsChanged = useRef(
     ({ changed }: { changed: ViewToken[] }) => {
@@ -1191,7 +1198,7 @@ export default function LibraryScreen() {
         </View>
       </Modal>
 
-      {/* NEW: Edit Title modal */}
+      {/* Edit Title modal */}
       <Modal
         visible={!!titleEditRow}
         transparent
