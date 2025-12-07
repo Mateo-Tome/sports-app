@@ -32,6 +32,21 @@ export const thumbNameFor = (videoUri: string) =>
 export const thumbPathFor = (videoUri: string) =>
   `${THUMBS_DIR}${thumbNameFor(videoUri)}`;
 
+// Normalize file URIs a bit for safety
+const normalizeVideoUri = (uri: string) => {
+  // If it's already a file:// or ph:// or http(s):// etc, leave it.
+  if (
+    uri.startsWith('file://') ||
+    uri.startsWith('ph://') ||
+    uri.startsWith('http://') ||
+    uri.startsWith('https://')
+  ) {
+    return uri;
+  }
+  // Otherwise assume it's a bare path and prefix with file://
+  return `file://${uri}`;
+};
+
 async function fileExists(uri: string) {
   try {
     const info: any = await FileSystem.getInfoAsync(uri, {
@@ -52,19 +67,25 @@ async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
 }
 
 async function safeThumbFromFileUri(
-  videoUri: string,
+  rawVideoUri: string,
   dest: string,
   atMs = 900,
 ) {
+  const videoUri = normalizeVideoUri(rawVideoUri);
+
+  // Double-check the file actually exists on disk first
   if (!(await fileExists(videoUri))) {
+    // give it a tiny grace period in case it's just been written
     await new Promise((r) => setTimeout(r, 200));
     if (!(await fileExists(videoUri))) {
       throw new Error('File missing or not yet written: ' + videoUri);
     }
   }
+
   try {
     await tryMakeThumbFrom(videoUri, dest, atMs);
   } catch {
+    // if "time near 900ms" fails (very short video), fallback to 0ms
     await tryMakeThumbFrom(videoUri, dest, 0);
   }
 }
@@ -112,11 +133,17 @@ export async function getOrCreateThumb(
       console.log('[thumbs] primary failed for', videoUri, e);
     }
 
-    // 2) Fallback: use Photos asset localUri (best-effort; permission request is platform-safe)
+    // 2) Fallback: use Photos asset localUri (best-effort; only if we truly have read access)
     if (assetId) {
       try {
         const perm = await MediaLibrary.requestPermissionsAsync();
-        if (perm.granted) {
+        const accessPrivs = (perm as any)?.accessPrivileges;
+
+        // On iOS, accessPrivileges can be 'all' | 'limited' | 'none'
+        const canReadFromPhotos =
+          perm.granted && accessPrivs && accessPrivs !== 'addOnly';
+
+        if (canReadFromPhotos) {
           const asset = await MediaLibrary.getAssetInfoAsync(assetId);
           const local = asset?.localUri || asset?.uri;
           if (local) {
@@ -124,6 +151,12 @@ export async function getOrCreateThumb(
             const ok2: any = await FileSystem.getInfoAsync(dest);
             if (ok2?.exists) return dest;
           }
+        } else {
+          console.log(
+            '[thumbs] asset fallback skipped or no read access',
+            assetId,
+            accessPrivs,
+          );
         }
       } catch (e2) {
         console.log('[thumbs] asset fallback failed', assetId, e2);
