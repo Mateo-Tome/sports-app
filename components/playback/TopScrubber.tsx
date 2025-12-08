@@ -2,9 +2,9 @@
 import { useCallback, useRef, useState } from 'react';
 import { Dimensions, Text, View } from 'react-native';
 import {
-    PanGestureHandler,
-    PanGestureHandlerGestureEvent,
-    State,
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  State,
 } from 'react-native-gesture-handler';
 
 type Insets = { top: number; right: number; bottom: number; left: number };

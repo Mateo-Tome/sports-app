@@ -14,7 +14,7 @@ import {
 import {
   readIndex,
   writeIndexAtomic,
-  type IndexMeta
+  type IndexMeta,
 } from '../../lib/library/indexStore';
 
 // retagging logic
@@ -39,10 +39,15 @@ import {
 import {
   Alert,
   DeviceEventEmitter,
+  Image,
   Modal,
+  Pressable,
+  ScrollView,
   StyleSheet,
+  Text,
+  TextInput,
   View,
-  ViewToken
+  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -262,25 +267,6 @@ export default function LibraryScreen() {
     return () => sub.remove();
   }, [patchRowFromSidecarPayload]);
 
-  // confirm-before-delete
-  const confirmRemove = useCallback(
-    (row: Row) => {
-      Alert.alert(
-        'Delete this video?',
-        'This removes the file, its index entry, and its cached thumbnail.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => removeVideo(row),
-          },
-        ],
-      );
-    },
-    [], // leave deps empty so TS doesn't complain about removeVideo being below
-  );
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -335,6 +321,25 @@ export default function LibraryScreen() {
     [load],
   );
 
+  // confirm-before-delete
+  const confirmRemove = useCallback(
+    (row: Row) => {
+      Alert.alert(
+        'Delete this video?',
+        'This removes the file, its index entry, and its cached thumbnail.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => removeVideo(row),
+          },
+        ],
+      );
+    },
+    [removeVideo],
+  );
+
   const saveToPhotos = useCallback(async (uri: string) => {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted) {
@@ -363,20 +368,18 @@ export default function LibraryScreen() {
     [router],
   );
 
-  // >>> define doEditAthlete used by the modal (serialized via FS queue) <<<
+  // >>> define doEditAthlete used by the modal <<<
   const doEditAthlete = useCallback(
     async (row: Row, newAthlete: string) => {
       try {
-        await enqueueFs(() =>
-          retagVideo(
-            {
-              uri: row.uri,
-              oldAthlete: row.athlete,
-              sportKey: row.sport,
-              assetId: row.assetId,
-            },
-            newAthlete,
-          ),
+        await retagVideo(
+          {
+            uri: row.uri,
+            oldAthlete: row.athlete,
+            sportKey: row.sport,
+            assetId: row.assetId,
+          },
+          newAthlete,
         );
         await load();
       } catch (e: any) {
@@ -453,6 +456,85 @@ export default function LibraryScreen() {
     setTitleInput(row.displayName || '');
   }, []);
 
+  // --- title edit helpers ---
+  const closeTitleModal = useCallback(() => {
+    setTitleEditRow(null);
+    setTitleInput('');
+  }, []);
+
+  const handleConfirmTitleChange = useCallback(async () => {
+    if (!titleEditRow) {
+      closeTitleModal();
+      return;
+    }
+
+    const trimmed = titleInput.trim();
+    if (!trimmed) {
+      Alert.alert('Enter a title', 'Please enter a video title.');
+      return;
+    }
+
+    try {
+      const list = await readIndex();
+      const updated: IndexMeta[] = list.map((e) =>
+        e.uri === titleEditRow.uri
+          ? {
+              ...e,
+              displayName: trimmed,
+            }
+          : e,
+      );
+      await writeIndexAtomic(updated);
+      await load();
+    } catch (e: any) {
+      console.log('title update error', e);
+      Alert.alert('Update failed', String(e?.message ?? e));
+    } finally {
+      closeTitleModal();
+    }
+  }, [titleEditRow, titleInput, closeTitleModal, load]);
+
+  // --- athlete edit helpers ---
+  const closeAthleteModal = useCallback(() => {
+    setAthletePickerOpen(null);
+    setNewName('');
+  }, []);
+
+  const handlePressEditAthlete = useCallback((row: Row) => {
+    setAthletePickerOpen(row);
+    setNewName('');
+  }, []);
+
+  const handleAddAndApplyNewAthlete = useCallback(async () => {
+    if (!athletePickerOpen) {
+      closeAthleteModal();
+      return;
+    }
+
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      Alert.alert('Enter a name', 'Please enter an athlete name.');
+      return;
+    }
+
+    // ensure this new athlete exists in the list for future use
+    const exists = athleteList.some(
+      (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+    let nextList = athleteList;
+    if (!exists) {
+      const newEntry = { id: `${Date.now()}`, name: trimmed };
+      nextList = [newEntry, ...athleteList];
+      try {
+        await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(nextList));
+      } catch {}
+      setAthleteList(nextList);
+    }
+
+    await doEditAthlete(athletePickerOpen, trimmed);
+    closeAthleteModal();
+  }, [athletePickerOpen, newName, athleteList, doEditAthlete, closeAthleteModal]);
+
   // ====== FlatList row renderer (delegates to LibraryVideoRow) ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
@@ -464,7 +546,7 @@ export default function LibraryScreen() {
           uploaded={uploaded}
           onPressPlay={() => routerPushPlayback(item)}
           onPressDelete={() => confirmRemove(item)}
-          onPressEditAthlete={() => setAthletePickerOpen(item)}
+          onPressEditAthlete={() => handlePressEditAthlete(item)}
           onPressEditTitle={() => openEditName(item)}
           onPressSaveToPhotos={() => saveToPhotos(item.uri)}
           onUploaded={(key, url) => {
@@ -489,9 +571,9 @@ export default function LibraryScreen() {
       keyFor,
       routerPushPlayback,
       confirmRemove,
+      handlePressEditAthlete,
       openEditName,
       saveToPhotos,
-      setAthletePickerOpen,
       setUploadedMap,
     ],
   );
@@ -566,9 +648,271 @@ export default function LibraryScreen() {
         visible={!!athletePickerOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setAthletePickerOpen(null)}
+        onRequestClose={closeAthleteModal}
       >
-        {/* ... unchanged modal content ... */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+          }}
+        >
+          <View
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              borderRadius: 16,
+              padding: 16,
+              backgroundColor: '#121212',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.15)',
+            }}
+          >
+            <Text
+              style={{
+                color: 'white',
+                fontWeight: '900',
+                fontSize: 18,
+                marginBottom: 4,
+                textAlign: 'center',
+              }}
+            >
+              Change Athlete
+            </Text>
+
+            {athletePickerOpen && (
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.7)',
+                  fontSize: 13,
+                  marginBottom: 8,
+                  textAlign: 'center',
+                }}
+              >
+                Current:{' '}
+                <Text style={{ fontWeight: '800', color: '#F97316' }}>
+                  {athletePickerOpen.athlete || 'Unassigned'}
+                </Text>
+              </Text>
+            )}
+
+            {/* Pick existing athlete */}
+            <Text
+              style={{
+                color: 'rgba(255,255,255,0.8)',
+                fontSize: 13,
+                marginTop: 4,
+                marginBottom: 4,
+              }}
+            >
+              Pick an athlete
+            </Text>
+
+            <ScrollView
+              style={{ maxHeight: 260, marginBottom: 8 }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+            >
+              {/* Unassigned */}
+              <Pressable
+                onPress={async () => {
+                  if (!athletePickerOpen) return;
+                  await doEditAthlete(athletePickerOpen, 'Unassigned');
+                  closeAthleteModal();
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  marginBottom: 6,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                }}
+              >
+                <View
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    backgroundColor: 'rgba(255,255,255,0.15)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{ color: 'white', fontSize: 16, fontWeight: '800' }}
+                  >
+                    –
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    color: 'white',
+                    fontWeight: '700',
+                    fontSize: 14,
+                  }}
+                >
+                  Unassigned
+                </Text>
+              </Pressable>
+
+              {athleteList.map((a) => (
+                <Pressable
+                  key={a.id}
+                  onPress={async () => {
+                    if (!athletePickerOpen) return;
+                    await doEditAthlete(athletePickerOpen, a.name);
+                    closeAthleteModal();
+                  }}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    marginBottom: 6,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                  }}
+                >
+                  {a.photoUri ? (
+                    <Image
+                      source={{ uri: a.photoUri }}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: 'rgba(255,255,255,0.15)',
+                      }}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: 'rgba(255,255,255,0.15)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: 'white',
+                          fontSize: 16,
+                          fontWeight: '700',
+                        }}
+                      >
+                        {a.name.slice(0, 1).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+
+                  <Text
+                    style={{
+                      color: 'white',
+                      fontWeight: '700',
+                      fontSize: 14,
+                      flexShrink: 1,
+                    }}
+                  >
+                    {a.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <View
+              style={{
+                height: 1,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                marginVertical: 8,
+              }}
+            />
+
+            {/* New athlete entry */}
+            <Text
+              style={{
+                color: 'rgba(255,255,255,0.8)',
+                fontSize: 13,
+                marginBottom: 4,
+              }}
+            >
+              Or add a new athlete
+            </Text>
+
+            <TextInput
+              value={newName}
+              onChangeText={setNewName}
+              placeholder="Type athlete name"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={{
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.25)',
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                color: 'white',
+                marginBottom: 10,
+                backgroundColor: 'rgba(0,0,0,0.35)',
+              }}
+              returnKeyType="done"
+              onSubmitEditing={handleAddAndApplyNewAthlete}
+            />
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginTop: 4,
+              }}
+            >
+              <Pressable
+                onPress={closeAthleteModal}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'white',
+                    fontWeight: '700',
+                    fontSize: 13,
+                  }}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleAddAndApplyNewAthlete}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  backgroundColor: 'white',
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'black',
+                    fontWeight: '800',
+                    fontSize: 13,
+                  }}
+                >
+                  Add & Apply
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* Edit Title modal */}
@@ -576,12 +920,135 @@ export default function LibraryScreen() {
         visible={!!titleEditRow}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          setTitleEditRow(null);
-          setTitleInput('');
-        }}
+        onRequestClose={closeTitleModal}
       >
-        {/* ... unchanged modal content ... */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+          }}
+        >
+          <View
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              borderRadius: 16,
+              padding: 16,
+              backgroundColor: '#121212',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.15)',
+            }}
+          >
+            <Text
+              style={{
+                color: 'white',
+                fontWeight: '900',
+                fontSize: 18,
+                marginBottom: 4,
+                textAlign: 'center',
+              }}
+            >
+              Edit Title
+            </Text>
+
+            {titleEditRow && (
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.75)',
+                  fontSize: 13,
+                  marginBottom: 8,
+                  textAlign: 'center',
+                }}
+              >
+                Current:{' '}
+                <Text style={{ fontWeight: '800', color: '#F97316' }}>
+                  {titleEditRow.displayName}
+                </Text>
+              </Text>
+            )}
+
+            <Text
+              style={{
+                color: 'rgba(255,255,255,0.85)',
+                fontSize: 13,
+                marginBottom: 4,
+              }}
+            >
+              New title
+            </Text>
+
+            <TextInput
+              value={titleInput}
+              onChangeText={setTitleInput}
+              placeholder="Type video title"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={{
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.25)',
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                color: 'white',
+                marginBottom: 10,
+                backgroundColor: 'rgba(0,0,0,0.35)',
+              }}
+              returnKeyType="done"
+              onSubmitEditing={handleConfirmTitleChange}
+            />
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginTop: 4,
+              }}
+            >
+              <Pressable
+                onPress={closeTitleModal}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'white',
+                    fontWeight: '700',
+                    fontSize: 13,
+                  }}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleConfirmTitleChange}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  backgroundColor: 'white',
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'black',
+                    fontWeight: '800',
+                    fontSize: 13,
+                  }}
+                >
+                  Save
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );
