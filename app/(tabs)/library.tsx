@@ -28,6 +28,7 @@ import {
 } from '../../lib/library/thumbs';
 
 import EditAthleteModal from '../../components/library/EditAthleteModal';
+import EditTitleModal from '../../components/library/EditTitleModal';
 import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
 
 import {
@@ -42,8 +43,6 @@ import {
   DeviceEventEmitter,
   Modal,
   StyleSheet,
-  Text,
-  TextInput,
   View,
   ViewToken,
 } from 'react-native';
@@ -109,7 +108,6 @@ export default function LibraryScreen() {
 
   // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
-  const [titleInput, setTitleInput] = useState('');
 
   // segmented state
   const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
@@ -448,46 +446,47 @@ export default function LibraryScreen() {
 
   const openEditName = useCallback((row: Row) => {
     setTitleEditRow(row);
-    setTitleInput(row.displayName || '');
   }, []);
 
   // --- title edit helpers ---
   const closeTitleModal = useCallback(() => {
     setTitleEditRow(null);
-    setTitleInput('');
   }, []);
 
-  const handleConfirmTitleChange = useCallback(async () => {
-    if (!titleEditRow) {
-      closeTitleModal();
-      return;
-    }
+  const handleSubmitTitle = useCallback(
+    async (newTitle: string) => {
+      if (!titleEditRow) {
+        closeTitleModal();
+        return;
+      }
 
-    const trimmed = titleInput.trim();
-    if (!trimmed) {
-      Alert.alert('Enter a title', 'Please enter a video title.');
-      return;
-    }
+      const trimmed = newTitle.trim();
+      if (!trimmed) {
+        Alert.alert('Enter a title', 'Please enter a video title.');
+        return;
+      }
 
-    try {
-      const list = await readIndex();
-      const updated: IndexMeta[] = list.map((e) =>
-        e.uri === titleEditRow.uri
-          ? {
-              ...e,
-              displayName: trimmed,
-            }
-          : e,
-      );
-      await writeIndexAtomic(updated);
-      await load();
-    } catch (e: any) {
-      console.log('title update error', e);
-      Alert.alert('Update failed', String(e?.message ?? e));
-    } finally {
-      closeTitleModal();
-    }
-  }, [titleEditRow, titleInput, closeTitleModal, load]);
+      try {
+        const list = await readIndex();
+        const updated: IndexMeta[] = list.map((e) =>
+          e.uri === titleEditRow.uri
+            ? {
+                ...e,
+                displayName: trimmed,
+              }
+            : e,
+        );
+        await writeIndexAtomic(updated);
+        await load();
+      } catch (e: any) {
+        console.log('title update error', e);
+        Alert.alert('Update failed', String(e?.message ?? e));
+      } finally {
+        closeTitleModal();
+      }
+    },
+    [titleEditRow, closeTitleModal, load],
+  );
 
   // --- athlete edit helpers (wire to modal) ---
   const handlePressEditAthlete = useCallback((row: Row) => {
@@ -643,7 +642,7 @@ export default function LibraryScreen() {
 
       <Modal visible={false} />
 
-      {/* Edit Athlete modal (refactored into its own component) */}
+      {/* Edit Athlete modal (own component) */}
       <EditAthleteModal
         visible={!!athletePickerOpen}
         row={athletePickerOpen}
@@ -653,131 +652,13 @@ export default function LibraryScreen() {
         onSubmitNewAthlete={handleSubmitNewAthlete}
       />
 
-      {/* Edit Title modal */}
-      <Modal
+      {/* Edit Title modal (own component) */}
+      <EditTitleModal
         visible={!!titleEditRow}
-        transparent
-        animationType="fade"
-        onRequestClose={closeTitleModal}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.65)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingHorizontal: 16,
-          }}
-        >
-          <View
-            style={{
-              width: '100%',
-              maxWidth: 480,
-              borderRadius: 16,
-              padding: 16,
-              backgroundColor: '#121212',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.15)',
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 18,
-                marginBottom: 4,
-                textAlign: 'center',
-              }}
-            >
-              Edit Title
-            </Text>
-
-            {titleEditRow && (
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.75)',
-                  fontSize: 13,
-                  marginBottom: 8,
-                  textAlign: 'center',
-                }}
-              >
-                Current:{' '}
-                <Text style={{ fontWeight: '800', color: '#F97316' }}>
-                  {titleEditRow.displayName}
-                </Text>
-              </Text>
-            )}
-
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.85)',
-                fontSize: 13,
-                marginBottom: 4,
-              }}
-            >
-              New title
-            </Text>
-
-            <TextInput
-              value={titleInput}
-              onChangeText={setTitleInput}
-              placeholder="Type video title"
-              placeholderTextColor="rgba(255,255,255,0.4)"
-              style={{
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.25)',
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                color: 'white',
-                marginBottom: 10,
-                backgroundColor: 'rgba(0,0,0,0.35)',
-              }}
-              returnKeyType="done"
-              onSubmitEditing={handleConfirmTitleChange}
-            />
-
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'flex-end',
-                gap: 10,
-                marginTop: 4,
-              }}
-            >
-              <Text
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
-                  color: 'white',
-                  fontWeight: '700',
-                  fontSize: 13,
-                }}
-                onPress={closeTitleModal}
-              >
-                Cancel
-              </Text>
-
-              <Text
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 999,
-                  backgroundColor: 'white',
-                  color: 'black',
-                  fontWeight: '800',
-                  fontSize: 13,
-                }}
-                onPress={handleConfirmTitleChange}
-              >
-                Save
-              </Text>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        row={titleEditRow}
+        onClose={closeTitleModal}
+        onSubmit={handleSubmitTitle}
+      />
     </View>
   );
 }
