@@ -6,11 +6,16 @@ import { readIndex } from './indexStore';
 
 const THUMBS_DIR = FileSystem.cacheDirectory + 'thumbs/';
 
+// Track URIs that have consistently failed so we don't spam retries
+const failedThumbs = new Set<string>();
+
 // local ensureDir just for thumbs
 const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  } catch {}
+  } catch {
+    // directory already exists or cannot be created – ignore
+  }
 };
 
 const baseNameNoExt = (p: string) => {
@@ -34,16 +39,15 @@ export const thumbPathFor = (videoUri: string) =>
 
 // Normalize file URIs a bit for safety
 const normalizeVideoUri = (uri: string) => {
-  // If it's already a file:// or ph:// or http(s):// etc, leave it.
   if (
     uri.startsWith('file://') ||
     uri.startsWith('ph://') ||
+    uri.startsWith('assets-library://') ||
     uri.startsWith('http://') ||
     uri.startsWith('https://')
   ) {
     return uri;
   }
-  // Otherwise assume it's a bare path and prefix with file://
   return `file://${uri}`;
 };
 
@@ -58,7 +62,7 @@ async function fileExists(uri: string) {
   }
 }
 
-async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
+async function tryMakeThumbFromExpo(uri: string, dest: string, t: number) {
   const { uri: tmp } = await VideoThumbnails.getThumbnailAsync(uri, {
     time: t,
     quality: 0.6,
@@ -66,27 +70,36 @@ async function tryMakeThumbFrom(uri: string, dest: string, t: number) {
   await FileSystem.copyAsync({ from: tmp, to: dest });
 }
 
+/**
+ * Try to generate a thumbnail from a local file/URI using expo-video-thumbnails.
+ * - Handles file://, ph:// and assets-library://.
+ * - Tries a later frame first, then falls back to 0ms.
+ */
 async function safeThumbFromFileUri(
   rawVideoUri: string,
   dest: string,
   atMs = 900,
 ) {
-  const videoUri = normalizeVideoUri(rawVideoUri);
+  const uri = normalizeVideoUri(rawVideoUri);
 
-  // Double-check the file actually exists on disk first
-  if (!(await fileExists(videoUri))) {
-    // give it a tiny grace period in case it's just been written
-    await new Promise((r) => setTimeout(r, 200));
-    if (!(await fileExists(videoUri))) {
-      throw new Error('File missing or not yet written: ' + videoUri);
+  // For real files on disk, make sure they exist first.
+  if (!uri.startsWith('ph://') && !uri.startsWith('assets-library://')) {
+    if (!(await fileExists(uri))) {
+      // Tiny grace delay in case it's still being written
+      await new Promise((r) => setTimeout(r, 200));
+      if (!(await fileExists(uri))) {
+        throw new Error('File missing or not yet written: ' + uri);
+      }
     }
   }
 
+  // 1) Try at the requested time
   try {
-    await tryMakeThumbFrom(videoUri, dest, atMs);
+    await tryMakeThumbFromExpo(uri, dest, atMs);
+    return;
   } catch {
-    // if "time near 900ms" fails (very short video), fallback to 0ms
-    await tryMakeThumbFrom(videoUri, dest, 0);
+    // 2) Fallback to 0ms for very short clips
+    await tryMakeThumbFromExpo(uri, dest, 0);
   }
 }
 
@@ -120,17 +133,22 @@ export async function getOrCreateThumb(
     await ensureDir(THUMBS_DIR);
     const dest = thumbPathFor(videoUri);
 
-    // already cached?
+    // Already cached?
     const info: any = await FileSystem.getInfoAsync(dest);
     if (info?.exists) return dest;
+
+    // If we've already proven this URI is hopeless, don't hammer it.
+    if (failedThumbs.has(videoUri)) {
+      return null;
+    }
 
     // 1) Try the actual file path first (works for file:// in app storage)
     try {
       await safeThumbFromFileUri(videoUri, dest, 900);
       const ok: any = await FileSystem.getInfoAsync(dest);
       if (ok?.exists) return dest;
-    } catch (e) {
-      console.log('[thumbs] primary failed for', videoUri, e);
+    } catch {
+      // swallow – we'll try fallbacks below
     }
 
     // 2) Fallback: use Photos asset localUri (best-effort; only if we truly have read access)
@@ -139,9 +157,12 @@ export async function getOrCreateThumb(
         const perm = await MediaLibrary.requestPermissionsAsync();
         const accessPrivs = (perm as any)?.accessPrivileges;
 
-        // On iOS, accessPrivileges can be 'all' | 'limited' | 'none'
+        // On iOS, accessPrivileges can be 'all' | 'limited' | 'none' | 'addOnly'
         const canReadFromPhotos =
-          perm.granted && accessPrivs && accessPrivs !== 'addOnly';
+          perm.granted &&
+          accessPrivs &&
+          accessPrivs !== 'addOnly' &&
+          accessPrivs !== 'none';
 
         if (canReadFromPhotos) {
           const asset = await MediaLibrary.getAssetInfoAsync(assetId);
@@ -151,21 +172,17 @@ export async function getOrCreateThumb(
             const ok2: any = await FileSystem.getInfoAsync(dest);
             if (ok2?.exists) return dest;
           }
-        } else {
-          console.log(
-            '[thumbs] asset fallback skipped or no read access',
-            assetId,
-            accessPrivs,
-          );
         }
-      } catch (e2) {
-        console.log('[thumbs] asset fallback failed', assetId, e2);
+      } catch {
+        // If Photos refuses to serve the asset, just treat as no-thumb.
       }
     }
 
+    // Mark as failed so we don't keep retrying this URI
+    failedThumbs.add(videoUri);
     return null;
-  } catch (e) {
-    console.log('[thumbs] error', e);
+  } catch {
+    failedThumbs.add(videoUri);
     return null;
   }
 }
@@ -198,7 +215,9 @@ export async function sweepOrphanThumbs(indexUris?: string[]) {
               idempotent: true,
             });
             removed++;
-          } catch {}
+          } catch {
+            // ignore individual delete failures
+          }
         }
       },
     );
