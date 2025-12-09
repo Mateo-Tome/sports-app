@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getStorage } from 'firebase/storage';
 
-// Keep the typed imports you need:
+// Typed imports you need:
 import {
   getAuth,
   initializeAuth,
@@ -11,8 +11,7 @@ import {
   type User,
 } from 'firebase/auth';
 
-// 👇 Bring in the whole auth namespace to access getReactNativePersistence
-// without TS yelling about the named export. At runtime it's there.
+// Namespace import to access getReactNativePersistence at runtime
 import * as AuthNS from 'firebase/auth';
 
 const firebaseConfig = {
@@ -24,9 +23,10 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID!,
 };
 
+// Initialize Firebase app once
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// Use RN persistence so the anon user survives app restarts
+// Use React Native persistence so the anon user survives app restarts
 const auth = (() => {
   try {
     return initializeAuth(app, {

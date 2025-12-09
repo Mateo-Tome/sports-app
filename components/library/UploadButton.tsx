@@ -3,6 +3,8 @@ import * as FileSystem from 'expo-file-system';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 
+import { addDoc, collection, getFirestore } from 'firebase/firestore';
+import { app, ensureAnonymous } from '../../lib/firebase';
 import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
 
 // Small helper: read the full sidecar JSON for a given video URI (for upload).
@@ -56,6 +58,17 @@ export type UploadButtonProps = {
   onUploaded?: (cloudKey: string, url: string) => void;
 };
 
+// simple random shareId
+function randomShareId(length = 12): string {
+  const chars =
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
 export function UploadButton({
   localUri,
   sidecar,
@@ -84,8 +97,8 @@ export function UploadButton({
           setError(undefined);
           setState('uploading');
           try {
-            // 1) Upload the video file
-            const { key, url } = await uploadFileOnTap(localUri);
+            // 1) Upload the video file to Firebase Storage
+            const { key: storageKey, url } = await uploadFileOnTap(localUri);
 
             // 2) Try to read the full sidecar JSON from disk
             let fullSidecar = await readSidecarForUpload(localUri);
@@ -94,6 +107,9 @@ export function UploadButton({
             if (!fullSidecar && sidecar && typeof sidecar === 'object') {
               fullSidecar = sidecar as any;
             }
+
+            // We'll keep track of where the sidecar was uploaded (if at all)
+            let sidecarRef: string | undefined;
 
             // 4) Only upload JSON if we actually have something to send
             if (fullSidecar) {
@@ -105,17 +121,52 @@ export function UploadButton({
                     : {}),
                   localUri,
                   uploadedAt: Date.now(),
-                  cloudKey: key,
+                  cloudKey: storageKey,
                   cloudUrl: url,
                 },
               };
 
-              await uploadJSONOnTap(payload, 'sidecars/');
+              const { key: sidecarKey } = await uploadJSONOnTap(
+                payload,
+                'sidecars/',
+              );
+              sidecarRef = sidecarKey;
+            }
+
+            // 5) Create Firestore metadata directly here
+            try {
+              const user = await ensureAnonymous();
+              const db = getFirestore(app);
+              const now = Date.now();
+              const shareId = randomShareId();
+
+              const docData = {
+                ownerUid: user.uid,
+                athleteId: null as string | null,   // fill later
+                sport: null as string | null,       // fill later
+                style: null as string | null,       // fill later
+                createdAt: now,
+                updatedAt: now,
+                storageKey,
+                sidecarRef,
+                shareId,
+                isPublic: true,
+              };
+
+              const ref = await addDoc(collection(db, 'videos'), docData);
+              console.log('[UploadButton] created VideoDoc:', ref.id);
+            } catch (metaErr) {
+              console.warn(
+                '[UploadButton] video uploaded but failed to write metadata:',
+                metaErr,
+              );
+              // Do not throw; upload is still considered successful
             }
 
             setState('done');
-            onUploaded?.(key, url);
+            onUploaded?.(storageKey, url);
           } catch (e: any) {
+            console.log('UploadButton error', e);
             setError(e?.message ?? 'Upload failed');
             setState('idle');
             Alert.alert(
