@@ -108,6 +108,12 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
+    // Cloud videos from Firestore for this user
+    const [cloudVideos, setCloudVideos] = useState<
+    { id: string; storageKey: string; sidecarRef?: string; createdAt: number; shareId: string }[]
+  >([]);
+
+
   // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
 
@@ -218,8 +224,8 @@ export default function LibraryScreen() {
     }
   }, [buildRow]);
 
-  // initial + focus refresh
-  useEffect(() => {
+   // initial + focus refresh
+   useEffect(() => {
     load();
   }, [load]);
   useFocusEffect(
@@ -228,18 +234,19 @@ export default function LibraryScreen() {
     }, [load]),
   );
 
+  // ----- TEMP: load cloud videos from Firestore (for future use) -----
+  useEffect(() => {
+    (async () => {
+      try {
+        const vids = await fetchMyVideos();
+        console.log('🔥 fetchMyVideos ->', vids);
+        setCloudVideos(vids);
+      } catch (e) {
+        console.log('fetchMyVideos error', e);
+      }
+    })();
+  }, []);
 
-    // ----- TEMP: log cloud videos from Firestore (for debugging) -----
-    useEffect(() => {
-      (async () => {
-        try {
-          const vids = await fetchMyVideos();
-          console.log('🔥 fetchMyVideos ->', vids);
-        } catch (e) {
-          console.log('fetchMyVideos error', e);
-        }
-      })();
-    }, []);
   
 
   // ----- FAST PATH: patch row when sidecarUpdated (just re-read outcome) ---
