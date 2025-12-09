@@ -7,7 +7,6 @@ import type { CameraView } from 'expo-camera';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import ZoomableCameraView from '../../components/ZoomableCameraView';
 
-import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
 import { JSX, useEffect, useRef, useState } from 'react';
@@ -37,9 +36,13 @@ import {
   MatchEvent,
 } from '../../lib/recording/finalizeRecording';
 
-const CURRENT_ATHLETE_KEY = 'currentAthleteName';
+// ✅ new segmented recording manager
+import {
+  startNewSegment,
+  stopCurrentSegment,
+} from '../../lib/recording/segmentManager';
 
-const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
+const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
 // ---- Overlay registry (EASY EXTENSION POINT) -----------------
 
@@ -53,34 +56,8 @@ const overlayRegistry: Record<string, OverlayComponent> = {
   // 'basketball:default': BasketballOverlay,
 };
 
-// --- utils (local to camera for segments/timing) ----
-
-const ensureDir = async (dir: string) => {
-  try {
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  } catch {}
-};
-
-const tsStamp = () => {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
-    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  );
-};
-
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
-
-// we still keep waitFor here (used by stopCurrentSegment)
-async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
-  const start = Date.now();
-  while (!pred()) {
-    await new Promise((r) => setTimeout(r, pollMs));
-    if (Date.now() - start > timeoutMs) break;
-  }
-}
 
 // --- screen ---------------------------------------------------
 
@@ -313,88 +290,6 @@ export default function CameraScreen() {
     ];
   };
 
-  const startNewSegment = async () => {
-    const cam: any = cameraRef.current;
-    if (!cam || !cameraReady) {
-      console.warn('[segment] camera not ready');
-      return;
-    }
-    await ensureDir(SEG_DIR);
-    segmentActiveRef.current = true;
-    recordPromiseRef.current = null;
-
-    try {
-      if (typeof cam.startRecording === 'function') {
-        // CameraView.startRecording path
-        cam.startRecording({
-          mute: false,
-          onRecordingFinished: async (res: any) => {
-            const uri = typeof res === 'string' ? res : res?.uri;
-            if (uri) {
-              const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
-              try {
-                await FileSystem.copyAsync({ from: uri, to: dest });
-              } catch {}
-              try {
-                await FileSystem.deleteAsync(uri, { idempotent: true });
-              } catch {}
-              segmentsRef.current.push(dest);
-            }
-            segmentActiveRef.current = false;
-          },
-          onRecordingError: (e: any) => {
-            console.warn('[segment error startRecording]', e);
-            segmentActiveRef.current = false;
-            Alert.alert(
-              'Recording error',
-              (e && (e.message || e.toString())) || 'Unknown camera error',
-            );
-          },
-        });
-      } else if (typeof cam.recordAsync === 'function') {
-        // recordAsync path
-        recordPromiseRef.current = cam
-          .recordAsync({ mute: false })
-          .then(async (res: any) => {
-            const uri = typeof res === 'string' ? res : res?.uri;
-            if (uri) {
-              const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
-              try {
-                await FileSystem.copyAsync({ from: uri, to: dest });
-              } catch {}
-              try {
-                await FileSystem.deleteAsync(uri, { idempotent: true });
-              } catch {}
-              segmentsRef.current.push(dest);
-            }
-            segmentActiveRef.current = false;
-          })
-          .catch((e: any) => {
-            console.warn('[segment error recordAsync]', e);
-            segmentActiveRef.current = false;
-            Alert.alert(
-              'Recording error',
-              (e && (e.message || e.toString())) || 'Unknown camera error',
-            );
-          });
-      } else {
-        throw new Error('No recording API found on CameraView');
-      }
-    } catch (e: any) {
-      console.warn('[segment start exception]', e);
-      segmentActiveRef.current = false;
-      Alert.alert('Recording error', e?.message ?? String(e));
-    }
-  };
-
-  const stopCurrentSegment = async () => {
-    const cam: any = cameraRef.current;
-    try {
-      cam?.stopRecording?.();
-    } catch {}
-    await waitFor(() => !segmentActiveRef.current, 2500);
-  };
-
   const handleStart = async () => {
     if (isRecording || isProcessing) return;
     if (!cameraReady || !cameraRef.current) {
@@ -427,14 +322,20 @@ export default function CameraScreen() {
         (athlete || 'Unassigned').trim(),
       );
     } catch {}
-    await startNewSegment();
+    await startNewSegment(
+      cameraRef,
+      cameraReady,
+      segmentsRef,
+      segmentActiveRef,
+      recordPromiseRef,
+    );
   };
 
   const handlePause = async () => {
     if (!isRecording || isPaused) return;
     pauseStartedAtRef.current = Date.now();
     setIsPaused(true);
-    await stopCurrentSegment();
+    await stopCurrentSegment(cameraRef, segmentActiveRef);
   };
 
   const handleResume = async () => {
@@ -445,7 +346,13 @@ export default function CameraScreen() {
     }
     pauseStartedAtRef.current = null;
     setIsPaused(false);
-    await startNewSegment();
+    await startNewSegment(
+      cameraRef,
+      cameraReady,
+      segmentsRef,
+      segmentActiveRef,
+      recordPromiseRef,
+    );
   };
 
   const handleStop = async () => {
@@ -457,7 +364,7 @@ export default function CameraScreen() {
     }
     pauseStartedAtRef.current = null;
 
-    await stopCurrentSegment();
+    await stopCurrentSegment(cameraRef, segmentActiveRef);
 
     const segmentsToProcess = segmentsRef.current;
     const chosenAthlete = (athlete || '').trim() || 'Unassigned';

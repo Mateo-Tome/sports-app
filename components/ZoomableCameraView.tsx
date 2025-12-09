@@ -149,3 +149,4 @@ const ZoomableCameraView = React.forwardRef<CameraView, Props>((props, ref) => {
 ZoomableCameraView.displayName = 'ZoomableCameraView';
 
 export default ZoomableCameraView;
+
