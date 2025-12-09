@@ -155,6 +155,7 @@ export function UploadButton({
 
               const ref = await addDoc(collection(db, 'videos'), docData);
               console.log('[UploadButton] created VideoDoc:', ref.id);
+              console.log('[UploadButton] shareId:', shareId);
             } catch (metaErr) {
               console.warn(
                 '[UploadButton] video uploaded but failed to write metadata:',

@@ -30,6 +30,8 @@ import {
 import EditAthleteModal from '../../components/library/EditAthleteModal';
 import EditTitleModal from '../../components/library/EditTitleModal';
 import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
+import { fetchMyVideos } from '../../lib/videos';
+
 
 import {
   useCallback,
@@ -225,6 +227,20 @@ export default function LibraryScreen() {
       load();
     }, [load]),
   );
+
+
+    // ----- TEMP: log cloud videos from Firestore (for debugging) -----
+    useEffect(() => {
+      (async () => {
+        try {
+          const vids = await fetchMyVideos();
+          console.log('🔥 fetchMyVideos ->', vids);
+        } catch (e) {
+          console.log('fetchMyVideos error', e);
+        }
+      })();
+    }, []);
+  
 
   // ----- FAST PATH: patch row when sidecarUpdated (just re-read outcome) ---
   const patchRowFromSidecarPayload = useCallback(async (uri: string) => {
