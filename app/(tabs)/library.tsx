@@ -46,7 +46,7 @@ import {
   Modal,
   StyleSheet,
   View,
-  ViewToken,
+  ViewToken
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -684,6 +684,7 @@ export default function LibraryScreen() {
       />
     </View>
   );
+
 }
 
 // (Optional) empty stylesheet if you want to attach styles later

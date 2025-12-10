@@ -15,9 +15,16 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
           <Stack screenOptions={{ headerShown: false }}>
+            {/* Main app tabs */}
             <Stack.Screen name="(tabs)" />
+
+            {/* ✅ Register the auth group: NOTE THE PARENTHESES */}
+            <Stack.Screen name="(auth)" />
+
+            {/* Not-found handler */}
             <Stack.Screen name="+not-found" />
           </Stack>
+
           <StatusBar style="auto" />
         </ThemeProvider>
       </SafeAreaProvider>

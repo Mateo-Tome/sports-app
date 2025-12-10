@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 
 import { addDoc, collection, getFirestore } from 'firebase/firestore';
-import { app, ensureAnonymous } from '../../lib/firebase';
+import { app, auth, ensureAnonymous } from '../../lib/firebase';
 import { uploadFileOnTap, uploadJSONOnTap } from '../../lib/sync';
 
 // Small helper: read the full sidecar JSON for a given video URI (for upload).
@@ -69,6 +69,16 @@ function randomShareId(length = 12): string {
   return out;
 }
 
+// Use existing user if present; otherwise fall back to anonymous
+async function getCurrentOrAnonUser() {
+  const current = auth.currentUser;
+  if (current) {
+    return current;
+  }
+  const anon = await ensureAnonymous();
+  return anon;
+}
+
 export function UploadButton({
   localUri,
   sidecar,
@@ -96,6 +106,15 @@ export function UploadButton({
         onPress={async () => {
           setError(undefined);
           setState('uploading');
+
+          const current = auth.currentUser;
+          console.log('[UploadButton] starting upload for user:', {
+            uid: current?.uid,
+            email: current?.email,
+            isAnonymous: current?.isAnonymous,
+            localUri,
+          });
+
           try {
             // 1) Upload the video file to Firebase Storage
             const { key: storageKey, url } = await uploadFileOnTap(localUri);
@@ -135,7 +154,7 @@ export function UploadButton({
 
             // 5) Create Firestore metadata directly here
             try {
-              const user = await ensureAnonymous();
+              const user = await getCurrentOrAnonUser();
               const db = getFirestore(app);
               const now = Date.now();
               const shareId = randomShareId();
