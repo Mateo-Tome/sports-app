@@ -1,16 +1,14 @@
 // app/(tabs)/settings.tsx
+import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 
 import { signOut } from 'firebase/auth';
+import { testGetUploadUrl } from '../../lib/backend';
 import { auth, ensureAnonymous, storage } from '../../lib/firebase';
+import { uploadVideoToB2 } from '../../lib/uploadVideoToB2';
 import { fetchMyVideos } from '../../lib/videos';
 
 type CloudVideo = {
@@ -25,10 +23,8 @@ export default function SettingsScreen() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>('Ready');
 
-  // keep the cloud videos we fetch for this account
   const [cloudVideos, setCloudVideos] = useState<CloudVideo[]>([]);
 
-  // DEV: log who we are on mount (per device)
   useEffect(() => {
     const u = auth.currentUser;
     console.log('[Settings] Current user on this device:', {
@@ -38,7 +34,6 @@ export default function SettingsScreen() {
     });
   }, []);
 
-  // DEV: show who we are right now (for the text label)
   const describeCurrentUser = () => {
     const u = auth.currentUser;
     if (!u) return 'Not signed in';
@@ -62,6 +57,7 @@ export default function SettingsScreen() {
     }
   };
 
+  // Existing Firebase Storage test (unchanged)
   const testUpload = async () => {
     setBusy(true);
     try {
@@ -72,12 +68,9 @@ export default function SettingsScreen() {
       });
 
       const path = `test/${user.uid}/${Date.now()}.txt`;
-      const data = new Blob(
-        [`hello from app @ ${new Date().toISOString()}`],
-        {
-          type: 'text/plain',
-        },
-      );
+      const data = new Blob([`hello from app @ ${new Date().toISOString()}`], {
+        type: 'text/plain',
+      });
       const r = ref(storage, path);
       await uploadBytes(r, data);
       const url = await getDownloadURL(r);
@@ -89,13 +82,13 @@ export default function SettingsScreen() {
     }
   };
 
-  // Fetch cloud videos for this user
+  // Fetch cloud videos for this user (unchanged)
   const debugFetchCloud = async () => {
     setBusy(true);
     try {
       const vids = await fetchMyVideos();
       console.log('🔥 fetchMyVideos (from Settings) ->', vids);
-      setCloudVideos(vids); // save to state so we can render them
+      setCloudVideos(vids);
       setStatus(`Fetched ${vids.length} cloud videos`);
     } catch (e: any) {
       setStatus(`fetchMyVideos error: ${String(e?.message || e)}`);
@@ -104,7 +97,6 @@ export default function SettingsScreen() {
     }
   };
 
-  // When you tap a cloud video, get its download URL and navigate to cloud playback
   const handleOpenCloudVideo = async (video: CloudVideo) => {
     setBusy(true);
     try {
@@ -118,7 +110,6 @@ export default function SettingsScreen() {
 
       setStatus(`Got URL for ${video.shareId}`);
 
-      // Navigate to the simple cloud playback screen
       router.push({
         pathname: '/cloud-playback',
         params: {
@@ -133,21 +124,76 @@ export default function SettingsScreen() {
     }
   };
 
-  const goToSignIn = () => {
-    // (auth) is a group, so the path is just "/sign-in"
-    router.push('/sign-in');
-  };
+  const goToSignIn = () => router.push('/sign-in');
 
   const handleSignOut = async () => {
     setBusy(true);
     try {
       await signOut(auth);
       console.log('[Settings] Signed out on this device');
-      setStatus(
-        'Signed out. Next upload/record will create or use a user again.',
-      );
+      setStatus('Signed out. Next upload/record will create or use a user again.');
     } catch (e: any) {
       setStatus(`Sign-out error: ${String(e?.message || e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * NEW: End-to-end Backblaze test
+   * - gets uploadUrl + uploadAuthToken from your Cloud Function
+   * - writes a tiny local text file
+   * - uploads it to B2 under: videos/<uid>/hello.txt
+   *
+   * After this succeeds, you should see the file in Backblaze.
+   */
+  const testB2Upload = async () => {
+    setBusy(true);
+    try {
+      const user = await ensureAnonymous();
+
+      console.log('[Settings] testB2Upload using user:', {
+        uid: user.uid,
+        isAnonymous: user.isAnonymous,
+      });
+
+      // 1) Get uploadUrl + upload token from your backend
+      // IMPORTANT: testGetUploadUrl must RETURN the parsed JSON.
+      const r: any = await testGetUploadUrl();
+
+      if (!r?.uploadUrl || !r?.uploadAuthToken) {
+        throw new Error(
+          `testGetUploadUrl did not return uploadUrl/uploadAuthToken. Got: ${JSON.stringify(
+            r,
+          )}`,
+        );
+      }
+
+      // 2) Create a tiny local file
+      const localPath =
+        FileSystem.cacheDirectory + `b2-test-${Date.now()}.txt`;
+
+      await FileSystem.writeAsStringAsync(
+        localPath,
+        `hello b2 @ ${new Date().toISOString()}\nuid=${user.uid}\n`,
+        { encoding: FileSystem.EncodingType.UTF8 },
+      );
+
+      // 3) Upload to Backblaze
+      const out = await uploadVideoToB2({
+        uploadUrl: r.uploadUrl,
+        uploadAuthToken: r.uploadAuthToken,
+        uid: user.uid,
+        localFileUri: localPath,
+        originalFileName: 'hello.txt',
+        mimeType: 'text/plain',
+      });
+
+      console.log('✅ B2 upload success:', out);
+      setStatus(`B2 upload OK ✓ fileId=${out?.fileId ?? 'unknown'}`);
+    } catch (e: any) {
+      console.log('❌ testB2Upload error:', e);
+      setStatus(`B2 upload error: ${String(e?.message || e)}`);
     } finally {
       setBusy(false);
     }
@@ -166,12 +212,10 @@ export default function SettingsScreen() {
         Settings
       </Text>
 
-      {/* CURRENT AUTH STATUS */}
       <Text style={{ color: 'rgba(255,255,255,0.8)', marginBottom: 12 }}>
         {describeCurrentUser()}
       </Text>
 
-      {/* MANAGE ACCOUNT */}
       <TouchableOpacity
         onPress={goToSignIn}
         style={{
@@ -204,7 +248,6 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      {/* ORIGINAL TEST BUTTONS */}
       <TouchableOpacity
         onPress={testAuth}
         style={{
@@ -235,7 +278,6 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      {/* Fetch cloud videos for this account */}
       <TouchableOpacity
         onPress={debugFetchCloud}
         style={{
@@ -251,13 +293,54 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
+      <TouchableOpacity
+        onPress={async () => {
+          console.log('[Settings] Calling testGetUploadUrl...');
+          try {
+            setBusy(true);
+            const r: any = await testGetUploadUrl();
+            setStatus(`Backend OK ✓ bucket=${r?.bucketName ?? 'unknown'}`);
+          } catch (e: any) {
+            setStatus(`Backend error: ${String(e?.message || e)}`);
+          } finally {
+            setBusy(false);
+          }
+        }}
+        style={{
+          backgroundColor: 'white',
+          paddingVertical: 12,
+          borderRadius: 10,
+          marginBottom: 12,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#111', fontWeight: '900' }}>
+          Test Backend Upload Endpoint
+        </Text>
+      </TouchableOpacity>
+
+      {/* ✅ NEW BUTTON */}
+      <TouchableOpacity
+        onPress={testB2Upload}
+        style={{
+          backgroundColor: 'white',
+          paddingVertical: 12,
+          borderRadius: 10,
+          marginBottom: 12,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#111', fontWeight: '900' }}>
+          Test Upload to Backblaze (B2)
+        </Text>
+      </TouchableOpacity>
+
       {busy ? (
         <ActivityIndicator color="#fff" />
       ) : (
         <Text style={{ color: 'white', marginTop: 8 }}>{status}</Text>
       )}
 
-      {/* Simple cloud videos debug list */}
       <View style={{ marginTop: 16 }}>
         <Text
           style={{
