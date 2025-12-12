@@ -1,19 +1,19 @@
 // components/library/UploadButton.tsx
-import * as FileSystem from 'expo-file-system';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
+import * as FileSystem from "expo-file-system";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
-import { addDoc, collection, getFirestore } from 'firebase/firestore';
-import { app, auth, ensureAnonymous } from '../../lib/firebase';
+import { addDoc, collection, getFirestore } from "firebase/firestore";
+import { app, auth, ensureAnonymous } from "../../lib/firebase";
 
-import { testGetUploadUrl } from '../../lib/backend';
-import { uploadVideoToB2 } from '../../lib/uploadVideoToB2';
+import { testGetUploadUrl } from "../../lib/backend";
+import { uploadVideoToB2 } from "../../lib/uploadVideoToB2";
 
 // Small helper: read the full sidecar JSON for a given video URI (for upload).
 async function readSidecarForUpload(videoUri: string): Promise<any | null> {
   try {
-    const lastSlash = videoUri.lastIndexOf('/');
-    const lastDot = videoUri.lastIndexOf('.');
+    const lastSlash = videoUri.lastIndexOf("/");
+    const lastDot = videoUri.lastIndexOf(".");
     const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
     const guess = `${base}.json`;
 
@@ -24,18 +24,18 @@ async function readSidecarForUpload(videoUri: string): Promise<any | null> {
       return txt ? JSON.parse(txt) : {};
     };
 
-    // 1) Try the obvious same-name sidecar first
+    // 1) Try same-name sidecar first
     let sc: any | null = await tryRead(guess);
     if (sc) return sc;
 
-    // 2) Fallback: look in the same directory for a matching .json
+    // 2) Fallback: look in same directory for a matching .json
     const dir = videoUri.slice(0, lastSlash + 1);
     try {
       // @ts-ignore
       const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
       const baseName = base.slice(lastSlash + 1);
       const candidate = files.find(
-        (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`,
+        (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`
       );
       if (candidate) {
         sc = await tryRead(dir + candidate);
@@ -45,7 +45,7 @@ async function readSidecarForUpload(videoUri: string): Promise<any | null> {
 
     return null;
   } catch (e) {
-    console.log('readSidecarForUpload error', e);
+    console.log("readSidecarForUpload error", e);
     return null;
   }
 }
@@ -54,21 +54,20 @@ export type UploadButtonProps = {
   localUri: string;
   sidecar?: unknown;
   uploaded?: boolean;
-  onUploaded?: (cloudKey: string, url: string) => void; // kept for compatibility
+  onUploaded?: (cloudKey: string, url: string) => void; // compatibility
 };
 
-// simple random shareId
+// random shareId
 function randomShareId(length = 12): string {
   const chars =
-    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let out = '';
-  for (let i = 0; i < length; i++) {
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let out = "";
+  for (let i = 0; i < length; i++)
     out += chars[Math.floor(Math.random() * chars.length)];
-  }
   return out;
 }
 
-// Use existing user if present; otherwise fall back to anonymous
+// Ensure we have a user
 async function getCurrentOrAnonUser() {
   const current = auth.currentUser;
   if (current) return current;
@@ -81,30 +80,28 @@ export function UploadButton({
   uploaded,
   onUploaded,
 }: UploadButtonProps) {
-  const [state, setState] = useState<'idle' | 'uploading' | 'done'>(
-    uploaded ? 'done' : 'idle',
+  const [state, setState] = useState<"idle" | "uploading" | "done">(
+    uploaded ? "done" : "idle"
   );
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    setState(uploaded ? 'done' : 'idle');
+    setState(uploaded ? "done" : "idle");
   }, [uploaded]);
 
-  if (state === 'done') {
-    return (
-      <Text style={{ fontWeight: '600', color: 'white' }}>✅ Uploaded</Text>
-    );
+  if (state === "done") {
+    return <Text style={{ fontWeight: "600", color: "white" }}>✅ Uploaded</Text>;
   }
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <Pressable
         onPress={async () => {
           setError(undefined);
-          setState('uploading');
+          setState("uploading");
 
           const current = auth.currentUser;
-          console.log('[UploadButton] starting B2 upload for user:', {
+          console.log("[UploadButton] starting B2 upload for user:", {
             uid: current?.uid,
             email: current?.email,
             isAnonymous: current?.isAnonymous,
@@ -112,95 +109,91 @@ export function UploadButton({
           });
 
           try {
-            // Ensure we have a user
             const user = await getCurrentOrAnonUser();
+            const now = Date.now();
+            const shareId = randomShareId();
 
-            // 1) Get Backblaze uploadUrl + token from backend
-            const creds: any = await testGetUploadUrl();
-            if (!creds?.uploadUrl || !creds?.uploadAuthToken) {
+            // -----------------------------
+            // 1) Upload VIDEO to B2
+            // -----------------------------
+            const creds1: any = await testGetUploadUrl();
+            if (!creds1?.uploadUrl || !creds1?.uploadAuthToken) {
               throw new Error(
-                `testGetUploadUrl missing creds: ${JSON.stringify(creds)}`,
+                `testGetUploadUrl missing creds1: ${JSON.stringify(creds1)}`
               );
             }
 
-            // 2) Decide our keys (deterministic)
-            const shareId = randomShareId();
-            const now = Date.now();
-
-            // Video key (B2 fileName)
-            const b2VideoFileName = `${shareId}.mp4`;
-
-            // 3) Upload video bytes to B2
-            const videoUploadResult = await uploadVideoToB2({
-              uploadUrl: creds.uploadUrl,
-              uploadAuthToken: creds.uploadAuthToken,
+            const videoUpload = await uploadVideoToB2({
+              uploadUrl: creds1.uploadUrl,
+              uploadAuthToken: creds1.uploadAuthToken,
               uid: user.uid,
               localFileUri: localUri,
-              originalFileName: b2VideoFileName,
-              mimeType: 'video/mp4',
+              originalFileName: `${shareId}.mp4`, // will land at videos/<uid>/<shareId>.mp4
+              mimeType: "video/mp4",
             });
 
-            // This is the path inside the bucket
-            const b2VideoKey = videoUploadResult?.fileName; // e.g. videos/<uid>/<shareId>.mp4
-            const b2VideoFileId = videoUploadResult?.fileId;
+            const b2VideoKey: string | null = videoUpload?.fileName ?? null; // videos/<uid>/<shareId>.mp4
+            const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
 
-            // 4) Sidecar JSON (optional)
-            let b2SidecarKey: string | undefined;
-            let b2SidecarFileId: string | undefined;
+            // -----------------------------
+            // 2) Upload SIDECAR JSON (optional) to B2
+            // NOTE: Your uploadVideoToB2 currently uploads under videos/<uid>/...
+            // So we pass a .json filename and it will be stored under videos/<uid>/<shareId>.json
+            // If you want sidecars/<uid>/..., we’ll adjust the helper next.
+            // -----------------------------
+            let b2SidecarKey: string | null = null;
+            let b2SidecarFileId: string | null = null;
 
             let fullSidecar = await readSidecarForUpload(localUri);
-            if (!fullSidecar && sidecar && typeof sidecar === 'object') {
+            if (!fullSidecar && sidecar && typeof sidecar === "object") {
               fullSidecar = sidecar as any;
             }
 
             if (fullSidecar) {
-              // Create a temp json file to upload
               const jsonPath =
                 FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
 
               const payload = {
                 ...fullSidecar,
                 uploadMeta: {
-                  localUri,
                   uploadedAt: now,
                   shareId,
                   b2VideoKey,
                   b2VideoFileId,
-                  bucket: creds.bucketName,
+                  bucket: creds1.bucketName,
                 },
               };
 
               await FileSystem.writeAsStringAsync(
                 jsonPath,
                 JSON.stringify(payload),
-                { encoding: FileSystem.EncodingType.UTF8 },
+                { encoding: FileSystem.EncodingType.UTF8 }
               );
 
-              // IMPORTANT: get a fresh uploadUrl/token (they can be single-use / short-lived)
+              // Fresh upload url/token for json (upload urls are single-use/short-lived)
               const creds2: any = await testGetUploadUrl();
               if (!creds2?.uploadUrl || !creds2?.uploadAuthToken) {
                 throw new Error(
-                  `testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`,
+                  `testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`
                 );
               }
 
-              const sidecarUploadResult = await uploadVideoToB2({
+              const sidecarUpload = await uploadVideoToB2({
                 uploadUrl: creds2.uploadUrl,
                 uploadAuthToken: creds2.uploadAuthToken,
                 uid: user.uid,
                 localFileUri: jsonPath,
-                originalFileName: `${shareId}.json`,
-                mimeType: 'application/json',
+                originalFileName: `${shareId}.json`, // will land at videos/<uid>/<shareId>.json (for now)
+                mimeType: "application/json",
               });
 
-              b2SidecarKey = sidecarUploadResult?.fileName; // videos/<uid>/<shareId>.json (see note below)
-              b2SidecarFileId = sidecarUploadResult?.fileId;
+              b2SidecarKey = sidecarUpload?.fileName ?? null;
+              b2SidecarFileId = sidecarUpload?.fileId ?? null;
             }
 
-            // NOTE: your uploadVideoToB2 currently always uploads under videos/<uid>/...
-            // That’s fine for now. Later we can adjust it to support sidecars/<uid>/...
-
-            // 5) Write Firestore metadata
+            // -----------------------------
+            // 3) Write Firestore metadata
+            // -----------------------------
             try {
               const db = getFirestore(app);
 
@@ -212,38 +205,35 @@ export function UploadButton({
                 createdAt: now,
                 updatedAt: now,
 
-                // NEW: Backblaze pointers
-                b2Bucket: creds.bucketName,
+                storageProvider: "b2",
+                b2Bucket: creds1.bucketName ?? "quickclip-videos",
                 b2VideoKey,
                 b2VideoFileId,
-                b2SidecarKey: b2SidecarKey ?? null,
-                b2SidecarFileId: b2SidecarFileId ?? null,
+                b2SidecarKey,
+                b2SidecarFileId,
 
                 shareId,
                 isPublic: true,
               };
 
-              const ref = await addDoc(collection(db, 'videos'), docData);
-              console.log('[UploadButton] created VideoDoc:', ref.id, docData);
+              const ref = await addDoc(collection(db, "videos"), docData);
+              console.log("[UploadButton] created VideoDoc:", ref.id, docData);
             } catch (metaErr) {
               console.warn(
-                '[UploadButton] upload succeeded but metadata write failed:',
-                metaErr,
+                "[UploadButton] upload succeeded but metadata write failed:",
+                metaErr
               );
             }
 
-            setState('done');
-
-            // Keep callback for now but pass B2 key
-            onUploaded?.(b2VideoKey ?? shareId, 'b2://quickclip-videos');
-
+            setState("done");
+            onUploaded?.(b2VideoKey ?? shareId, "b2://quickclip-videos");
           } catch (e: any) {
-            console.log('UploadButton(B2) error', e);
-            setError(e?.message ?? 'Upload failed');
-            setState('idle');
+            console.log("UploadButton(B2) error", e);
+            setError(e?.message ?? "Upload failed");
+            setState("idle");
             Alert.alert(
-              'Upload failed',
-              e?.message ?? 'Please try again while online.',
+              "Upload failed",
+              e?.message ?? "Please try again while online."
             );
           }
         }}
@@ -252,16 +242,17 @@ export function UploadButton({
           paddingVertical: 8,
           borderRadius: 999,
           borderWidth: 1,
-          borderColor: 'white',
-          backgroundColor: 'rgba(255,255,255,0.12)',
+          borderColor: "white",
+          backgroundColor: "rgba(255,255,255,0.12)",
         }}
       >
-        <Text style={{ color: 'white', fontWeight: '700' }}>
-          {state === 'uploading' ? 'Uploading…' : 'Upload'}
+        <Text style={{ color: "white", fontWeight: "700" }}>
+          {state === "uploading" ? "Uploading…" : "Upload"}
         </Text>
       </Pressable>
-      {state === 'uploading' && <ActivityIndicator />}
-      {!!error && <Text style={{ color: 'tomato' }}>{error}</Text>}
+
+      {state === "uploading" && <ActivityIndicator />}
+      {!!error && <Text style={{ color: "tomato" }}>{error}</Text>}
     </View>
   );
 }
