@@ -4,20 +4,7 @@ const admin = require('firebase-admin');
 
 admin.initializeApp();
 
-/**
- * QuickClip Backblaze Upload URL Function (DIAGNOSTIC + WORKING PATH)
- * - Verifies Firebase ID token
- * - Calls b2_authorize_account (v1)
- * - Logs authJson.allowed + env bucket info (NO TOKENS)
- * - Calls b2_get_upload_url (v2)
- *
- * This version includes unmistakable "🔥" logs so we can prove the new code is running.
- */
-
-const FN_VERSION = 'getUploadUrl-v7-🔥-allowed-logs-trim';
-
 function clean(v) {
-  // trims whitespace and strips surrounding quotes if someone copied values with quotes
   return (v ?? '')
     .toString()
     .trim()
@@ -25,238 +12,127 @@ function clean(v) {
     .replace(/^'(.*)'$/, '$1');
 }
 
-function safePrefix(str, n = 10) {
-  if (!str) return null;
-  return str.length <= n ? str : str.slice(0, n) + '…';
+function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
+  // Keep slashes, encode only unsafe chars
+  const safeName = fileName
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/');
+
+  return `${downloadUrl}/file/${encodeURIComponent(bucketName)}/${safeName}?Authorization=${encodeURIComponent(authToken)}`;
 }
 
-exports.getUploadUrl = functions.https.onRequest(async (req, res) => {
+exports.getPlaybackUrls = functions.https.onRequest(async (req, res) => {
   // ---- CORS ----
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).send('');
-  }
-
-  // 🔥 Proves this exact revision is being hit
-  console.log(
-    '🔥🔥🔥 QUICKCLIP getUploadUrl HIT —',
-    new Date().toISOString(),
-    '—',
-    FN_VERSION,
-  );
+  if (req.method === 'OPTIONS') return res.status(204).send('');
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
 
   try {
-    // ---- Load env INSIDE handler (avoids warm-instance confusion) ----
+    const shareId = (req.query.shareId ?? '').toString().trim();
+    if (!shareId) return res.status(400).json({ error: 'Missing shareId' });
+
+    // ---- Read shareIndex/{shareId} ----
+    const shareRef = admin.firestore().doc(`shareIndex/${shareId}`);
+    const shareSnap = await shareRef.get();
+    if (!shareSnap.exists) return res.status(404).json({ error: 'Share not found' });
+
+    const share = shareSnap.data() || {};
+    if (share.isPublic !== true) return res.status(403).json({ error: 'Not public' });
+
+    const videoId = share.videoId;
+    if (!videoId) return res.status(500).json({ error: 'shareIndex missing videoId' });
+
+    // ---- Read videos/{videoId} (for b2 keys) ----
+    const vidRef = admin.firestore().doc(`videos/${videoId}`);
+    const vidSnap = await vidRef.get();
+    if (!vidSnap.exists) return res.status(404).json({ error: 'Video not found' });
+
+    const v = vidSnap.data() || {};
+    // These must exist based on your current schema
+    const b2VideoKey = v.b2VideoKey;
+    const b2SidecarKey = v.b2SidecarKey;
+
+    if (!b2VideoKey) return res.status(500).json({ error: 'Video missing b2VideoKey' });
+    if (!b2SidecarKey) return res.status(500).json({ error: 'Video missing b2SidecarKey' });
+
+    // Optional sanity checks
+    if (v.shareId && v.shareId !== shareId) {
+      return res.status(403).json({ error: 'shareId mismatch' });
+    }
+
+    // ---- Backblaze authorize ----
     const B2_KEY_ID = clean(process.env.B2_KEY_ID);
     const B2_APP_KEY = clean(process.env.B2_APP_KEY);
     const B2_BUCKET_ID = clean(process.env.B2_BUCKET_ID);
     const B2_BUCKET_NAME = clean(process.env.B2_BUCKET_NAME);
 
-    console.log('[getUploadUrl] fnVersion', FN_VERSION);
-    console.log('[getUploadUrl] env present', {
-      hasKeyId: !!B2_KEY_ID,
-      hasAppKey: !!B2_APP_KEY,
-      hasBucketId: !!B2_BUCKET_ID,
-      hasBucketName: !!B2_BUCKET_NAME,
-      bucketIdPrefix: safePrefix(B2_BUCKET_ID, 12),
-      bucketName: B2_BUCKET_NAME || null,
-    });
-
-    // ---- 1) Verify Firebase ID token ----
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        error: 'Missing Authorization header',
-        fnVersion: FN_VERSION,
-      });
-    }
-
-    const idToken = authHeader.split(' ')[1];
-    const decoded = await admin.auth().verifyIdToken(idToken);
-    const uid = decoded.uid;
-
-    // ---- 2) Ensure env vars exist ----
     if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID || !B2_BUCKET_NAME) {
-      console.error('[getUploadUrl] Missing B2 env vars');
-      return res.status(500).json({
-        error:
-          'B2 config missing required values (B2_KEY_ID/B2_APP_KEY/B2_BUCKET_ID/B2_BUCKET_NAME).',
-        fnVersion: FN_VERSION,
-        present: {
-          hasKeyId: !!B2_KEY_ID,
-          hasAppKey: !!B2_APP_KEY,
-          hasBucketId: !!B2_BUCKET_ID,
-          hasBucketName: !!B2_BUCKET_NAME,
-        },
-      });
+      return res.status(500).json({ error: 'Missing B2 env vars' });
     }
 
-    // ---- 3) Authorize with Backblaze (B2 native API) ----
-    const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString(
-      'base64',
-    );
+    const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString('base64');
 
     const authRes = await fetch(
       'https://api.backblazeb2.com/b2api/v1/b2_authorize_account',
-      {
-        method: 'GET',
-        headers: { Authorization: `Basic ${basicAuth}` },
-      },
+      { method: 'GET', headers: { Authorization: `Basic ${basicAuth}` } }
     );
-
     const authJson = await authRes.json();
-
-    console.log(
-      '[getUploadUrl] b2_authorize_account status',
-      authRes.status,
-      'fnVersion',
-      FN_VERSION,
-    );
-
     if (!authRes.ok) {
-      console.error(
-        '[getUploadUrl] b2_authorize_account FAILED',
-        authRes.status,
-        authJson,
-      );
-      return res.status(500).json({
-        error: 'b2_authorize_account failed',
-        fnVersion: FN_VERSION,
-        details: authJson,
-      });
+      return res.status(500).json({ error: 'b2_authorize_account failed', details: authJson });
     }
-
-    // ---- Critical debug: WHAT THE KEY IS ALLOWED TO DO ----
-    // DO NOT log tokens. "allowed" is safe and is the key to solving 401.
-    console.log(
-      '[getUploadUrl] allowed:',
-      JSON.stringify(authJson.allowed || null),
-    );
-    console.log('[getUploadUrl] env bucketId:', B2_BUCKET_ID);
-    console.log('[getUploadUrl] env bucketName:', B2_BUCKET_NAME);
 
     const apiUrl = authJson.apiUrl;
-    const authToken = authJson.authorizationToken; // do not log
+    const downloadUrl = authJson.downloadUrl;
+    const authToken = authJson.authorizationToken; // don't log
 
-    if (!apiUrl || !authToken) {
-      console.error(
-        '[getUploadUrl] Missing apiUrl or authorizationToken in authorize response',
-        { hasApiUrl: !!apiUrl, hasAuthToken: !!authToken },
-      );
-      return res.status(500).json({
-        error:
-          'Missing apiUrl/authorizationToken in Backblaze authorize response',
-        fnVersion: FN_VERSION,
-      });
+    if (!apiUrl || !downloadUrl || !authToken) {
+      return res.status(500).json({ error: 'Missing apiUrl/downloadUrl/token from B2 auth' });
     }
 
-    // ---- Fail-fast checks (common reasons for 401 on get_upload_url) ----
-    const allowedBucketId = authJson.allowed?.bucketId || null;
-    const allowedBucketName = authJson.allowed?.bucketName || null;
-    const allowedCaps = authJson.allowed?.capabilities || [];
+    // ---- Get temporary download authorization token ----
+    const expiresInSec = 30 * 24 * 60 * 60; // 30 days
 
-    // If the key is restricted to a different bucket, stop right here with a clear error
-    if (allowedBucketId && allowedBucketId !== B2_BUCKET_ID) {
-      console.error('[getUploadUrl] Bucket mismatch', {
-        allowedBucketId,
-        envBucketId: B2_BUCKET_ID,
-      });
+    const prefix = 'videos/'; // your key is restricted to videos/ anyway
 
-      return res.status(500).json({
-        error:
-          'Backblaze key is restricted to a different bucketId than your B2_BUCKET_ID env var.',
-        fnVersion: FN_VERSION,
-        debug: {
-          allowedBucketId,
-          envBucketId: B2_BUCKET_ID,
-          allowedBucketName,
-          envBucketName: B2_BUCKET_NAME,
-          allowedCaps,
-        },
-      });
-    }
-
-    // If the key can't write files, it will fail to request upload URLs
-    if (Array.isArray(allowedCaps) && !allowedCaps.includes('writeFiles')) {
-      console.error('[getUploadUrl] Missing writeFiles capability', {
-        allowedCaps,
-      });
-
-      return res.status(500).json({
-        error: 'Backblaze key missing writeFiles capability.',
-        fnVersion: FN_VERSION,
-        debug: { allowedCaps, allowedBucketId, allowedBucketName },
-      });
-    }
-
-    // ---- 4) Get upload URL (v2 endpoint) ----
-    const uploadRes = await fetch(`${apiUrl}/b2api/v2/b2_get_upload_url`, {
+    const daRes = await fetch(`${apiUrl}/b2api/v2/b2_get_download_authorization`, {
       method: 'POST',
       headers: {
         Authorization: authToken,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ bucketId: B2_BUCKET_ID }),
+      body: JSON.stringify({
+        bucketId: B2_BUCKET_ID,
+        fileNamePrefix: prefix,
+        validDurationInSeconds: expiresInSec,
+      }),
     });
 
-    const uploadJson = await uploadRes.json();
-
-    console.log('[getUploadUrl] b2_get_upload_url status', uploadRes.status);
-
-    if (!uploadRes.ok) {
-      console.error(
-        '[getUploadUrl] b2_get_upload_url FAILED',
-        uploadRes.status,
-        uploadJson,
-      );
-
-      // Return safe debug to the app (no tokens)
-      return res.status(500).json({
-        error: 'b2_get_upload_url failed',
-        fnVersion: FN_VERSION,
-        details: uploadJson,
-        debug: {
-          envBucketId: B2_BUCKET_ID,
-          envBucketName: B2_BUCKET_NAME,
-          allowed: authJson.allowed || null,
-          apiUrl,
-        },
-      });
+    const daJson = await daRes.json();
+    if (!daRes.ok) {
+      return res.status(500).json({ error: 'b2_get_download_authorization failed', details: daJson });
     }
 
-    if (!uploadJson.uploadUrl || !uploadJson.authorizationToken) {
-      console.error(
-        '[getUploadUrl] Missing uploadUrl/authorizationToken in get_upload_url response',
-        uploadJson,
-      );
-      return res.status(500).json({
-        error:
-          'Missing uploadUrl/authorizationToken in Backblaze get_upload_url response',
-        fnVersion: FN_VERSION,
-        details: uploadJson,
-      });
+    const downloadAuthToken = daJson.authorizationToken;
+    if (!downloadAuthToken) {
+      return res.status(500).json({ error: 'Missing download authorizationToken' });
     }
 
-    // ---- 5) Return upload URL + upload token to app ----
+    const videoUrl = buildB2FileUrl(downloadUrl, B2_BUCKET_NAME, b2VideoKey, downloadAuthToken);
+    const sidecarUrl = buildB2FileUrl(downloadUrl, B2_BUCKET_NAME, b2SidecarKey, downloadAuthToken);
+
     return res.json({
       message: 'OK',
-      fnVersion: FN_VERSION,
-      uid,
-      uploadUrl: uploadJson.uploadUrl,
-      uploadAuthToken: uploadJson.authorizationToken,
-      bucketId: B2_BUCKET_ID,
-      bucketName: B2_BUCKET_NAME,
-      allowed: authJson.allowed || null,
+      shareId,
+      videoId,
+      expiresInSec,
+      videoUrl,
+      sidecarUrl,
     });
-  } catch (err) {
-    console.error('[getUploadUrl] Unexpected error:', err);
-    return res.status(500).json({
-      error: 'Internal server error',
-      fnVersion: FN_VERSION,
-      details: err?.message || String(err),
-    });
+  } catch (e) {
+    return res.status(500).json({ error: 'Internal server error', details: String(e?.message || e) });
   }
 });

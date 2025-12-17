@@ -1,14 +1,17 @@
 // lib/backend.ts
 import { auth } from "./firebase";
 
-const FUNCTION_URL =
-  "https://us-central1-sports-app-9efb3.cloudfunctions.net/getUploadUrl";
+// ✅ Gen 2 (Cloud Run) URL from Firebase Console:
+const FUNCTION_URL = "https://getuploadurl-2e3yl7gxaq-uc.a.run.app";
 
 export async function testGetUploadUrl() {
   const user = auth.currentUser;
-  if (!user) throw new Error("No Firebase user (call ensureAnonymous/sign in first).");
+  if (!user) {
+    throw new Error("No Firebase user (sign in or call ensureAnonymous first).");
+  }
 
-  const idToken = await user.getIdToken();
+  // Force refresh so you don’t get a stale token
+  const idToken = await user.getIdToken(true);
 
   const res = await fetch(FUNCTION_URL, {
     method: "POST",
@@ -27,15 +30,13 @@ export async function testGetUploadUrl() {
     data = { raw: text };
   }
 
-  console.log("[testGetUploadUrl] Response status:", res.status);
-  console.log("[testGetUploadUrl] Response body:", data);
+  console.log("[testGetUploadUrl] URL:", FUNCTION_URL);
+  console.log("[testGetUploadUrl] status:", res.status);
+  console.log("[testGetUploadUrl] body:", data);
 
   if (!res.ok) {
-    throw new Error(
-      `getUploadUrl failed (${res.status}): ${JSON.stringify(data)}`
-    );
+    throw new Error(`getUploadUrl failed (${res.status}): ${JSON.stringify(data)}`);
   }
 
-  // ✅ THIS is what your new test needs
   return data;
 }

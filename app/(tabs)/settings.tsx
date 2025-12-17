@@ -22,7 +22,6 @@ type CloudVideo = {
 export default function SettingsScreen() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>('Ready');
-
   const [cloudVideos, setCloudVideos] = useState<CloudVideo[]>([]);
 
   useEffect(() => {
@@ -41,6 +40,8 @@ export default function SettingsScreen() {
     return `Signed in as: ${u.email ?? u.uid.slice(0, 6) + '…'}`;
   };
 
+  const goToSignIn = () => router.push('/sign-in');
+
   const testAuth = async () => {
     setBusy(true);
     try {
@@ -52,6 +53,22 @@ export default function SettingsScreen() {
       });
     } catch (e: any) {
       setStatus(`Auth error: ${String(e?.message || e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const debugLogIdToken = async () => {
+    setBusy(true);
+    try {
+      const u = auth.currentUser;
+      if (!u) throw new Error('No currentUser. Sign in first.');
+      const token = await u.getIdToken(true);
+      console.log('🔥🔥🔥 ID TOKEN 🔥🔥🔥');
+      console.log(token);
+      setStatus('Logged ID token to console ✓');
+    } catch (e: any) {
+      setStatus(`Token error: ${String(e?.message || e)}`);
     } finally {
       setBusy(false);
     }
@@ -71,9 +88,11 @@ export default function SettingsScreen() {
       const data = new Blob([`hello from app @ ${new Date().toISOString()}`], {
         type: 'text/plain',
       });
+
       const r = ref(storage, path);
       await uploadBytes(r, data);
       const url = await getDownloadURL(r);
+
       setStatus(`Uploaded ✓  (${url.slice(0, 48)}…)`);
     } catch (e: any) {
       setStatus(`Upload error: ${String(e?.message || e)}`);
@@ -102,6 +121,7 @@ export default function SettingsScreen() {
     try {
       const r = ref(storage, video.storageKey);
       const url = await getDownloadURL(r);
+
       console.log('[Settings] Cloud video download URL:', {
         shareId: video.shareId,
         storageKey: video.storageKey,
@@ -124,8 +144,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const goToSignIn = () => router.push('/sign-in');
-
   const handleSignOut = async () => {
     setBusy(true);
     try {
@@ -139,13 +157,33 @@ export default function SettingsScreen() {
     }
   };
 
+  const testBackendUploadEndpoint = async () => {
+    setBusy(true);
+    try {
+      // Ensure we have a user so getIdToken works
+      await ensureAnonymous();
+
+      console.log('[Settings] Calling testGetUploadUrl...');
+      const r: any = await testGetUploadUrl();
+
+      // Typical success payload includes bucketName + uploadUrl
+      const bucket = r?.bucketName ?? 'unknown';
+      const hasUploadUrl = !!r?.uploadUrl;
+
+      setStatus(`Backend OK ✓ bucket=${bucket} uploadUrl=${hasUploadUrl ? 'yes' : 'no'}`);
+    } catch (e: any) {
+      console.log('❌ [Settings] testBackendUploadEndpoint error:', e);
+      setStatus(`Backend error: ${String(e?.message || e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /**
-   * NEW: End-to-end Backblaze test
+   * End-to-end Backblaze test
    * - gets uploadUrl + uploadAuthToken from your Cloud Function
    * - writes a tiny local text file
    * - uploads it to B2 under: videos/<uid>/hello.txt
-   *
-   * After this succeeds, you should see the file in Backblaze.
    */
   const testB2Upload = async () => {
     setBusy(true);
@@ -158,25 +196,21 @@ export default function SettingsScreen() {
       });
 
       // 1) Get uploadUrl + upload token from your backend
-      // IMPORTANT: testGetUploadUrl must RETURN the parsed JSON.
       const r: any = await testGetUploadUrl();
 
       if (!r?.uploadUrl || !r?.uploadAuthToken) {
         throw new Error(
-          `testGetUploadUrl did not return uploadUrl/uploadAuthToken. Got: ${JSON.stringify(
-            r,
-          )}`,
+          `testGetUploadUrl did not return uploadUrl/uploadAuthToken. Got: ${JSON.stringify(r)}`
         );
       }
 
       // 2) Create a tiny local file
-      const localPath =
-        FileSystem.cacheDirectory + `b2-test-${Date.now()}.txt`;
+      const localPath = FileSystem.cacheDirectory + `b2-test-${Date.now()}.txt`;
 
       await FileSystem.writeAsStringAsync(
         localPath,
         `hello b2 @ ${new Date().toISOString()}\nuid=${user.uid}\n`,
-        { encoding: FileSystem.EncodingType.UTF8 },
+        { encoding: FileSystem.EncodingType.UTF8 }
       );
 
       // 3) Upload to Backblaze
@@ -201,14 +235,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={{ flex: 1, padding: 20, backgroundColor: 'black' }}>
-      <Text
-        style={{
-          color: 'white',
-          fontSize: 24,
-          fontWeight: '900',
-          marginBottom: 16,
-        }}
-      >
+      <Text style={{ color: 'white', fontSize: 24, fontWeight: '900', marginBottom: 16 }}>
         Settings
       </Text>
 
@@ -264,6 +291,21 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
+        onPress={debugLogIdToken}
+        style={{
+          backgroundColor: 'white',
+          paddingVertical: 12,
+          borderRadius: 10,
+          marginBottom: 12,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#111', fontWeight: '900' }}>
+          Debug: Log ID Token
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
         onPress={testUpload}
         style={{
           backgroundColor: 'white',
@@ -294,18 +336,7 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
-        onPress={async () => {
-          console.log('[Settings] Calling testGetUploadUrl...');
-          try {
-            setBusy(true);
-            const r: any = await testGetUploadUrl();
-            setStatus(`Backend OK ✓ bucket=${r?.bucketName ?? 'unknown'}`);
-          } catch (e: any) {
-            setStatus(`Backend error: ${String(e?.message || e)}`);
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onPress={testBackendUploadEndpoint}
         style={{
           backgroundColor: 'white',
           paddingVertical: 12,
@@ -319,7 +350,6 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      {/* ✅ NEW BUTTON */}
       <TouchableOpacity
         onPress={testB2Upload}
         style={{
@@ -335,20 +365,10 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      {busy ? (
-        <ActivityIndicator color="#fff" />
-      ) : (
-        <Text style={{ color: 'white', marginTop: 8 }}>{status}</Text>
-      )}
+      {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: 'white', marginTop: 8 }}>{status}</Text>}
 
       <View style={{ marginTop: 16 }}>
-        <Text
-          style={{
-            color: 'rgba(255,255,255,0.8)',
-            fontWeight: '700',
-            marginBottom: 4,
-          }}
-        >
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '700', marginBottom: 4 }}>
           Cloud videos for this account: {cloudVideos.length}
         </Text>
 
@@ -362,9 +382,7 @@ export default function SettingsScreen() {
               borderBottomColor: 'rgba(255,255,255,0.12)',
             }}
           >
-            <Text style={{ color: 'white', fontSize: 12 }}>
-              shareId: {v.shareId}
-            </Text>
+            <Text style={{ color: 'white', fontSize: 12 }}>shareId: {v.shareId}</Text>
             <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
               storageKey: {v.storageKey}
             </Text>
