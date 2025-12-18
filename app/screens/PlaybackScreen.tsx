@@ -12,7 +12,7 @@ import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 // ✅ extracted local sidecar hook
 import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 
-// ✅ NEW: extracted chrome/tap/skip logic hook
+// ✅ extracted chrome/tap/skip logic hook
 import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 
 // === Module registry (add your modules here)
@@ -53,19 +53,57 @@ export default function PlaybackScreen() {
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
 
-  // params
-  const { videoPath: rawVideoPath, shareId: rawShareId, athlete: athleteParam } = useLocalSearchParams();
-  const shareId = Array.isArray(rawShareId) ? rawShareId[0] : rawShareId || '';
-  const videoPath = Array.isArray(rawVideoPath) ? rawVideoPath[0] : rawVideoPath || '';
+  // ==================== Params (typed + safe) ====================
+  type PlaybackParams = {
+    videoPath?: string;
+    shareId?: string;
+    athlete?: string;
+  };
+
+  const { videoPath: rawVideoPath, shareId: rawShareId, athlete: athleteParam } =
+    useLocalSearchParams<PlaybackParams>();
+
+  const shareId =
+    typeof rawShareId === 'string' ? rawShareId : Array.isArray(rawShareId) ? rawShareId[0] : undefined;
+
+  const videoPath =
+    typeof rawVideoPath === 'string' ? rawVideoPath : Array.isArray(rawVideoPath) ? rawVideoPath[0] : undefined;
 
   const athleteParamStr =
     typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
 
-  // overlay visibility mode (drives ALL sports)
+  const hasSource = !!videoPath || !!shareId;
+
+  // ✅ Guard: never crash on missing params
+  if (!hasSource) {
+    return (
+      <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginBottom: 8 }}>Nothing to play</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginBottom: 14 }}>
+          This screen needs either a local videoPath or a cloud shareId.
+        </Text>
+        <Pressable
+          onPress={() => router.back()}
+          style={{
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.12)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.22)',
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '900' }}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // ==================== Overlay mode ====================
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
   const [overlayMenuOpen, setOverlayMenuOpen] = useState(false);
 
-  // derived flags
   const overlayOn = overlayMode === 'all' || overlayMode === 'noBelt';
   const showEventBelt = overlayMode === 'all' || overlayMode === 'noScore';
 
@@ -83,11 +121,15 @@ export default function PlaybackScreen() {
     }
   }, [overlayMode]);
 
-  // edit state
+  // ==================== Edit state ====================
   const [editMode, setEditMode] = useState(false);
   const [editSubmode, setEditSubmode] = useState<'add' | 'replace' | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
+
+  // ==================== Playback source contract ====================
+  // Guard above ensures one exists.
+  const source = videoPath ? { videoPath } : { shareId: shareId! };
 
   // ✅ Player + timing extracted into hook
   const {
@@ -101,9 +143,9 @@ export default function PlaybackScreen() {
     onSeek,
     onPlayPause,
     getLiveDuration,
-  } = usePlaybackPlayer(videoPath ? { videoPath } : shareId ? { shareId } : { videoPath: '' });
+  } = usePlaybackPlayer(source);
 
-  // ✅ Local sidecar
+  // ✅ Local sidecar (still keyed by both; handles whichever exists)
   const {
     events,
     setEvents,
@@ -116,11 +158,15 @@ export default function PlaybackScreen() {
     homeColorIsGreen,
     saveSidecar,
     accumulate: accumulateEvents,
-  } = useLocalSidecar({ videoPath, shareId });
+  } = useLocalSidecar({
+    videoPath: videoPath ?? '',
+    shareId,
+  });
+  
 
   const displayAthlete = athleteParamStr?.trim() || athleteName;
 
-  // ✅ NEW: chrome + tap zones + skip HUD extracted
+  // ✅ chrome + tap zones + skip HUD
   const {
     chromeVisible,
     showChrome,
