@@ -1,7 +1,7 @@
 // app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,8 +9,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // ✅ extracted player hook
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 
-// ✅ extracted local sidecar hook (removes the huge sidecar block from this screen)
+// ✅ extracted local sidecar hook
 import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
+
+// ✅ NEW: extracted chrome/tap/skip logic hook
+import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 
 // === Module registry (add your modules here)
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
@@ -86,21 +89,6 @@ export default function PlaybackScreen() {
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
 
-  // skip HUD state
-  const [skipHUD, setSkipHUD] = useState<{ side: 'left' | 'right'; total: number; shownAt: number } | null>(null);
-  const skipHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showSkipHud = (side: 'left' | 'right', add: number) => {
-    setSkipHUD(prev => {
-      const nowMs = Date.now();
-      if (prev && prev.side === side && nowMs - prev.shownAt < 600) {
-        return { side, total: prev.total + add, shownAt: nowMs };
-      }
-      return { side, total: add, shownAt: nowMs };
-    });
-    if (skipHudTimer.current) clearTimeout(skipHudTimer.current);
-    skipHudTimer.current = setTimeout(() => setSkipHUD(null), 900);
-  };
-
   // ✅ Player + timing extracted into hook
   const {
     player,
@@ -132,6 +120,27 @@ export default function PlaybackScreen() {
 
   const displayAthlete = athleteParamStr?.trim() || athleteName;
 
+  // ✅ NEW: chrome + tap zones + skip HUD extracted
+  const {
+    chromeVisible,
+    showChrome,
+    skipHUD,
+    handleLeftTap,
+    handleRightTap,
+    SCRUB_RESERVED_TOP,
+    tapZoneBottomGap,
+  } = usePlaybackChrome({
+    now: now || 0,
+    isPlaying,
+    editMode,
+    showEventBelt,
+    insets,
+    beltHeight: BELT_H,
+    safeMargin: SAFE_MARGIN,
+    skipSeconds: SKIP_SEC,
+    onSeek,
+  });
+
   // live score
   const liveScore = useMemo(() => {
     if (!events.length) return { home: 0, opponent: 0 };
@@ -143,67 +152,6 @@ export default function PlaybackScreen() {
     }
     return s;
   }, [events, now]);
-
-  // chrome show/hide
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const HIDE_AFTER_MS = 2200;
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearHideTimer = () => {
-    if (hideTimer.current) {
-      clearTimeout(hideTimer.current);
-      hideTimer.current = null;
-    }
-  };
-  const showChrome = useCallback(() => {
-    setChromeVisible(true);
-    clearHideTimer();
-    hideTimer.current = setTimeout(() => setChromeVisible(false), HIDE_AFTER_MS);
-  }, []);
-  useEffect(() => {
-    clearHideTimer();
-    if (!editMode) {
-      if (isPlaying) showChrome();
-      else setChromeVisible(true);
-    } else {
-      setChromeVisible(false);
-    }
-    return clearHideTimer;
-  }, [isPlaying, showChrome, editMode]);
-
-  // Tap zones
-  const lastTapLeft = useRef(0);
-  const lastTapRight = useRef(0);
-  const DOUBLE_MS = 260;
-  const onSeekRelative = (delta: number) => onSeek((now || 0) + delta);
-
-  const handleLeftTap = () => {
-    const nowMs = Date.now();
-    if (nowMs - lastTapLeft.current < DOUBLE_MS) {
-      lastTapLeft.current = 0;
-      onSeekRelative(-SKIP_SEC);
-      showSkipHud('left', SKIP_SEC);
-      showChrome();
-    } else {
-      lastTapLeft.current = nowMs;
-      setTimeout(() => showChrome(), DOUBLE_MS + 20);
-    }
-  };
-
-  const handleRightTap = () => {
-    const nowMs = Date.now();
-    if (nowMs - lastTapRight.current < DOUBLE_MS) {
-      lastTapRight.current = 0;
-      onSeekRelative(+SKIP_SEC);
-      showSkipHud('right', SKIP_SEC);
-      showChrome();
-    } else {
-      lastTapRight.current = nowMs;
-      setTimeout(() => showChrome(), DOUBLE_MS + 20);
-    }
-  };
-
-  const SCRUB_RESERVED_TOP = insets.top + 150;
-  const tapZoneBottomGap = (showEventBelt ? BELT_H : 0) + insets.bottom;
 
   // editing from modules
   const genId = () => Math.random().toString(36).slice(2, 9);
