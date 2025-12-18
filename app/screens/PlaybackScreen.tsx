@@ -375,6 +375,31 @@ export default function PlaybackScreen() {
           contentFit="contain"
         />
 
+                {/* Skip HUD (double-tap indicator) */}
+                {!!skipHUD && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: '45%',
+              left: skipHUD.side === 'left' ? 24 : undefined,
+              right: skipHUD.side === 'right' ? 24 : undefined,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.25)',
+              zIndex: 60,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
+              {skipHUD.side === 'left' ? `⟲  -${skipHUD.total}s` : `+${skipHUD.total}s  ⟳`}
+            </Text>
+          </View>
+        )}
+
+
         {/* Replay */}
         {atVideoEnd && !editMode && (
           <Pressable
