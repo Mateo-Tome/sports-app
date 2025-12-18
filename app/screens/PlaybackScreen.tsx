@@ -2,7 +2,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -48,6 +48,7 @@ const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> =
 export default function PlaybackScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
 
   // params
   const { videoPath: rawVideoPath, shareId: rawShareId, athlete: athleteParam } = useLocalSearchParams();
@@ -85,7 +86,7 @@ export default function PlaybackScreen() {
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
 
-  // skip HUD state (reserved)
+  // skip HUD state
   const [skipHUD, setSkipHUD] = useState<{ side: 'left' | 'right'; total: number; shownAt: number } | null>(null);
   const skipHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showSkipHud = (side: 'left' | 'right', add: number) => {
@@ -101,7 +102,6 @@ export default function PlaybackScreen() {
   };
 
   // ✅ Player + timing extracted into hook
-  // NOTE: your hook must accept { videoPath? } or { shareId? }
   const {
     player,
     now,
@@ -115,20 +115,17 @@ export default function PlaybackScreen() {
     getLiveDuration,
   } = usePlaybackPlayer(videoPath ? { videoPath } : shareId ? { shareId } : { videoPath: '' });
 
-  // ✅ Local sidecar (read/write events next to local mp4). Cloud (shareId-only) => empty for now.
+  // ✅ Local sidecar
   const {
     events,
     setEvents,
     finalScore,
     debugMsg,
     athleteName,
-    setAthleteName,
     sport,
     style,
     homeIsAthlete,
-    setHomeIsAthlete,
     homeColorIsGreen,
-    setHomeColorIsGreen,
     saveSidecar,
     accumulate: accumulateEvents,
   } = useLocalSidecar({ videoPath, shareId });
@@ -147,7 +144,7 @@ export default function PlaybackScreen() {
     return s;
   }, [events, now]);
 
-  // chrome show/hide (scrubber + play/pause + edit use this)
+  // chrome show/hide
   const [chromeVisible, setChromeVisible] = useState(true);
   const HIDE_AFTER_MS = 2200;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,7 +170,7 @@ export default function PlaybackScreen() {
     return clearHideTimer;
   }, [isPlaying, showChrome, editMode]);
 
-  // Tap zones (double tap skip; single tap shows chrome)
+  // Tap zones
   const lastTapLeft = useRef(0);
   const lastTapRight = useRef(0);
   const DOUBLE_MS = 260;
@@ -208,22 +205,13 @@ export default function PlaybackScreen() {
   const SCRUB_RESERVED_TOP = insets.top + 150;
   const tapZoneBottomGap = (showEventBelt ? BELT_H : 0) + insets.bottom;
 
-  // ====== editing from modules ======
+  // editing from modules
   const genId = () => Math.random().toString(36).slice(2, 9);
 
   const enterAddMode = () => {
     setEditMode(true);
     setEditSubmode('add');
     setEditTargetId(null);
-    try {
-      (player as any)?.pause?.();
-    } catch {}
-  };
-
-  const enterReplaceMode = (ev: EventRow) => {
-    setEditMode(true);
-    setEditSubmode('replace');
-    setEditTargetId(ev._id ?? genId());
     try {
       (player as any)?.pause?.();
     } catch {}
@@ -241,7 +229,6 @@ export default function PlaybackScreen() {
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
     const points = typeof (evt as any).value === 'number' ? (evt as any).value : undefined;
 
-    // FLATTEN META: take evt.meta as row.meta, plus label
     const baseMeta = ((evt as any).meta ?? {}) as Record<string, any>;
     const label = (evt as any).label;
     const metaForRow = {
@@ -286,17 +273,16 @@ export default function PlaybackScreen() {
     saveSidecar(next);
   };
 
-  // ====== Module resolve ======
+  // Module resolve
   const moduleKey = `${(sport || '').toLowerCase()}:${(style || 'default').toLowerCase()}`;
   const ModuleCmp = ModuleRegistry[moduleKey];
 
-  // === COLOR MAPPING FOR BELT ===
+  // Color mapping for belt
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
-      const inner = (meta.meta ?? {}) as any; // support older nested shape
+      const inner = (meta.meta ?? {}) as any;
 
-      // --- Step 1: sport-agnostic explicit colors ---
       const explicit =
         meta.pillColor ??
         inner.pillColor ??
@@ -309,11 +295,8 @@ export default function PlaybackScreen() {
         meta.chipColor ??
         inner.chipColor;
 
-      if (typeof explicit === 'string' && explicit.trim().length > 0) {
-        return explicit;
-      }
+      if (typeof explicit === 'string' && explicit.trim().length > 0) return explicit;
 
-      // --- Step 2: legacy wrestling-style fallback using myKidColor/opponentColor ---
       const pickColor = (which: 'myKidColor' | 'opponentColor'): string | undefined => {
         const raw = meta[which] ?? inner[which];
         if (!raw) return undefined;
@@ -328,38 +311,28 @@ export default function PlaybackScreen() {
 
       const isAthleteActor = (e.actor === 'home' && homeIsAthlete) || (e.actor === 'opponent' && !homeIsAthlete);
 
-      // If per-event colors exist, use them
       if (mk || ok) {
-        const athleteColor = mk;
-        const opponentColor = ok;
-
-        if (isAthleteActor && athleteColor) return athleteColor;
-        if (!isAthleteActor && opponentColor) return opponentColor;
+        if (isAthleteActor && mk) return mk;
+        if (!isAthleteActor && ok) return ok;
       }
 
-      // Fallback: color based on global "homeColorIsGreen" + who's the athlete
-      const colorIsGreen = homeColorIsGreen !== false; // default true
+      const colorIsGreen = homeColorIsGreen !== false;
       const athleteColor = colorIsGreen ? GREEN : RED;
       const opponentColor = colorIsGreen ? RED : GREEN;
 
       const kind = String(e.kind || '').toLowerCase();
       const pts = typeof e.points === 'number' ? e.points : 0;
 
-      // Scoring events: my kid vs opponent
-      if (pts > 0) {
-        return isAthleteActor ? athleteColor : opponentColor;
-      }
+      if (pts > 0) return isAthleteActor ? athleteColor : opponentColor;
+      if (PENALTYISH.has(kind)) return opponentColor;
 
-      // Penalties / stalling: treat as "bad" for my kid
-      if (PENALTYISH.has(kind)) {
-        return opponentColor;
-      }
-
-      // Neutral / unknown
       return 'rgba(148,163,184,0.9)';
     },
     [homeIsAthlete, homeColorIsGreen],
   );
+
+  // --- Skip HUD bounds (fixes landscape off-screen) ---
+  const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
@@ -375,15 +348,17 @@ export default function PlaybackScreen() {
           contentFit="contain"
         />
 
-                {/* Skip HUD (double-tap indicator) */}
-                {!!skipHUD && (
+        {/* Skip HUD (double-tap indicator) */}
+        {!!skipHUD && (
           <View
             pointerEvents="none"
             style={{
               position: 'absolute',
               top: '45%',
-              left: skipHUD.side === 'left' ? 24 : undefined,
-              right: skipHUD.side === 'right' ? 24 : undefined,
+              left: skipHUD.side === 'left' ? insets.left + SAFE_MARGIN : undefined,
+              right: skipHUD.side === 'right' ? insets.right + SAFE_MARGIN : undefined,
+              maxWidth: skipHudMaxWidth,
+              alignSelf: 'flex-start',
               paddingHorizontal: 14,
               paddingVertical: 10,
               borderRadius: 999,
@@ -393,12 +368,11 @@ export default function PlaybackScreen() {
               zIndex: 60,
             }}
           >
-            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
               {skipHUD.side === 'left' ? `⟲  -${skipHUD.total}s` : `+${skipHUD.total}s  ⟳`}
             </Text>
           </View>
         )}
-
 
         {/* Replay */}
         {atVideoEnd && !editMode && (
@@ -648,12 +622,7 @@ export default function PlaybackScreen() {
               }}
             />
             <Pressable
-              onPress={() => {
-                setEditMode(false);
-                setEditSubmode(null);
-                setEditTargetId(null);
-                setQuickEditFor(null);
-              }}
+              onPress={exitEditMode}
               style={{
                 position: 'absolute',
                 left: 0,
@@ -662,14 +631,7 @@ export default function PlaybackScreen() {
                 alignItems: 'center',
               }}
             >
-              <View
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 999,
-                  backgroundColor: '#f59e0b',
-                }}
-              >
+              <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f59e0b' }}>
                 <Text style={{ color: '#111', fontWeight: '900' }}>Tap to exit Edit/Add</Text>
               </View>
             </Pressable>
