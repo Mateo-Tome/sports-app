@@ -17,6 +17,10 @@ import {
   type IndexMeta,
 } from '../../lib/library/indexStore';
 
+// ✅ NEW: tiny helper so this file doesn't keep growing
+import { pushPlayback } from '../../src/hooks/navigation/pushPlayback';
+
+
 // retagging logic
 import retagVideo from '../../lib/library/retag';
 
@@ -32,7 +36,6 @@ import EditTitleModal from '../../components/library/EditTitleModal';
 import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
 import { fetchMyVideos } from '../../lib/videos';
 
-
 import {
   useCallback,
   useEffect,
@@ -46,7 +49,7 @@ import {
   Modal,
   StyleSheet,
   View,
-  ViewToken
+  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -108,11 +111,10 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
-    // Cloud videos from Firestore for this user
-    const [cloudVideos, setCloudVideos] = useState<
+  // Cloud videos from Firestore for this user
+  const [cloudVideos, setCloudVideos] = useState<
     { id: string; storageKey: string; sidecarRef?: string; createdAt: number; shareId: string }[]
   >([]);
-
 
   // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
@@ -224,8 +226,8 @@ export default function LibraryScreen() {
     }
   }, [buildRow]);
 
-   // initial + focus refresh
-   useEffect(() => {
+  // initial + focus refresh
+  useEffect(() => {
     load();
   }, [load]);
   useFocusEffect(
@@ -246,8 +248,6 @@ export default function LibraryScreen() {
       }
     })();
   }, []);
-
-  
 
   // ----- FAST PATH: patch row when sidecarUpdated (just re-read outcome) ---
   const patchRowFromSidecarPayload = useCallback(async (uri: string) => {
@@ -369,16 +369,15 @@ export default function LibraryScreen() {
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
+  // ✅ UPDATED: use helper so this file stays stable when we add cloud navigation
   const routerPushPlayback = useCallback(
     (row: Row) => {
-      router.push({
-        pathname: '/screens/PlaybackScreen',
-        params: {
-          videoPath: row.uri,
-          athlete: row.athlete,
-          sport: row.sport,
-          displayName: row.displayName,
-        },
+      pushPlayback(router, {
+        kind: 'local',
+        videoPath: row.uri,
+        athlete: row.athlete,
+        sport: row.sport,
+        displayName: row.displayName,
       });
     },
     [router],
@@ -684,7 +683,6 @@ export default function LibraryScreen() {
       />
     </View>
   );
-
 }
 
 // (Optional) empty stylesheet if you want to attach styles later
