@@ -1,14 +1,16 @@
 // app/screens/PlaybackScreen.tsx
-import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DeviceEventEmitter, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// ✅ NEW: extracted player hook
+// ✅ extracted player hook
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
+
+// ✅ extracted local sidecar hook (removes the huge sidecar block from this screen)
+import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 
 // === Module registry (add your modules here)
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
@@ -17,19 +19,10 @@ import TopScrubber from '../../components/playback/TopScrubber';
 
 import type { OverlayEvent, PlaybackModuleProps } from '../../components/modules/types';
 
-// 🔹 NEW: shared core helpers/types
-import {
-  Actor,
-  assignIds,
-  deriveOutcome,
-  EventRow,
-  normalizeEvents,
-  PENALTYISH,
-  Sidecar,
-  toActor,
-} from '../../components/playback/playbackCore';
+// 🔹 shared core helpers/types
+import { Actor, EventRow, PENALTYISH, toActor } from '../../components/playback/playbackCore';
 
-// 🔹 NEW: UI helpers extracted to separate file
+// 🔹 UI helpers extracted to separate file
 import {
   BELT_H,
   EventBelt,
@@ -57,22 +50,12 @@ export default function PlaybackScreen() {
   const insets = useSafeAreaInsets();
 
   // params
-  const { videoPath: rawVideoPath, athlete: athleteParam } = useLocalSearchParams();
+  const { videoPath: rawVideoPath, shareId: rawShareId, athlete: athleteParam } = useLocalSearchParams();
+  const shareId = Array.isArray(rawShareId) ? rawShareId[0] : rawShareId || '';
   const videoPath = Array.isArray(rawVideoPath) ? rawVideoPath[0] : rawVideoPath || '';
 
-  const [athleteName, setAthleteName] = useState<string>('Athlete');
   const athleteParamStr =
     typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
-  const displayAthlete = athleteParamStr?.trim() || athleteName;
-
-  const [events, setEvents] = useState<EventRow[]>([]);
-  const [debugMsg, setDebugMsg] = useState<string>('');
-  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(undefined);
-
-  const [homeIsAthlete, setHomeIsAthlete] = useState<boolean>(true);
-  const [homeColorIsGreen, setHomeColorIsGreen] = useState<boolean>(true);
-  const [sport, setSport] = useState<string | undefined>(undefined);
-  const [style, setStyle] = useState<string | undefined>(undefined);
 
   // overlay visibility mode (drives ALL sports)
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
@@ -107,17 +90,18 @@ export default function PlaybackScreen() {
   const skipHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showSkipHud = (side: 'left' | 'right', add: number) => {
     setSkipHUD(prev => {
-      const now = Date.now();
-      if (prev && prev.side === side && now - prev.shownAt < 600) {
-        return { side, total: prev.total + add, shownAt: now };
+      const nowMs = Date.now();
+      if (prev && prev.side === side && nowMs - prev.shownAt < 600) {
+        return { side, total: prev.total + add, shownAt: nowMs };
       }
-      return { side, total: add, shownAt: now };
+      return { side, total: add, shownAt: nowMs };
     });
     if (skipHudTimer.current) clearTimeout(skipHudTimer.current);
     skipHudTimer.current = setTimeout(() => setSkipHUD(null), 900);
   };
 
   // ✅ Player + timing extracted into hook
+  // NOTE: your hook must accept { videoPath? } or { shareId? }
   const {
     player,
     now,
@@ -129,157 +113,27 @@ export default function PlaybackScreen() {
     onSeek,
     onPlayPause,
     getLiveDuration,
-  } = usePlaybackPlayer(videoPath);
+  } = usePlaybackPlayer(videoPath ? { videoPath } : shareId ? { shareId } : { videoPath: '' });
 
-  const accumulate = (evts: EventRow[]) => {
-    let h = 0,
-      o = 0;
-    return evts.map(e => {
-      const pts = typeof e.points === 'number' ? e.points : 0;
-      if (pts > 0) {
-        if (e.actor === 'home') h += pts;
-        else if (e.actor === 'opponent') o += pts;
-      }
-      return { ...e, scoreAfter: e.scoreAfter ?? { home: h, opponent: o } };
-    });
-  };
+  // ✅ Local sidecar (read/write events next to local mp4). Cloud (shareId-only) => empty for now.
+  const {
+    events,
+    setEvents,
+    finalScore,
+    debugMsg,
+    athleteName,
+    setAthleteName,
+    sport,
+    style,
+    homeIsAthlete,
+    setHomeIsAthlete,
+    homeColorIsGreen,
+    setHomeColorIsGreen,
+    saveSidecar,
+    accumulate: accumulateEvents,
+  } = useLocalSidecar({ videoPath, shareId });
 
-  // === sidecar IO ===
-  const sidecarPathRef = useRef<string | null>(null);
-  const sidecarMeta = useRef<{ sport?: string; style?: string; createdAt?: number }>({});
-
-  const saveSidecar = async (next: EventRow[]) => {
-    try {
-      const path = sidecarPathRef.current;
-      if (!path) return;
-
-      const ordered = [...next].sort((a, b) => a.t - b.t);
-      const withScores = accumulate(ordered);
-      const o = deriveOutcome(withScores, homeIsAthlete);
-      setFinalScore(o.finalScore);
-
-      const payload: Sidecar = {
-        athlete: athleteName,
-        sport: sidecarMeta.current.sport,
-        style: sidecarMeta.current.style,
-        createdAt: sidecarMeta.current.createdAt,
-        events: withScores,
-        finalScore: o.finalScore,
-        homeIsAthlete,
-        homeColorIsGreen,
-        appVersion: 1,
-        outcome: o.outcome,
-        winner: o.winner,
-        endedBy: o.endedBy,
-        athletePinned: o.athletePinned,
-        athleteWasPinned: o.athleteWasPinned,
-        modifiedAt: Date.now(),
-      };
-
-      const tmp = `${path}.tmp`;
-      await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload));
-      try {
-        DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload });
-      } catch {}
-      try {
-        await FileSystem.deleteAsync(path, { idempotent: true });
-      } catch {}
-      await FileSystem.moveAsync({ from: tmp, to: path });
-    } catch {}
-  };
-
-  useEffect(() => {
-    if (!videoPath) {
-      setDebugMsg('No video path provided.');
-      setEvents([]);
-      return;
-    }
-    const lastSlash = videoPath.lastIndexOf('/');
-    const lastDot = videoPath.lastIndexOf('.');
-    const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
-    const guessSidecar = `${base}.json`;
-
-    const tryReadSidecar = async (p: string) => {
-      try {
-        const info = await FileSystem.getInfoAsync(p);
-        if (!(info as any)?.exists) return null;
-        const txt = await FileSystem.readAsStringAsync(p);
-        const parsed: Sidecar = JSON.parse(txt || '{}');
-        return parsed;
-      } catch {
-        return null;
-      }
-    };
-
-    const tryDirectorySearch = async () => {
-      try {
-        const dir = videoPath.slice(0, lastSlash + 1);
-        // @ts-ignore
-        const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
-        const baseName = base.slice(lastSlash + 1);
-        const candidate = files.find(f => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
-        if (!candidate) return null;
-        return await tryReadSidecar(dir + candidate);
-      } catch {
-        return null;
-      }
-    };
-
-    (async () => {
-      setDebugMsg('Loading sidecar…');
-      let usedPath: string | null = guessSidecar;
-
-      let parsed = await tryReadSidecar(guessSidecar);
-      if (!parsed) {
-        parsed = await tryDirectorySearch();
-        if (parsed) {
-          usedPath = `${videoPath.slice(0, lastSlash + 1)}${base.slice(lastSlash + 1)}.json`;
-        }
-      }
-
-      sidecarPathRef.current = usedPath;
-
-      if (!parsed) {
-        setEvents([]);
-        setFinalScore(undefined);
-        setDebugMsg(`No sidecar found. Looked for:\n${guessSidecar}`);
-        sidecarMeta.current = {};
-        setSport(undefined);
-        setStyle(undefined);
-        setHomeIsAthlete(true);
-        setHomeColorIsGreen(true);
-        return;
-      }
-
-      const hiA = parsed.homeIsAthlete !== false; // default true
-      const hcG = parsed.homeColorIsGreen !== false; // default true
-
-      setHomeIsAthlete(hiA);
-      setHomeColorIsGreen(hcG);
-
-      setAthleteName(parsed.athlete?.trim() || 'Athlete');
-      sidecarMeta.current = {
-        sport: parsed.sport,
-        style: parsed.style,
-        createdAt: parsed.createdAt,
-      };
-      setSport(parsed.sport);
-      setStyle(parsed.style);
-
-      const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
-      const normalized = normalizeEvents(rawEvts, hiA);
-      const withIds = assignIds(normalized);
-      const ordered = [...withIds].sort((a, b) => a.t - b.t);
-      const withScores = accumulate(ordered);
-      setEvents(withScores);
-
-      const fs =
-        parsed.finalScore ??
-        (withScores.length ? withScores[withScores.length - 1].scoreAfter : { home: 0, opponent: 0 });
-      setFinalScore(fs);
-      setDebugMsg(withScores.length ? '' : 'Sidecar loaded but no events.');
-    })();
-  }, [videoPath]);
+  const displayAthlete = athleteParamStr?.trim() || athleteName;
 
   // live score
   const liveScore = useMemo(() => {
@@ -399,7 +253,7 @@ export default function PlaybackScreen() {
 
     if (editSubmode === 'add') {
       const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
-      const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
+      const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
       setEvents(next);
       saveSidecar(next);
       exitEditMode();
@@ -419,7 +273,7 @@ export default function PlaybackScreen() {
             } as EventRow)
           : e,
       );
-      const next: EventRow[] = accumulate(nextBase.sort((a, b) => a.t - b.t));
+      const next: EventRow[] = accumulateEvents(nextBase.sort((a, b) => a.t - b.t));
       setEvents(next);
       saveSidecar(next);
       exitEditMode();
@@ -427,7 +281,7 @@ export default function PlaybackScreen() {
     }
 
     const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
-    const next: EventRow[] = accumulate([...events, newEvt].sort((a, b) => a.t - b.t));
+    const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
     setEvents(next);
     saveSidecar(next);
   };
@@ -704,9 +558,9 @@ export default function PlaybackScreen() {
               onCancel={() => setQuickEditFor(null)}
               onDelete={() => {
                 if (!quickEditFor) return;
-                const next: EventRow[] = events.filter(e => e._id !== quickEditFor._id);
+                const next = events.filter(e => e._id !== quickEditFor._id);
                 const ordered = [...next].sort((a, b) => a.t - b.t);
-                const withScores = ordered.map(e => e);
+                const withScores = accumulateEvents(ordered);
                 setEvents(withScores);
                 saveSidecar(withScores);
                 setQuickEditFor(null);
@@ -794,6 +648,13 @@ export default function PlaybackScreen() {
                 <Text style={{ color: '#111', fontWeight: '900' }}>Tap to exit Edit/Add</Text>
               </View>
             </Pressable>
+          </View>
+        )}
+
+        {/* optional debug text */}
+        {!!debugMsg && (
+          <View style={{ position: 'absolute', left: 12, right: 12, bottom: 12 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>{debugMsg}</Text>
           </View>
         )}
       </View>

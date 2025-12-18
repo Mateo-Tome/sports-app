@@ -1,33 +1,113 @@
 // app/screens/playback/hooks/usePlaybackPlayer.ts
 import { useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-export function usePlaybackPlayer(videoPath: string) {
+type PlaybackSource =
+  | { videoPath: string; shareId?: never }
+  | { videoPath?: never; shareId: string }
+  | { videoPath: string; shareId: string }; // allow both; videoPath wins
+
+type GetPlaybackUrlsResponse = { videoUrl: string };
+
+async function getPlaybackUrls(shareId: string): Promise<GetPlaybackUrlsResponse> {
+  // ✅ IMPORTANT: replace with your real endpoint
+  // If you already have a helper in your app, we’ll swap to it next.
+  const base =
+    process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL ||
+    process.env.EXPO_PUBLIC_API_BASE_URL ||
+    ''; // e.g. "https://us-central1-<project>.cloudfunctions.net"
+
+  if (!base) throw new Error('Missing EXPO_PUBLIC_FUNCTIONS_BASE_URL (or EXPO_PUBLIC_API_BASE_URL)');
+
+  const res = await fetch(`${base}/getPlaybackUrls?shareId=${encodeURIComponent(shareId)}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`getPlaybackUrls failed (${res.status}): ${txt || res.statusText}`);
+  }
+
+  const json = (await res.json()) as any;
+  const videoUrl = String(json?.videoUrl || '');
+  if (!videoUrl) throw new Error('getPlaybackUrls returned no videoUrl');
+  return { videoUrl };
+}
+
+export function usePlaybackPlayer(sourceOrVideoPath: PlaybackSource | string) {
+  // Back-compat: allow old call usePlaybackPlayer(videoPath)
+  const source: PlaybackSource =
+    typeof sourceOrVideoPath === 'string'
+      ? { videoPath: sourceOrVideoPath }
+      : (sourceOrVideoPath as PlaybackSource);
+
   const player = useVideoPlayer('', p => {
     p.loop = false;
   });
-
-  // Load / replace source
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!videoPath) return;
-      try {
-        await (player as any).replaceAsync(String(videoPath));
-        if (cancelled) return;
-      } catch {}
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [videoPath, player]);
 
   const [now, setNow] = useState(0);
   const [dur, setDur] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
 
-  // Poll player state (matches your existing logic)
+  const [loadingSource, setLoadingSource] = useState(false);
+  const [sourceError, setSourceError] = useState<string>('');
+
+  // Used to ignore late async results (race-safe)
+  const loadTokenRef = useRef(0);
+
+  // Load / replace source (local OR shareId->signed url)
+  useEffect(() => {
+    let cancelled = false;
+    const token = ++loadTokenRef.current;
+
+    (async () => {
+      setSourceError('');
+      setLoadingSource(false);
+
+      // Prefer local file if present
+      const videoPath = (source as any)?.videoPath ? String((source as any).videoPath) : '';
+      const shareId = (source as any)?.shareId ? String((source as any).shareId) : '';
+
+      if (!videoPath && !shareId) return;
+
+      setLoadingSource(true);
+      try {
+        let uri = videoPath;
+
+        if (!uri && shareId) {
+          const { videoUrl } = await getPlaybackUrls(shareId);
+          uri = videoUrl;
+        }
+
+        if (cancelled) return;
+        if (loadTokenRef.current !== token) return;
+
+        await (player as any).replaceAsync(uri);
+
+        if (cancelled) return;
+        if (loadTokenRef.current !== token) return;
+
+        // Reset to start when switching sources
+        try {
+          (player as any).currentTime = 0;
+        } catch {}
+      } catch (e: any) {
+        if (cancelled) return;
+        if (loadTokenRef.current !== token) return;
+        setSourceError(e?.message ? String(e.message) : 'Failed to load video');
+      } finally {
+        if (!cancelled && loadTokenRef.current === token) setLoadingSource(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [player, (source as any)?.videoPath, (source as any)?.shareId]);
+
+  // Poll player state
   useEffect(() => {
     const id = setInterval(() => {
       try {
@@ -40,6 +120,7 @@ export function usePlaybackPlayer(videoPath: string) {
         setIsPlaying(!!playing);
       } catch {}
     }, 240);
+
     return () => clearInterval(id);
   }, [player, isScrubbing]);
 
@@ -69,6 +150,34 @@ export function usePlaybackPlayer(videoPath: string) {
     } catch {}
   };
 
+  const reload = () => {
+    // Forces the effect to run again by changing token and re-setting same source.
+    // We just bump the token; next render effect sees same deps, so to actually reload
+    // we do a simple replaceAsync to current source by calling replaceAsync again:
+    loadTokenRef.current++;
+    const videoPath = (source as any)?.videoPath ? String((source as any).videoPath) : '';
+    const shareId = (source as any)?.shareId ? String((source as any).shareId) : '';
+    (async () => {
+      setSourceError('');
+      setLoadingSource(true);
+      try {
+        let uri = videoPath;
+        if (!uri && shareId) {
+          const { videoUrl } = await getPlaybackUrls(shareId);
+          uri = videoUrl;
+        }
+        await (player as any).replaceAsync(uri);
+        try {
+          (player as any).currentTime = 0;
+        } catch {}
+      } catch (e: any) {
+        setSourceError(e?.message ? String(e.message) : 'Failed to load video');
+      } finally {
+        setLoadingSource(false);
+      }
+    })();
+  };
+
   return {
     player,
     now,
@@ -79,6 +188,11 @@ export function usePlaybackPlayer(videoPath: string) {
     setIsScrubbing,
     onSeek,
     onPlayPause,
-    getLiveDuration, // keep exposed because your screen uses it
+    getLiveDuration,
+
+    // ✅ NEW
+    loadingSource,
+    sourceError,
+    reload,
   };
 }
