@@ -18,13 +18,17 @@ export function usePlaybackPlayer(source: Source) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const lastLoadedKeyRef = useRef<string>('');
-  const retryNonceRef = useRef(0);
-  const [, forceRerender] = useState(0);
+  // increments when user taps "Retry" to force a reload
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  const retry = useCallback(() => {
-    retryNonceRef.current += 1;
-    forceRerender(x => x + 1);
+  // prevents reloading the exact same thing repeatedly
+  const lastLoadedKeyRef = useRef<string>('');
+
+  // Public: retry / refresh signed URL
+  const refreshSignedUrl = useCallback(() => {
+    // allow reload even if loadKey is the same
+    lastLoadedKeyRef.current = '';
+    setReloadNonce(n => n + 1);
   }, []);
 
   // Load / replace source (local path OR shareId → signed URL)
@@ -32,10 +36,15 @@ export function usePlaybackPlayer(source: Source) {
     const videoPath = source?.videoPath ? String(source.videoPath) : '';
     const shareId = source?.shareId ? String(source.shareId) : '';
 
-    const loadKey = videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}:${retryNonceRef.current}` : '';
+    const loadKey = videoPath
+      ? `local:${videoPath}`
+      : shareId
+        ? `share:${shareId}:${reloadNonce}`
+        : '';
+
     if (!loadKey) return;
 
-    // prevent reloading the same thing repeatedly (except when retryNonce changes)
+    // prevent reloading the same thing repeatedly (except when reloadNonce changes)
     if (lastLoadedKeyRef.current === loadKey) return;
     lastLoadedKeyRef.current = loadKey;
 
@@ -49,8 +58,17 @@ export function usePlaybackPlayer(source: Source) {
         if (videoPath) {
           await (player as any).replaceAsync(videoPath);
         } else if (shareId) {
-          const { videoUrl } = await getPlaybackUrls(shareId, { signal: controller.signal });
-          if (!videoUrl) throw new Error('No videoUrl');
+          const urls = await getPlaybackUrls(shareId, { signal: controller.signal });
+
+          // ✅ DEBUG: confirm we receive sidecarUrl too
+          console.log('🎬 playbackUrls:', {
+            videoUrl: urls.videoUrl,
+            sidecarUrl: urls.sidecarUrl,
+            expiresAt: urls.expiresAt,
+          });
+
+          const videoUrl = urls?.videoUrl;
+          if (!videoUrl) throw new Error('No videoUrl returned');
           await (player as any).replaceAsync(String(videoUrl));
         }
       } catch (e: any) {
@@ -66,14 +84,24 @@ export function usePlaybackPlayer(source: Source) {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, source?.videoPath, source?.shareId, retry]); // retry triggers rerender
+  }, [player, source?.videoPath, source?.shareId, reloadNonce]);
 
   // Poll player state
   useEffect(() => {
     const id = setInterval(() => {
       try {
         const c = (player as any)?.currentTime ?? 0;
-        const d = (player as any)?.duration ?? ((player as any)?.durationMs ?? 0) / 1000 ?? 0;
+
+        // ✅ TypeScript-safe: avoid unreachable ?? branch
+        const rawDur = (player as any)?.duration;
+        const rawDurMs = (player as any)?.durationMs;
+        const d =
+          typeof rawDur === 'number'
+            ? rawDur
+            : typeof rawDurMs === 'number'
+              ? rawDurMs / 1000
+              : 0;
+
         const playing = (player as any)?.playing ?? (player as any)?.isPlaying ?? false;
 
         if (!isScrubbing) setNow(typeof c === 'number' ? c : 0);
@@ -91,7 +119,11 @@ export function usePlaybackPlayer(source: Source) {
   const getLiveDuration = () => {
     const d = (player as any)?.duration;
     const dm = (player as any)?.durationMs;
-    return typeof d === 'number' && d > 0 ? d : typeof dm === 'number' && dm > 0 ? dm / 1000 : dur || 0;
+    return typeof d === 'number' && d > 0
+      ? d
+      : typeof dm === 'number' && dm > 0
+        ? dm / 1000
+        : dur || 0;
   };
 
   const onSeek = (sec: number) => {
@@ -122,9 +154,9 @@ export function usePlaybackPlayer(source: Source) {
     onPlayPause,
     getLiveDuration,
 
-    // NEW (cloud playback support)
+    // cloud-friendly states
     loading,
     errorMsg,
-    retry,
+    refreshSignedUrl,
   };
 }

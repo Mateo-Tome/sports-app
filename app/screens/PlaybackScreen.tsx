@@ -15,6 +15,15 @@ import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 // ✅ extracted chrome/tap/skip logic hook
 import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 
+// ✅ extracted overlays
+import {
+  DebugOverlay,
+  EditModeMask,
+  LoadingErrorOverlay,
+  ReplayOverlay,
+  SkipHudOverlay,
+} from '../../components/playback/PlaybackOverlays';
+
 // === Module registry (add your modules here)
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
 import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
@@ -64,22 +73,44 @@ export default function PlaybackScreen() {
     useLocalSearchParams<PlaybackParams>();
 
   const shareId =
-    typeof rawShareId === 'string' ? rawShareId : Array.isArray(rawShareId) ? rawShareId[0] : undefined;
+    typeof rawShareId === 'string'
+      ? rawShareId
+      : Array.isArray(rawShareId)
+      ? rawShareId[0]
+      : undefined;
 
   const videoPath =
-    typeof rawVideoPath === 'string' ? rawVideoPath : Array.isArray(rawVideoPath) ? rawVideoPath[0] : undefined;
+    typeof rawVideoPath === 'string'
+      ? rawVideoPath
+      : Array.isArray(rawVideoPath)
+      ? rawVideoPath[0]
+      : undefined;
 
   const athleteParamStr =
-    typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
+    typeof athleteParam === 'string'
+      ? athleteParam
+      : Array.isArray(athleteParam)
+      ? athleteParam[0]
+      : '';
 
   const hasSource = !!videoPath || !!shareId;
 
   // ✅ Guard: never crash on missing params
   if (!hasSource) {
     return (
-      <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'black',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 16,
+        }}
+      >
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginBottom: 8 }}>Nothing to play</Text>
+        <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginBottom: 8 }}>
+          Nothing to play
+        </Text>
         <Text style={{ color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginBottom: 14 }}>
           This screen needs either a local videoPath or a cloud shareId.
         </Text>
@@ -128,7 +159,6 @@ export default function PlaybackScreen() {
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
 
   // ==================== Playback source contract ====================
-  // Guard above ensures one exists.
   const source = videoPath ? { videoPath } : { shareId: shareId! };
 
   // ✅ Player + timing extracted into hook
@@ -143,6 +173,11 @@ export default function PlaybackScreen() {
     onSeek,
     onPlayPause,
     getLiveDuration,
+
+    // Share-link / cloud playback UI (ok to exist even if local; won't show unless loading/error)
+    loading,
+    errorMsg,
+    refreshSignedUrl,
   } = usePlaybackPlayer(source);
 
   // ✅ Local sidecar (still keyed by both; handles whichever exists)
@@ -162,7 +197,6 @@ export default function PlaybackScreen() {
     videoPath: videoPath ?? '',
     shareId,
   });
-  
 
   const displayAthlete = athleteParamStr?.trim() || athleteName;
 
@@ -261,6 +295,7 @@ export default function PlaybackScreen() {
       return;
     }
 
+    // fallback: add event anyway
     const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
     const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
     setEvents(next);
@@ -303,7 +338,8 @@ export default function PlaybackScreen() {
       const mk = pickColor('myKidColor');
       const ok = pickColor('opponentColor');
 
-      const isAthleteActor = (e.actor === 'home' && homeIsAthlete) || (e.actor === 'opponent' && !homeIsAthlete);
+      const isAthleteActor =
+        (e.actor === 'home' && homeIsAthlete) || (e.actor === 'opponent' && !homeIsAthlete);
 
       if (mk || ok) {
         if (isAthleteActor && mk) return mk;
@@ -326,13 +362,17 @@ export default function PlaybackScreen() {
   );
 
   // --- Skip HUD bounds (fixes landscape off-screen) ---
-  const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
+  const skipHudMaxWidth = Math.max(
+    140,
+    screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2),
+  );
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={{ flex: 1 }}>
+        {/* VIDEO SHOULD NOT SHRINK — stays full container */}
         <VideoView
           player={player}
           style={{ flex: 1 }}
@@ -342,57 +382,35 @@ export default function PlaybackScreen() {
           contentFit="contain"
         />
 
-        {/* Skip HUD (double-tap indicator) */}
-        {!!skipHUD && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: '45%',
-              left: skipHUD.side === 'left' ? insets.left + SAFE_MARGIN : undefined,
-              right: skipHUD.side === 'right' ? insets.right + SAFE_MARGIN : undefined,
-              maxWidth: skipHudMaxWidth,
-              alignSelf: 'flex-start',
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-              borderRadius: 999,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.25)',
-              zIndex: 60,
-            }}
-          >
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
-              {skipHUD.side === 'left' ? `⟲  -${skipHUD.total}s` : `+${skipHUD.total}s  ⟳`}
-            </Text>
-          </View>
-        )}
+        {/* Loading/error overlay (only matters for share/cloud playback) */}
+        <LoadingErrorOverlay
+          visible={!!errorMsg || !!loading}
+          loading={!!loading}
+          errorMsg={errorMsg ?? ''}
+          onBack={() => router.back()}
+          onRetry={refreshSignedUrl}
+        />
+
+        {/* Skip HUD */}
+        <SkipHudOverlay
+          visible={!!skipHUD}
+          side={skipHUD?.side ?? 'left'}
+          total={skipHUD?.total ?? 0}
+          insets={{ left: insets.left, right: insets.right }}
+          safeMargin={SAFE_MARGIN}
+          maxWidth={skipHudMaxWidth}
+        />
 
         {/* Replay */}
-        {atVideoEnd && !editMode && (
-          <Pressable
-            onPress={() => {
-              onSeek(0);
-              try {
-                (player as any)?.play?.();
-              } catch {}
-            }}
-            style={{
-              position: 'absolute',
-              top: '45%',
-              alignSelf: 'center',
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 999,
-              backgroundColor: 'rgba(0,0,0,0.6)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.25)',
-              zIndex: 40,
-            }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '900' }}>Replay ⟲</Text>
-          </Pressable>
-        )}
+        <ReplayOverlay
+          visible={atVideoEnd && !editMode}
+          onReplay={() => {
+            onSeek(0);
+            try {
+              (player as any)?.play?.();
+            } catch {}
+          }}
+        />
 
         {/* Interaction layers */}
         {!editMode && (
@@ -433,7 +451,7 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
             </Pressable>
 
-            {/* overlay toggle (opens mode popup) */}
+            {/* overlay toggle */}
             <Pressable
               onPress={() => setOverlayMenuOpen(v => !v)}
               style={{
@@ -481,7 +499,7 @@ export default function PlaybackScreen() {
             )}
 
             {/* Bottom-left Edit button */}
-            {!atVideoEnd && !editMode && (
+            {!atVideoEnd && (
               <Pressable
                 onPress={() => {
                   enterAddMode();
@@ -526,7 +544,9 @@ export default function PlaybackScreen() {
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: '#fff', fontWeight: '900' }}>{isPlaying ? '❚❚ Pause' : '▶ Play'}</Text>
+                <Text style={{ color: '#fff', fontWeight: '900' }}>
+                  {isPlaying ? '❚❚ Pause' : '▶ Play'}
+                </Text>
               </Pressable>
             )}
 
@@ -598,46 +618,11 @@ export default function PlaybackScreen() {
           />
         )}
 
-        {/* EDIT MODE MASK */}
-        {editMode && (
-          <View
-            pointerEvents="box-none"
-            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 100 }}
-          >
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0,0,0,0.15)',
-              }}
-            />
-            <Pressable
-              onPress={exitEditMode}
-              style={{
-                position: 'absolute',
-                left: 0,
-                right: 0,
-                bottom: insets.bottom + 24,
-                alignItems: 'center',
-              }}
-            >
-              <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f59e0b' }}>
-                <Text style={{ color: '#111', fontWeight: '900' }}>Tap to exit Edit/Add</Text>
-              </View>
-            </Pressable>
-          </View>
-        )}
+        {/* Edit mode mask */}
+        <EditModeMask visible={editMode} bottomInset={insets.bottom} onExit={exitEditMode} />
 
-        {/* optional debug text */}
-        {!!debugMsg && (
-          <View style={{ position: 'absolute', left: 12, right: 12, bottom: 12 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>{debugMsg}</Text>
-          </View>
-        )}
+        {/* Debug */}
+        <DebugOverlay msg={debugMsg} />
       </View>
     </GestureHandlerRootView>
   );

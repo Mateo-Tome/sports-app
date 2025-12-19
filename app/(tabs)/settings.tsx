@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TouchableOpacity, View } from 'react-native';
 
 import { signOut } from 'firebase/auth';
 import { testGetUploadUrl } from '../../lib/backend';
@@ -18,6 +18,9 @@ type CloudVideo = {
   createdAt: number;
   shareId: string;
 };
+
+// 🔥 TEMP: hardcode a shareId you know exists in Firestore shareIndex/videos
+const TEST_SHARE_ID = 'vXdCFK3k5Ke6';
 
 export default function SettingsScreen() {
   const [busy, setBusy] = useState(false);
@@ -233,6 +236,15 @@ export default function SettingsScreen() {
     }
   };
 
+  const openTestSharePlayback = () => {
+    // This opens the *app* PlaybackScreen with a shareId.
+    // It will need internet to fetch the playable URL for that shareId.
+    router.push({
+      pathname: '/screens/PlaybackScreen',
+      params: { shareId: TEST_SHARE_ID },
+    });
+  };
+
   return (
     <View style={{ flex: 1, padding: 20, backgroundColor: 'black' }}>
       <Text style={{ color: 'white', fontSize: 24, fontWeight: '900', marginBottom: 16 }}>
@@ -242,6 +254,22 @@ export default function SettingsScreen() {
       <Text style={{ color: 'rgba(255,255,255,0.8)', marginBottom: 12 }}>
         {describeCurrentUser()}
       </Text>
+
+      {/* ✅ TEMP TEST BUTTON: ShareId -> PlaybackScreen */}
+      <Pressable
+        onPress={openTestSharePlayback}
+        style={{
+          backgroundColor: '#22c55e',
+          paddingVertical: 12,
+          borderRadius: 10,
+          marginBottom: 12,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#111', fontWeight: '900' }}>
+          TEST SHARE PLAYBACK (shareId: {TEST_SHARE_ID})
+        </Text>
+      </Pressable>
 
       <TouchableOpacity
         onPress={goToSignIn}
@@ -365,7 +393,11 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: 'white', marginTop: 8 }}>{status}</Text>}
+      {busy ? (
+        <ActivityIndicator color="#fff" />
+      ) : (
+        <Text style={{ color: 'white', marginTop: 8 }}>{status}</Text>
+      )}
 
       <View style={{ marginTop: 16 }}>
         <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '700', marginBottom: 4 }}>

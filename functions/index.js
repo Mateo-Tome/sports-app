@@ -13,13 +13,14 @@ function clean(v) {
 }
 
 function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
-  // Keep slashes, encode only unsafe chars
   const safeName = fileName
     .split('/')
     .map(encodeURIComponent)
     .join('/');
 
-  return `${downloadUrl}/file/${encodeURIComponent(bucketName)}/${safeName}?Authorization=${encodeURIComponent(authToken)}`;
+  return `${downloadUrl}/file/${encodeURIComponent(bucketName)}/${safeName}?Authorization=${encodeURIComponent(
+    authToken
+  )}`;
 }
 
 exports.getPlaybackUrls = functions.https.onRequest(async (req, res) => {
@@ -52,14 +53,12 @@ exports.getPlaybackUrls = functions.https.onRequest(async (req, res) => {
     if (!vidSnap.exists) return res.status(404).json({ error: 'Video not found' });
 
     const v = vidSnap.data() || {};
-    // These must exist based on your current schema
     const b2VideoKey = v.b2VideoKey;
     const b2SidecarKey = v.b2SidecarKey;
 
     if (!b2VideoKey) return res.status(500).json({ error: 'Video missing b2VideoKey' });
     if (!b2SidecarKey) return res.status(500).json({ error: 'Video missing b2SidecarKey' });
 
-    // Optional sanity checks
     if (v.shareId && v.shareId !== shareId) {
       return res.status(403).json({ error: 'shareId mismatch' });
     }
@@ -76,10 +75,11 @@ exports.getPlaybackUrls = functions.https.onRequest(async (req, res) => {
 
     const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString('base64');
 
-    const authRes = await fetch(
-      'https://api.backblazeb2.com/b2api/v1/b2_authorize_account',
-      { method: 'GET', headers: { Authorization: `Basic ${basicAuth}` } }
-    );
+    const authRes = await fetch('https://api.backblazeb2.com/b2api/v1/b2_authorize_account', {
+      method: 'GET',
+      headers: { Authorization: `Basic ${basicAuth}` },
+    });
+
     const authJson = await authRes.json();
     if (!authRes.ok) {
       return res.status(500).json({ error: 'b2_authorize_account failed', details: authJson });
@@ -87,16 +87,19 @@ exports.getPlaybackUrls = functions.https.onRequest(async (req, res) => {
 
     const apiUrl = authJson.apiUrl;
     const downloadUrl = authJson.downloadUrl;
-    const authToken = authJson.authorizationToken; // don't log
+    const authToken = authJson.authorizationToken;
 
     if (!apiUrl || !downloadUrl || !authToken) {
       return res.status(500).json({ error: 'Missing apiUrl/downloadUrl/token from B2 auth' });
     }
 
     // ---- Get temporary download authorization token ----
-    const expiresInSec = 30 * 24 * 60 * 60; // 30 days
+    // Backblaze max is 1 week (604800 seconds). We'll clamp to be safe.
+    const MAX_SEC = 7 * 24 * 60 * 60; // 604800
+    const REQUESTED_SEC = 60 * 60; // 1 hour (recommended dev default)
+    const expiresInSec = Math.min(REQUESTED_SEC, MAX_SEC);
 
-    const prefix = 'videos/'; // your key is restricted to videos/ anyway
+    const prefix = 'videos/';
 
     const daRes = await fetch(`${apiUrl}/b2api/v2/b2_get_download_authorization`, {
       method: 'POST',
