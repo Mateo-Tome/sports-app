@@ -12,6 +12,9 @@ import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 // ✅ extracted local sidecar hook
 import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 
+// ✅ extracted share sidecar hook (NEW)
+import { useShareSidecar } from '../../src/hooks/useShareSidecar';
+
 // ✅ extracted chrome/tap/skip logic hook
 import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 
@@ -56,7 +59,6 @@ const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> =
   'baseball:hitting': BaseballHittingPlaybackModule,
 };
 
-/* ==================== screen ==================== */
 export default function PlaybackScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -73,25 +75,13 @@ export default function PlaybackScreen() {
     useLocalSearchParams<PlaybackParams>();
 
   const shareId =
-    typeof rawShareId === 'string'
-      ? rawShareId
-      : Array.isArray(rawShareId)
-      ? rawShareId[0]
-      : undefined;
+    typeof rawShareId === 'string' ? rawShareId : Array.isArray(rawShareId) ? rawShareId[0] : undefined;
 
   const videoPath =
-    typeof rawVideoPath === 'string'
-      ? rawVideoPath
-      : Array.isArray(rawVideoPath)
-      ? rawVideoPath[0]
-      : undefined;
+    typeof rawVideoPath === 'string' ? rawVideoPath : Array.isArray(rawVideoPath) ? rawVideoPath[0] : undefined;
 
   const athleteParamStr =
-    typeof athleteParam === 'string'
-      ? athleteParam
-      : Array.isArray(athleteParam)
-      ? athleteParam[0]
-      : '';
+    typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
 
   const hasSource = !!videoPath || !!shareId;
 
@@ -174,13 +164,15 @@ export default function PlaybackScreen() {
     onPlayPause,
     getLiveDuration,
 
-    // Share-link / cloud playback UI (ok to exist even if local; won't show unless loading/error)
     loading,
     errorMsg,
     refreshSignedUrl,
+
+    // ✅ comes from getPlaybackUrls()
+    sidecarUrl,
   } = usePlaybackPlayer(source);
 
-  // ✅ Local sidecar (still keyed by both; handles whichever exists)
+  // ✅ Local sidecar (local playback path OR shareId key)
   const {
     events,
     setEvents,
@@ -198,7 +190,29 @@ export default function PlaybackScreen() {
     shareId,
   });
 
-  const displayAthlete = athleteParamStr?.trim() || athleteName;
+  // ✅ Share playback sidecar loader + meta (now in a hook)
+  const { shareMeta, sidecarLoadMsg } = useShareSidecar({
+    shareId,
+    sidecarUrl,
+    accumulateEvents,
+    setEvents,
+  });
+
+  // ✅ Effective values: prefer share meta when share playback
+  const effectiveSport = shareId ? (shareMeta.sport ?? sport) : sport;
+  const effectiveStyle = shareId ? (shareMeta.style ?? style) : style;
+
+  const effectiveAthleteName = shareId ? (shareMeta.athleteName ?? athleteName) : athleteName;
+
+  const effectiveHomeIsAthlete =
+    shareId && typeof shareMeta.homeIsAthlete === 'boolean' ? shareMeta.homeIsAthlete : homeIsAthlete;
+
+  const effectiveHomeColorIsGreen =
+    shareId && typeof shareMeta.homeColorIsGreen === 'boolean' ? shareMeta.homeColorIsGreen : homeColorIsGreen;
+
+  const effectiveFinalScore = shareId ? (shareMeta.finalScore ?? finalScore) : finalScore;
+
+  const displayAthlete = athleteParamStr?.trim() || effectiveAthleteName;
 
   // ✅ chrome + tap zones + skip HUD
   const {
@@ -233,7 +247,6 @@ export default function PlaybackScreen() {
     return s;
   }, [events, now]);
 
-  // editing from modules
   const genId = () => Math.random().toString(36).slice(2, 9);
 
   const enterAddMode = () => {
@@ -295,18 +308,17 @@ export default function PlaybackScreen() {
       return;
     }
 
-    // fallback: add event anyway
     const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
     const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
     setEvents(next);
     saveSidecar(next);
   };
 
-  // Module resolve
-  const moduleKey = `${(sport || '').toLowerCase()}:${(style || 'default').toLowerCase()}`;
+  // Module resolve (✅ uses effectiveSport/effectiveStyle)
+  const moduleKey = `${(effectiveSport || '').toLowerCase()}:${(effectiveStyle || 'default').toLowerCase()}`;
   const ModuleCmp = ModuleRegistry[moduleKey];
 
-  // Color mapping for belt
+  // Color mapping for belt (✅ uses effective flags)
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
@@ -339,14 +351,14 @@ export default function PlaybackScreen() {
       const ok = pickColor('opponentColor');
 
       const isAthleteActor =
-        (e.actor === 'home' && homeIsAthlete) || (e.actor === 'opponent' && !homeIsAthlete);
+        (e.actor === 'home' && effectiveHomeIsAthlete) || (e.actor === 'opponent' && !effectiveHomeIsAthlete);
 
       if (mk || ok) {
         if (isAthleteActor && mk) return mk;
         if (!isAthleteActor && ok) return ok;
       }
 
-      const colorIsGreen = homeColorIsGreen !== false;
+      const colorIsGreen = effectiveHomeColorIsGreen !== false;
       const athleteColor = colorIsGreen ? GREEN : RED;
       const opponentColor = colorIsGreen ? RED : GREEN;
 
@@ -358,21 +370,16 @@ export default function PlaybackScreen() {
 
       return 'rgba(148,163,184,0.9)';
     },
-    [homeIsAthlete, homeColorIsGreen],
+    [effectiveHomeIsAthlete, effectiveHomeColorIsGreen],
   );
 
-  // --- Skip HUD bounds (fixes landscape off-screen) ---
-  const skipHudMaxWidth = Math.max(
-    140,
-    screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2),
-  );
+  const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={{ flex: 1 }}>
-        {/* VIDEO SHOULD NOT SHRINK — stays full container */}
         <VideoView
           player={player}
           style={{ flex: 1 }}
@@ -382,7 +389,6 @@ export default function PlaybackScreen() {
           contentFit="contain"
         />
 
-        {/* Loading/error overlay (only matters for share/cloud playback) */}
         <LoadingErrorOverlay
           visible={!!errorMsg || !!loading}
           loading={!!loading}
@@ -391,7 +397,6 @@ export default function PlaybackScreen() {
           onRetry={refreshSignedUrl}
         />
 
-        {/* Skip HUD */}
         <SkipHudOverlay
           visible={!!skipHUD}
           side={skipHUD?.side ?? 'left'}
@@ -401,7 +406,6 @@ export default function PlaybackScreen() {
           maxWidth={skipHudMaxWidth}
         />
 
-        {/* Replay */}
         <ReplayOverlay
           visible={atVideoEnd && !editMode}
           onReplay={() => {
@@ -412,10 +416,8 @@ export default function PlaybackScreen() {
           }}
         />
 
-        {/* Interaction layers */}
         {!editMode && (
           <>
-            {/* tap zones */}
             <View
               style={{
                 position: 'absolute',
@@ -431,7 +433,6 @@ export default function PlaybackScreen() {
               <Pressable onPress={handleRightTap} style={{ flex: 1 }} />
             </View>
 
-            {/* back */}
             <Pressable
               onPress={() => router.back()}
               style={{
@@ -451,7 +452,6 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
             </Pressable>
 
-            {/* overlay toggle */}
             <Pressable
               onPress={() => setOverlayMenuOpen(v => !v)}
               style={{
@@ -471,7 +471,6 @@ export default function PlaybackScreen() {
               <Text style={{ color: 'white', fontWeight: '800' }}>{overlayLabel} ▾</Text>
             </Pressable>
 
-            {/* Overlay mode menu */}
             <OverlayModeMenu
               visible={overlayMenuOpen && chromeVisible}
               mode={overlayMode}
@@ -483,7 +482,6 @@ export default function PlaybackScreen() {
               }}
             />
 
-            {/* Top scrubber */}
             {chromeVisible && (
               <TopScrubber
                 current={now}
@@ -498,7 +496,6 @@ export default function PlaybackScreen() {
               />
             )}
 
-            {/* Bottom-left Edit button */}
             {!atVideoEnd && (
               <Pressable
                 onPress={() => {
@@ -523,7 +520,6 @@ export default function PlaybackScreen() {
               </Pressable>
             )}
 
-            {/* Bottom-right Play/Pause button */}
             {!atVideoEnd && (
               <Pressable
                 onPress={() => {
@@ -544,13 +540,10 @@ export default function PlaybackScreen() {
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: '#fff', fontWeight: '900' }}>
-                  {isPlaying ? '❚❚ Pause' : '▶ Play'}
-                </Text>
+                <Text style={{ color: '#fff', fontWeight: '900' }}>{isPlaying ? '❚❚ Pause' : '▶ Play'}</Text>
               </Pressable>
             )}
 
-            {/* bottom event belt */}
             {showEventBelt && (
               <EventBelt
                 duration={dur}
@@ -563,7 +556,6 @@ export default function PlaybackScreen() {
               />
             )}
 
-            {/* Quick Edit sheet */}
             <QuickEditSheet
               visible={!!quickEditFor}
               event={quickEditFor}
@@ -594,14 +586,14 @@ export default function PlaybackScreen() {
           </>
         )}
 
-        {/* SPORT-SPECIFIC MODULE */}
-        {ModuleCmp && (
+        {/* SPORT-SPECIFIC MODULE (score pills live here) */}
+        {ModuleCmp ? (
           <ModuleCmp
             now={now}
             duration={dur}
             events={events}
-            homeIsAthlete={homeIsAthlete}
-            homeColorIsGreen={homeColorIsGreen}
+            homeIsAthlete={effectiveHomeIsAthlete}
+            homeColorIsGreen={effectiveHomeColorIsGreen}
             overlayOn={overlayOn}
             insets={insets}
             onSeek={onSeek}
@@ -611,18 +603,26 @@ export default function PlaybackScreen() {
             onOverlayEvent={handleOverlayEventFromModule}
             onPillLongPress={ev => setQuickEditFor(ev)}
             liveScore={liveScore}
-            finalScore={finalScore}
+            finalScore={effectiveFinalScore}
             editMode={editMode}
             editSubmode={editSubmode}
             athleteName={displayAthlete}
           />
-        )}
+        ) : null}
 
-        {/* Edit mode mask */}
         <EditModeMask visible={editMode} bottomInset={insets.bottom} onExit={exitEditMode} />
 
-        {/* Debug */}
-        <DebugOverlay msg={debugMsg} />
+        {/* DEBUG */}
+        <DebugOverlay
+          msg={[
+            debugMsg,
+            shareId ? sidecarLoadMsg : 'local playback',
+            `moduleKey=${moduleKey}`,
+            ModuleCmp ? 'module=✓' : 'module=❌',
+          ]
+            .filter(Boolean)
+            .join(' | ')}
+        />
       </View>
     </GestureHandlerRootView>
   );

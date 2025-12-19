@@ -197,6 +197,6 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
     homeColorIsGreen,
     setHomeColorIsGreen,
     saveSidecar,
-    accumulate, // optional (handy if you want to reuse exactly)
+    accumulate,
   };
 }
