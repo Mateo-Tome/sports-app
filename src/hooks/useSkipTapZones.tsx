@@ -1,20 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 type Side = 'left' | 'right';
+
+export type SkipHUD = {
+  side: Side;
+  total: number; // cumulative seconds (ex: 5, 10, 15...)
+} | null;
 
 type Params = {
   chromeVisible: boolean;
   showChrome: () => void;
 
-  onSkipLeft: () => void; // rewind 5s
-  onSkipRight: () => void; // forward 5s
+  onSkipLeft: () => void; // MUST actually seek (you already do this in PlaybackScreen)
+  onSkipRight: () => void;
 
   // Kept for API compatibility; screen taps will NOT call it.
   onPlayPause: () => void;
 
   doubleTapMs?: number;
   singleTapShowsChrome?: boolean; // default true
+
+  // NEW: how many seconds per skip "tick" should the HUD show
+  // (YouTube style: 10s; you want 5s)
+  skipSeconds?: number;
+
+  // NEW: how long the HUD stays visible after the last skip tap
+  hudHoldMs?: number;
 };
 
 export function useSkipTapZones({
@@ -25,11 +37,20 @@ export function useSkipTapZones({
   onPlayPause, // intentionally unused by screen taps
   doubleTapMs = 280,
   singleTapShowsChrome = true,
+  skipSeconds = 5,
+  hudHoldMs = 650,
 }: Params) {
   const isWeb = Platform.OS === 'web';
 
   const lastTapRef = useRef<{ left: number; right: number }>({ left: 0, right: 0 });
   const singleTapTimerRef = useRef<{ left?: any; right?: any }>({});
+
+  // ✅ HUD state for SkipHudOverlay (cumulative like YouTube)
+  const [skipHUD, setSkipHUD] = useState<SkipHUD>(null);
+  const hudHideTimerRef = useRef<any>(null);
+
+  // For accumulating multiple double-taps
+  const hudAccumRef = useRef<{ side: Side; total: number; lastAt: number } | null>(null);
 
   const clearTimers = useCallback(() => {
     (['left', 'right'] as Side[]).forEach(side => {
@@ -37,23 +58,60 @@ export function useSkipTapZones({
       if (t) clearTimeout(t);
       (singleTapTimerRef.current as any)[side] = undefined;
     });
+
+    if (hudHideTimerRef.current) {
+      clearTimeout(hudHideTimerRef.current);
+      hudHideTimerRef.current = null;
+    }
   }, []);
 
   useEffect(() => clearTimers, [clearTimers]);
 
+  const scheduleHudHide = useCallback(() => {
+    if (hudHideTimerRef.current) clearTimeout(hudHideTimerRef.current);
+    hudHideTimerRef.current = setTimeout(() => {
+      setSkipHUD(null);
+      hudAccumRef.current = null;
+      hudHideTimerRef.current = null;
+    }, hudHoldMs);
+  }, [hudHoldMs]);
+
+  const bumpHud = useCallback(
+    (side: Side) => {
+      const now = Date.now();
+      const prev = hudAccumRef.current;
+
+      // Accumulate if:
+      // - same side, and
+      // - taps are close enough (treat as the "skip burst")
+      const canAccumulate =
+        prev && prev.side === side && now - prev.lastAt <= Math.max(900, hudHoldMs + 250);
+
+      const nextTotal = canAccumulate ? prev!.total + skipSeconds : skipSeconds;
+
+      hudAccumRef.current = { side, total: nextTotal, lastAt: now };
+      setSkipHUD({ side, total: nextTotal });
+      scheduleHudHide();
+    },
+    [hudHoldMs, scheduleHudHide, skipSeconds],
+  );
+
   const doSingle = useCallback(() => {
     if (!singleTapShowsChrome) return;
     // Single tap should NEVER play/pause.
-    // Just show chrome.
     showChrome();
   }, [showChrome, singleTapShowsChrome]);
 
   const doSkip = useCallback(
     (side: Side) => {
+      // 1) Seek (caller handles actual onSeek)
       if (side === 'left') onSkipLeft();
       else onSkipRight();
+
+      // 2) HUD accumulation
+      bumpHud(side);
     },
-    [onSkipLeft, onSkipRight],
+    [bumpHud, onSkipLeft, onSkipRight],
   );
 
   const makeHandlers = useCallback(
@@ -105,21 +163,19 @@ export function useSkipTapZones({
         : ({} as any);
 
       return {
-        // Pressable onPress can be delayed by press retention on some platforms.
-        // onPressIn is more immediate for double-tap detection.
+        // onPressIn is more immediate for double-tap detection
         onPressIn: fireTap,
         ...(webProps as any),
       };
     },
-    [doubleTapMs, doSingle, doSkip, isWeb],
+    [doSingle, doSkip, doubleTapMs, isWeb],
   );
 
   const left = useMemo(() => makeHandlers('left'), [makeHandlers]);
   const right = useMemo(() => makeHandlers('right'), [makeHandlers]);
 
   // Web keyboard shortcuts:
-  // ArrowLeft / ArrowRight = skip
-  // NO spacebar play/pause (only button should do that)
+  // ArrowLeft / ArrowRight = skip + HUD accumulation
   useEffect(() => {
     if (!isWeb) return;
 
@@ -130,22 +186,23 @@ export function useSkipTapZones({
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        onSkipLeft();
+        doSkip('left');
         return;
       }
       if (e.key === 'ArrowRight') {
         e.preventDefault();
-        onSkipRight();
+        doSkip('right');
         return;
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isWeb, onSkipLeft, onSkipRight]);
+  }, [isWeb, doSkip]);
 
   return {
     isWeb,
+    skipHUD, // ✅ USE THIS to drive SkipHudOverlay
     leftZoneProps: left,
     rightZoneProps: right,
   };

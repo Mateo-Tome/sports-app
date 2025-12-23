@@ -1,3 +1,4 @@
+// app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import React, { useCallback, useMemo, useState } from 'react';
@@ -180,7 +181,7 @@ export default function PlaybackScreen() {
   const {
     chromeVisible,
     showChrome,
-    skipHUD,
+    // NOTE: we still keep chrome skipHUD, but we will drive the overlay from tapSkipHUD instead
     handleLeftTap,
     handleRightTap,
     SCRUB_RESERVED_TOP,
@@ -197,24 +198,27 @@ export default function PlaybackScreen() {
     onSeek,
   });
 
-  // ✅ TOP PRIORITY: force skipping to seek the video by 5 seconds directly.
+  // ✅ TOP PRIORITY: skipping MUST seek directly.
   const skipLeft5 = useCallback(() => {
     const t = Math.max(0, (now || 0) - SKIP_SEC);
     onSeek(t);
-    // keep any HUD/chrome side-effects from your existing handlers
-    try { handleLeftTap?.(); } catch {}
+    // keep any existing side effects (optional)
+    try {
+      handleLeftTap?.();
+    } catch {}
   }, [now, onSeek, handleLeftTap]);
 
   const skipRight5 = useCallback(() => {
-    const maxT = typeof getLiveDuration === 'function' ? getLiveDuration() : (dur || 0);
+    const maxT = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
     const t = Math.min(maxT, (now || 0) + SKIP_SEC);
     onSeek(t);
-    try { handleRightTap?.(); } catch {}
+    try {
+      handleRightTap?.();
+    } catch {}
   }, [now, dur, getLiveDuration, onSeek, handleRightTap]);
 
-  // ✅ Double-tap skip zones ONLY.
-  // ✅ Screen taps will NOT play/pause.
-  const { leftZoneProps, rightZoneProps } = useSkipTapZones({
+  // ✅ Hook-provided HUD: shows 5s and accumulates (10/15/20...) when double tapping quickly
+  const { leftZoneProps, rightZoneProps, skipHUD: tapSkipHUD } = useSkipTapZones({
     chromeVisible,
     showChrome,
     onSkipLeft: skipLeft5,
@@ -222,7 +226,9 @@ export default function PlaybackScreen() {
     onPlayPause, // not used by screen taps
     doubleTapMs: 280,
     singleTapShowsChrome: true,
-  });
+    skipSeconds: 5,
+    hudHoldMs: 650,
+  } as any);
 
   const liveScore = useMemo(() => {
     if (!events.length) return { home: 0, opponent: 0 };
@@ -392,10 +398,11 @@ export default function PlaybackScreen() {
           onRetry={refreshSignedUrl}
         />
 
+        {/* ✅ Use tapSkipHUD for the visible + cumulative skip indicator */}
         <SkipHudOverlay
-          visible={!!skipHUD}
-          side={skipHUD?.side ?? 'left'}
-          total={skipHUD?.total ?? 0}
+          visible={!!tapSkipHUD}
+          side={(tapSkipHUD as any)?.side ?? 'left'}
+          total={(tapSkipHUD as any)?.total ?? 0}
           insets={{ left: insets.left, right: insets.right }}
           safeMargin={SAFE_MARGIN}
           maxWidth={skipHudMaxWidth}
