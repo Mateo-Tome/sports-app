@@ -2,7 +2,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -44,6 +44,8 @@ const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> =
   'wrestling:folkstyle': WrestlingFolkstylePlaybackModule,
   'baseball:hitting': BaseballHittingPlaybackModule,
 };
+
+const isWeb = Platform.OS === 'web';
 
 export default function PlaybackScreen() {
   const router = useRouter();
@@ -136,7 +138,13 @@ export default function PlaybackScreen() {
     errorMsg,
     refreshSignedUrl,
     sidecarUrl,
+    isReady,
   } = usePlaybackPlayer(source);
+
+  // ✅ Force-remount VideoView when source changes (helps some web cases)
+  const videoKey = useMemo(() => {
+    return videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}` : 'none';
+  }, [videoPath, shareId]);
 
   const {
     events,
@@ -320,23 +328,38 @@ export default function PlaybackScreen() {
 
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
+  const handlePlayPress = async () => {
+    showChrome();
+    await onPlayPause();
+  };
+
+  // ✅ WEB gating: never mount VideoView until isReady === true (prevents src="").
+  const shouldMountVideoView = isWeb ? isReady : true;
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={{ flex: 1 }}>
-        <VideoView
-          player={player}
-          style={{ flex: 1 }}
-          allowsFullscreen
-          allowsPictureInPicture
-          nativeControls={false}
-          // This should NOT crop; keep aspect ratio and letterbox.
-          contentFit="contain"
-        />
+        {shouldMountVideoView ? (
+          <VideoView
+            key={videoKey}
+            player={player}
+            style={{ flex: 1 }}
+            allowsFullscreen
+            allowsPictureInPicture
+            nativeControls={false}
+            contentFit="contain"
+          />
+        ) : (
+          <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>
+              Loading video…
+            </Text>
+          </View>
+        )}
 
-        {/* Tap anywhere to reveal chrome.
-            IMPORTANT: only active when chrome is hidden so it never steals button taps. */}
+        {/* Tap anywhere to reveal chrome. Only active when chrome hidden so it never steals taps. */}
         <Pressable
           onPress={showChrome}
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
@@ -362,18 +385,15 @@ export default function PlaybackScreen() {
 
         <ReplayOverlay
           visible={atVideoEnd && !editMode}
-          onReplay={() => {
+          onReplay={async () => {
             onSeek(0);
-            try {
-              (player as any)?.play?.();
-            } catch {}
+            await onPlayPause(); // user gesture qualifies
           }}
         />
 
         {!editMode && (
           <>
-            {/* Left/right tap zones for skip.
-                CRITICAL: disable these when chrome is visible so buttons are clickable. */}
+            {/* Left/right tap zones for skip. Disable when chrome visible so buttons are clickable. */}
             <View
               style={{
                 position: 'absolute',
@@ -478,10 +498,7 @@ export default function PlaybackScreen() {
 
             {!atVideoEnd && (
               <Pressable
-                onPress={() => {
-                  onPlayPause();
-                  showChrome();
-                }}
+                onPress={handlePlayPress}
                 style={{
                   position: 'absolute',
                   right: insets.right + SAFE_MARGIN,
@@ -564,6 +581,24 @@ export default function PlaybackScreen() {
             athleteName={displayAthlete}
           />
         ) : null}
+
+        {isWeb && chromeVisible && (
+          <View
+            style={{
+              position: 'absolute',
+              left: insets.left + SAFE_MARGIN,
+              right: insets.right + SAFE_MARGIN,
+              bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN * 2 : SAFE_MARGIN * 2),
+              alignItems: 'center',
+              opacity: 0.9,
+            }}
+            pointerEvents="none"
+          >
+            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12 }}>
+              If audio is silent on web, it’s CORS from B2 (needs bucket CORS config).
+            </Text>
+          </View>
+        )}
 
         <EditModeMask visible={editMode} bottomInset={insets.bottom} onExit={exitEditMode} />
       </View>
