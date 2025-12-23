@@ -1,4 +1,3 @@
-// app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import React, { useCallback, useMemo, useState } from 'react';
@@ -11,19 +10,15 @@ import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 
-import {
-  EditModeMask,
-  LoadingErrorOverlay,
-  ReplayOverlay,
-  SkipHudOverlay,
-} from '../../components/playback/PlaybackOverlays';
+import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
+
+import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
 
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
 import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
 import TopScrubber from '../../components/playback/TopScrubber';
 
 import type { OverlayEvent, PlaybackModuleProps } from '../../components/modules/types';
-
 import { Actor, EventRow, PENALTYISH, toActor } from '../../components/playback/playbackCore';
 
 import {
@@ -141,7 +136,6 @@ export default function PlaybackScreen() {
     isReady,
   } = usePlaybackPlayer(source);
 
-  // ✅ Force-remount VideoView when source changes (helps some web cases)
   const videoKey = useMemo(() => {
     return videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}` : 'none';
   }, [videoPath, shareId]);
@@ -201,6 +195,33 @@ export default function PlaybackScreen() {
     safeMargin: SAFE_MARGIN,
     skipSeconds: SKIP_SEC,
     onSeek,
+  });
+
+  // ✅ TOP PRIORITY: force skipping to seek the video by 5 seconds directly.
+  const skipLeft5 = useCallback(() => {
+    const t = Math.max(0, (now || 0) - SKIP_SEC);
+    onSeek(t);
+    // keep any HUD/chrome side-effects from your existing handlers
+    try { handleLeftTap?.(); } catch {}
+  }, [now, onSeek, handleLeftTap]);
+
+  const skipRight5 = useCallback(() => {
+    const maxT = typeof getLiveDuration === 'function' ? getLiveDuration() : (dur || 0);
+    const t = Math.min(maxT, (now || 0) + SKIP_SEC);
+    onSeek(t);
+    try { handleRightTap?.(); } catch {}
+  }, [now, dur, getLiveDuration, onSeek, handleRightTap]);
+
+  // ✅ Double-tap skip zones ONLY.
+  // ✅ Screen taps will NOT play/pause.
+  const { leftZoneProps, rightZoneProps } = useSkipTapZones({
+    chromeVisible,
+    showChrome,
+    onSkipLeft: skipLeft5,
+    onSkipRight: skipRight5,
+    onPlayPause, // not used by screen taps
+    doubleTapMs: 280,
+    singleTapShowsChrome: true,
   });
 
   const liveScore = useMemo(() => {
@@ -333,7 +354,6 @@ export default function PlaybackScreen() {
     await onPlayPause();
   };
 
-  // ✅ WEB gating: never mount VideoView until isReady === true (prevents src="").
   const shouldMountVideoView = isWeb ? isReady : true;
 
   return (
@@ -353,13 +373,11 @@ export default function PlaybackScreen() {
           />
         ) : (
           <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>
-              Loading video…
-            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>Loading video…</Text>
           </View>
         )}
 
-        {/* Tap anywhere to reveal chrome. Only active when chrome hidden so it never steals taps. */}
+        {/* ✅ Tap anywhere ONLY to reveal chrome (no play/pause). Only active when chrome is hidden. */}
         <Pressable
           onPress={showChrome}
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
@@ -387,13 +405,13 @@ export default function PlaybackScreen() {
           visible={atVideoEnd && !editMode}
           onReplay={async () => {
             onSeek(0);
-            await onPlayPause(); // user gesture qualifies
+            await onPlayPause();
           }}
         />
 
         {!editMode && (
           <>
-            {/* Left/right tap zones for skip. Disable when chrome visible so buttons are clickable. */}
+            {/* ✅ Double-tap skip zones ABOVE video but BELOW chrome buttons */}
             <View
               style={{
                 position: 'absolute',
@@ -402,11 +420,13 @@ export default function PlaybackScreen() {
                 top: SCRUB_RESERVED_TOP,
                 bottom: tapZoneBottomGap,
                 flexDirection: 'row',
+                zIndex: 5,
+                elevation: 5,
               }}
-              pointerEvents={chromeVisible ? 'none' : 'box-none'}
+              pointerEvents="box-none"
             >
-              <Pressable onPress={handleLeftTap} style={{ flex: 1 }} />
-              <Pressable onPress={handleRightTap} style={{ flex: 1 }} />
+              <Pressable style={{ flex: 1 }} {...(leftZoneProps as any)} />
+              <Pressable style={{ flex: 1 }} {...(rightZoneProps as any)} />
             </View>
 
             <Pressable
@@ -422,6 +442,7 @@ export default function PlaybackScreen() {
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.25)',
                 opacity: chromeVisible ? 1 : 0,
+                zIndex: 10,
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
@@ -441,6 +462,7 @@ export default function PlaybackScreen() {
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.25)',
                 opacity: chromeVisible ? 1 : 0,
+                zIndex: 10,
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
@@ -489,6 +511,7 @@ export default function PlaybackScreen() {
                   borderWidth: 1,
                   borderColor: 'rgba(0,0,0,0.4)',
                   opacity: chromeVisible ? 1 : 0,
+                  zIndex: 10,
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
@@ -510,6 +533,7 @@ export default function PlaybackScreen() {
                   borderWidth: 1,
                   borderColor: 'rgba(255,255,255,0.25)',
                   opacity: chromeVisible ? 1 : 0,
+                  zIndex: 10,
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
@@ -591,11 +615,12 @@ export default function PlaybackScreen() {
               bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN * 2 : SAFE_MARGIN * 2),
               alignItems: 'center',
               opacity: 0.9,
+              zIndex: 20,
             }}
             pointerEvents="none"
           >
             <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12 }}>
-              If audio is silent on web, it’s CORS from B2 (needs bucket CORS config).
+              Web: double-click skips. Arrow keys also work (← / →).
             </Text>
           </View>
         )}
