@@ -19,9 +19,6 @@ function errToString(e: any) {
 }
 
 export function usePlaybackPlayer(source: Source) {
-  // NOTE:
-  // We still initialize with '' for native parity, but on WEB we will NOT mount <VideoView>
-  // until isReady === true (see PlaybackScreen gating).
   const player = useVideoPlayer('', p => {
     p.loop = false;
   });
@@ -41,7 +38,7 @@ export function usePlaybackPlayer(source: Source) {
   // share playback: sidecar URL for fetching events
   const [sidecarUrl, setSidecarUrl] = useState<string | undefined>(undefined);
 
-  // ready flag (we don’t try to play until user clicks)
+  // ready flag
   const [isReady, setIsReady] = useState(false);
 
   // debug: what src did we actually load
@@ -109,14 +106,9 @@ export function usePlaybackPlayer(source: Source) {
           (player as any)?.pause?.();
         } catch {}
 
-        // On web, mute BEFORE replaceAsync to reduce gesture/autoplay weirdness.
-        // We'll unmute ONLY on user click.
-        if (isWeb) {
-          try {
-            (player as any).muted = true;
-            (player as any).volume = 0;
-          } catch {}
-        }
+        // ❌ DO NOT force-mute on web here.
+        // If the user plays using native controls, onPlayPause won't run,
+        // and the video will remain muted forever.
 
         let nextSrc = '';
 
@@ -158,10 +150,20 @@ export function usePlaybackPlayer(source: Source) {
           (player as any)?.replace?.(nextSrc);
         }
 
-        // stay paused; user must click play
+        // stay paused; user must click play (or use native controls)
         try {
           (player as any)?.pause?.();
         } catch {}
+
+        // ✅ Ensure audio is enabled for web playback.
+        // This does NOT autoplay sound; it just ensures that when the user presses play,
+        // the audio actually comes through (even if they use native controls).
+        if (isWeb) {
+          try {
+            (player as any).muted = false;
+            (player as any).volume = 1;
+          } catch {}
+        }
 
         console.log('[usePlaybackPlayer] load done, ready', {
           nextSrc,
@@ -207,7 +209,6 @@ export function usePlaybackPlayer(source: Source) {
 
         // --- isPlaying logic ---
         if (!isWeb) {
-          // native: trust the provided playing boolean
           const playing = (player as any)?.playing ?? (player as any)?.isPlaying ?? false;
           setIsPlaying(!!playing);
           return;
@@ -217,7 +218,6 @@ export function usePlaybackPlayer(source: Source) {
         const prev = lastCTRef.current;
         const nowMs = Date.now();
 
-        // consider "moving" if it advanced > 0.03s since last tick
         const moved = c > prev + 0.03;
 
         if (moved) {
@@ -225,10 +225,7 @@ export function usePlaybackPlayer(source: Source) {
           lastCTTickRef.current = nowMs;
           setIsPlaying(true);
         } else {
-          // if it hasn't moved for a bit, call it paused/stalled
           const msSinceMove = nowMs - lastCTTickRef.current;
-
-          // if user *just* clicked play, give it a moment to start
           const graceMs = wantsPlayRef.current ? 900 : 350;
 
           if (msSinceMove > graceMs) {
@@ -253,7 +250,6 @@ export function usePlaybackPlayer(source: Source) {
       (player as any).currentTime = clamped;
       if (isScrubbing) setNow(clamped);
 
-      // if you seek while playing, keep detector state reasonable
       if (isWeb) {
         lastCTRef.current = clamped;
         lastCTTickRef.current = Date.now();
@@ -271,7 +267,6 @@ export function usePlaybackPlayer(source: Source) {
         return;
       }
 
-      // WEB: use computed isPlaying (time-moving), not player.playing.
       if (isPlaying) {
         wantsPlayRef.current = false;
         console.log('[onPlayPause] -> pause()');
@@ -281,7 +276,7 @@ export function usePlaybackPlayer(source: Source) {
 
       wantsPlayRef.current = true;
 
-      // unmute on click (web)
+      // Make sure audio is on (web)
       if (isWeb) {
         try {
           (player as any).muted = false;
@@ -298,13 +293,9 @@ export function usePlaybackPlayer(source: Source) {
       if (maybePromise && typeof maybePromise.then === 'function') {
         await maybePromise;
       }
-
-      // do NOT setIsPlaying(true) here; wait for time-moving detector to confirm
     } catch (e: any) {
       const msg = errToString(e);
 
-      // These are common on web when play() is interrupted by pause() or a load swap.
-      // Treat them as noise unless it keeps happening when you're not swapping sources.
       if (String(msg).includes('AbortError')) {
         console.warn('[onPlayPause] AbortError (often benign on web):', msg);
         return;

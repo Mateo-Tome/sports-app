@@ -1,7 +1,7 @@
 // app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -135,6 +135,7 @@ export default function PlaybackScreen() {
     refreshSignedUrl,
     sidecarUrl,
     isReady,
+    loadedSrc, // ✅ we will use this for web <video>
   } = usePlaybackPlayer(source);
 
   const videoKey = useMemo(() => {
@@ -181,7 +182,6 @@ export default function PlaybackScreen() {
   const {
     chromeVisible,
     showChrome,
-    // NOTE: we still keep chrome skipHUD, but we will drive the overlay from tapSkipHUD instead
     handleLeftTap,
     handleRightTap,
     SCRUB_RESERVED_TOP,
@@ -198,11 +198,9 @@ export default function PlaybackScreen() {
     onSeek,
   });
 
-  // ✅ TOP PRIORITY: skipping MUST seek directly.
   const skipLeft5 = useCallback(() => {
     const t = Math.max(0, (now || 0) - SKIP_SEC);
     onSeek(t);
-    // keep any existing side effects (optional)
     try {
       handleLeftTap?.();
     } catch {}
@@ -217,13 +215,12 @@ export default function PlaybackScreen() {
     } catch {}
   }, [now, dur, getLiveDuration, onSeek, handleRightTap]);
 
-  // ✅ Hook-provided HUD: shows 5s and accumulates (10/15/20...) when double tapping quickly
   const { leftZoneProps, rightZoneProps, skipHUD: tapSkipHUD } = useSkipTapZones({
     chromeVisible,
     showChrome,
     onSkipLeft: skipLeft5,
     onSkipRight: skipRight5,
-    onPlayPause, // not used by screen taps
+    onPlayPause,
     doubleTapMs: 280,
     singleTapShowsChrome: true,
     skipSeconds: 5,
@@ -355,10 +352,59 @@ export default function PlaybackScreen() {
 
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
-  const handlePlayPress = async () => {
-    showChrome();
-    await onPlayPause();
-  };
+ const handlePlayPress = async () => {
+  showChrome();
+
+  if (isWeb) {
+    const el = webVideoRef.current;
+    if (!el) return;
+
+    try {
+      el.muted = false;   // allow audio
+      el.volume = 1;
+
+      if (el.paused) {
+        await el.play();
+      } else {
+        el.pause();
+      }
+    } catch (e) {
+      console.log('[web video play error]', e);
+    }
+    return;
+  }
+
+  await onPlayPause();
+};
+
+
+  // -------------------------
+  // ✅ WEB VIDEO ELEMENT
+  // -------------------------
+  const webVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Keep web <video> in sync with scrubbing / seeking
+  useEffect(() => {
+    if (!isWeb) return;
+    const el = webVideoRef.current;
+    if (!el) return;
+    // only adjust if we're far off, avoids fighting playback
+    if (Math.abs((el.currentTime || 0) - (now || 0)) > 0.25) {
+      try {
+        el.currentTime = now || 0;
+      } catch {}
+    }
+  }, [now]);
+
+  // When source changes, force reload
+  useEffect(() => {
+    if (!isWeb) return;
+    const el = webVideoRef.current;
+    if (!el) return;
+    try {
+      el.load();
+    } catch {}
+  }, [loadedSrc, videoKey]);
 
   const shouldMountVideoView = isWeb ? isReady : true;
 
@@ -368,15 +414,49 @@ export default function PlaybackScreen() {
 
       <View style={{ flex: 1 }}>
         {shouldMountVideoView ? (
-          <VideoView
-            key={videoKey}
-            player={player}
-            style={{ flex: 1 }}
-            allowsFullscreen
-            allowsPictureInPicture
-            nativeControls={false}
-            contentFit="contain"
-          />
+          isWeb ? (
+            <View style={{ flex: 1, backgroundColor: 'black' }}>
+              <video
+                key={videoKey}
+                ref={(r) => {
+  webVideoRef.current = r;
+}}
+
+                src={loadedSrc || undefined}
+                playsInline
+                controls={false}
+                // ✅ IMPORTANT: do NOT default muted on web if you want audio
+                muted={false}
+                // ✅ Keep aspect correct, no zoom
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  backgroundColor: 'black',
+                }}
+                onLoadedMetadata={(e) => {
+                  const el = e.currentTarget;
+                  // align scrubbing
+                  try {
+                    if (now) el.currentTime = now;
+                  } catch {}
+                }}
+                onPlay={() => {
+                  // no-op (your UI uses expo player state)
+                }}
+              />
+            </View>
+          ) : (
+            <VideoView
+              key={videoKey}
+              player={player}
+              style={{ flex: 1 }}
+              allowsFullscreen
+              allowsPictureInPicture
+              nativeControls={false}
+              contentFit="contain"
+            />
+          )
         ) : (
           <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>Loading video…</Text>
@@ -398,7 +478,6 @@ export default function PlaybackScreen() {
           onRetry={refreshSignedUrl}
         />
 
-        {/* ✅ Use tapSkipHUD for the visible + cumulative skip indicator */}
         <SkipHudOverlay
           visible={!!tapSkipHUD}
           side={(tapSkipHUD as any)?.side ?? 'left'}
@@ -418,7 +497,6 @@ export default function PlaybackScreen() {
 
         {!editMode && (
           <>
-            {/* ✅ Double-tap skip zones ABOVE video but BELOW chrome buttons */}
             <View
               style={{
                 position: 'absolute',
