@@ -37,7 +37,13 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
       try {
         setSidecarLoadMsg('sidecar: loading…');
 
-        const res = await fetch(sidecarUrl);
+        // ✅ FIX: fetch sidecar through our Firebase Function proxy to avoid browser CORS issues
+        const proxyUrl = `https://us-central1-sports-app-9efb3.cloudfunctions.net/getSidecar?shareId=${encodeURIComponent(
+          shareId
+        )}`;
+
+        const res = await fetch(proxyUrl);
+
         if (!res.ok) {
           const txt = await res.text().catch(() => '');
           throw new Error(`sidecar fetch failed (${res.status}): ${txt || res.statusText}`);
@@ -76,7 +82,11 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
             const kind = String(e?.kind ?? e?.key ?? 'unknown');
             const actor: Actor = toActor(e?.actor ?? e?.who ?? 'home');
             const points =
-              typeof e?.points === 'number' ? e.points : typeof e?.value === 'number' ? e.value : undefined;
+              typeof e?.points === 'number'
+                ? e.points
+                : typeof e?.value === 'number'
+                ? e.value
+                : undefined;
 
             const meta2 = (e?.meta ?? {}) as Record<string, any>;
             const _id = String(e?._id ?? e?.id ?? `${t}-${kind}-${Math.random().toString(36).slice(2, 7)}`);
@@ -92,8 +102,8 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
           setEvents(withScores);
           setSidecarLoadMsg(
             `sidecar ✓ events=${withScores.length} sport=${String(nextMeta.sport ?? '')} style=${String(
-              nextMeta.style ?? '',
-            )}`,
+              nextMeta.style ?? ''
+            )}`
           );
         }
       } catch (err: any) {
