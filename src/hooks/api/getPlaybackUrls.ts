@@ -1,20 +1,20 @@
-// src/api/getPlaybackUrls.ts
-
+// src/hooks/api/getPlaybackUrls.ts  (or wherever your import points)
 export type PlaybackUrls = {
   videoUrl: string;
   sidecarUrl?: string;
   expiresAt?: number;
 };
 
-function getBaseEndpoint() {
-  // Preferred: full function URL
-  // EXPO_PUBLIC_GET_PLAYBACK_URLS_URL="https://us-central1-YOUR_PROJECT.cloudfunctions.net/getPlaybackUrls"
-  const full = process.env.EXPO_PUBLIC_GET_PLAYBACK_URLS_URL;
+function requireEnv(name: string) {
+  const v = (process.env as any)?.[name];
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+function getEndpoint() {
+  const full = requireEnv('EXPO_PUBLIC_GET_PLAYBACK_URLS_URL');
   if (full && full.startsWith('http')) return full;
 
-  // Fallback: base URL + /getPlaybackUrls
-  // EXPO_PUBLIC_FUNCTIONS_BASE_URL="https://us-central1-YOUR_PROJECT.cloudfunctions.net"
-  const base = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
+  const base = requireEnv('EXPO_PUBLIC_FUNCTIONS_BASE_URL');
   if (base && base.startsWith('http')) return `${base.replace(/\/+$/, '')}/getPlaybackUrls`;
 
   return '';
@@ -24,25 +24,21 @@ export async function getPlaybackUrls(
   shareId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<PlaybackUrls> {
-  const endpoint = getBaseEndpoint();
+  const endpoint = getEndpoint();
   if (!endpoint) {
-    throw new Error(
-      'Missing playback URL endpoint. Set EXPO_PUBLIC_GET_PLAYBACK_URLS_URL or EXPO_PUBLIC_FUNCTIONS_BASE_URL.',
-    );
+    throw new Error('Missing EXPO_PUBLIC_FUNCTIONS_BASE_URL (or EXPO_PUBLIC_GET_PLAYBACK_URLS_URL)');
   }
 
-  // ✅ Force GET only (fixes 405 Method Not Allowed on POST)
   const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}shareId=${encodeURIComponent(shareId)}`;
 
-  // Debug (web only) so we can confirm the exact URL
+  // ✅ super explicit debug
   if (typeof window !== 'undefined') {
+    console.log('[getPlaybackUrls] env base =', requireEnv('EXPO_PUBLIC_FUNCTIONS_BASE_URL'));
+    console.log('[getPlaybackUrls] endpoint =', endpoint);
     console.log('[getPlaybackUrls] GET', url);
   }
 
-  const res = await fetch(url, {
-    method: 'GET',
-    signal: opts?.signal,
-  });
+  const res = await fetch(url, { method: 'GET', signal: opts?.signal });
 
   if (!res.ok) {
     const txt = await res.text().catch(() => '');

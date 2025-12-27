@@ -1,4 +1,9 @@
 // lib/firebase.ts
+
+console.log("FIREBASE KEY =", process.env.EXPO_PUBLIC_FIREBASE_API_KEY);
+console.log("FIREBASE PROJECT =", process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
+
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getStorage } from 'firebase/storage';
@@ -50,3 +55,4 @@ export async function ensureAnonymous(): Promise<User> {
 }
 
 export { app, auth, storage };
+
