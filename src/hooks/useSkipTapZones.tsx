@@ -12,20 +12,16 @@ type Params = {
   chromeVisible: boolean;
   showChrome: () => void;
 
-  onSkipLeft: () => void; // MUST actually seek (you already do this in PlaybackScreen)
+  onSkipLeft: () => void; // caller MUST seek
   onSkipRight: () => void;
 
-  // Kept for API compatibility; screen taps will NOT call it.
+  // Kept for API compatibility; taps won’t call it
   onPlayPause: () => void;
 
   doubleTapMs?: number;
-  singleTapShowsChrome?: boolean; // default true
+  singleTapShowsChrome?: boolean;
 
-  // NEW: how many seconds per skip "tick" should the HUD show
-  // (YouTube style: 10s; you want 5s)
   skipSeconds?: number;
-
-  // NEW: how long the HUD stays visible after the last skip tap
   hudHoldMs?: number;
 };
 
@@ -34,7 +30,7 @@ export function useSkipTapZones({
   showChrome,
   onSkipLeft,
   onSkipRight,
-  onPlayPause, // intentionally unused by screen taps
+  onPlayPause, // intentionally unused
   doubleTapMs = 280,
   singleTapShowsChrome = true,
   skipSeconds = 5,
@@ -45,11 +41,9 @@ export function useSkipTapZones({
   const lastTapRef = useRef<{ left: number; right: number }>({ left: 0, right: 0 });
   const singleTapTimerRef = useRef<{ left?: any; right?: any }>({});
 
-  // ✅ HUD state for SkipHudOverlay (cumulative like YouTube)
   const [skipHUD, setSkipHUD] = useState<SkipHUD>(null);
   const hudHideTimerRef = useRef<any>(null);
 
-  // For accumulating multiple double-taps
   const hudAccumRef = useRef<{ side: Side; total: number; lastAt: number } | null>(null);
 
   const clearTimers = useCallback(() => {
@@ -81,9 +75,6 @@ export function useSkipTapZones({
       const now = Date.now();
       const prev = hudAccumRef.current;
 
-      // Accumulate if:
-      // - same side, and
-      // - taps are close enough (treat as the "skip burst")
       const canAccumulate =
         prev && prev.side === side && now - prev.lastAt <= Math.max(900, hudHoldMs + 250);
 
@@ -98,17 +89,14 @@ export function useSkipTapZones({
 
   const doSingle = useCallback(() => {
     if (!singleTapShowsChrome) return;
-    // Single tap should NEVER play/pause.
     showChrome();
   }, [showChrome, singleTapShowsChrome]);
 
   const doSkip = useCallback(
     (side: Side) => {
-      // 1) Seek (caller handles actual onSeek)
       if (side === 'left') onSkipLeft();
       else onSkipRight();
 
-      // 2) HUD accumulation
       bumpHud(side);
     },
     [bumpHud, onSkipLeft, onSkipRight],
@@ -120,7 +108,7 @@ export function useSkipTapZones({
         const nowMs = Date.now();
         const last = lastTapRef.current[side];
 
-        // Double-tap => skip
+        // double tap => skip
         if (nowMs - last <= doubleTapMs) {
           lastTapRef.current[side] = 0;
 
@@ -132,7 +120,7 @@ export function useSkipTapZones({
           return;
         }
 
-        // First tap: wait briefly to see if a 2nd tap arrives.
+        // first tap: wait briefly for second
         lastTapRef.current[side] = nowMs;
 
         const prev = (singleTapTimerRef.current as any)[side];
@@ -144,7 +132,6 @@ export function useSkipTapZones({
         }, doubleTapMs + 10);
       };
 
-      // Web: allow dblclick to skip immediately
       const webProps = isWeb
         ? ({
             onDoubleClick: (e: any) => {
@@ -163,7 +150,6 @@ export function useSkipTapZones({
         : ({} as any);
 
       return {
-        // onPressIn is more immediate for double-tap detection
         onPressIn: fireTap,
         ...(webProps as any),
       };
@@ -174,25 +160,21 @@ export function useSkipTapZones({
   const left = useMemo(() => makeHandlers('left'), [makeHandlers]);
   const right = useMemo(() => makeHandlers('right'), [makeHandlers]);
 
-  // Web keyboard shortcuts:
-  // ArrowLeft / ArrowRight = skip + HUD accumulation
+  // ✅ Web keyboard shortcuts: ArrowLeft/ArrowRight -> skip + HUD
   useEffect(() => {
     if (!isWeb) return;
 
     const handler = (e: KeyboardEvent) => {
       const target = e.target as any;
       const tag = String(target?.tagName ?? '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         doSkip('left');
-        return;
-      }
-      if (e.key === 'ArrowRight') {
+      } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         doSkip('right');
-        return;
       }
     };
 
@@ -202,7 +184,7 @@ export function useSkipTapZones({
 
   return {
     isWeb,
-    skipHUD, // ✅ USE THIS to drive SkipHudOverlay
+    skipHUD,
     leftZoneProps: left,
     rightZoneProps: right,
   };

@@ -1,7 +1,7 @@
 // app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,10 +10,14 @@ import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 import { useShareSidecar } from '../../src/hooks/useShareSidecar';
-
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 
-import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
+import {
+  EditModeMask,
+  LoadingErrorOverlay,
+  ReplayOverlay,
+  SkipHudOverlay,
+} from '../../components/playback/PlaybackOverlays';
 
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
 import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
@@ -120,27 +124,92 @@ export default function PlaybackScreen() {
 
   const source = videoPath ? { videoPath } : { shareId: shareId! };
 
+  // Native player hook (still used for: loading signed URLs, sidecarUrl, etc.)
   const {
     player,
-    now,
-    dur,
-    isPlaying,
-    atVideoEnd,
+    now: nativeNow,
+    dur: nativeDur,
+    isPlaying: nativeIsPlaying,
+    atVideoEnd: nativeAtVideoEnd,
     setIsScrubbing,
-    onSeek,
-    onPlayPause,
+    onSeek: seekInternal,
+    onPlayPause: onPlayPauseInternal,
     getLiveDuration,
     loading,
     errorMsg,
     refreshSignedUrl,
     sidecarUrl,
     isReady,
-    loadedSrc, // ✅ we will use this for web <video>
+    loadedSrc, // signed URL on share playback
   } = usePlaybackPlayer(source);
 
   const videoKey = useMemo(() => {
     return videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}` : 'none';
   }, [videoPath, shareId]);
+
+  // -------------------------
+  // ✅ WEB VIDEO STATE (authoritative on web)
+  // -------------------------
+  const webVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [webNow, setWebNow] = useState(0);
+  const [webDur, setWebDur] = useState(0);
+  const [webIsPlaying, setWebIsPlaying] = useState(false);
+
+  const now = isWeb ? webNow : nativeNow;
+  const dur = isWeb ? webDur : nativeDur;
+  const isPlaying = isWeb ? webIsPlaying : nativeIsPlaying;
+
+  const atVideoEnd = useMemo(() => {
+    if (!isWeb) return nativeAtVideoEnd;
+    if (!dur) return false;
+    return !webIsPlaying && Math.abs((webNow || 0) - dur) < 0.25;
+  }, [dur, nativeAtVideoEnd, webIsPlaying, webNow]);
+
+  // ✅ Web-aware seek wrapper (fixes belt + skip + arrows on web)
+  const onSeek = useCallback(
+    (sec: number) => {
+      const D = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
+      const clamped = Math.max(0, Math.min(D || 0, sec));
+
+      if (isWeb) {
+        const el = webVideoRef.current;
+        if (el) {
+          try {
+            el.currentTime = clamped;
+          } catch {}
+        }
+        setWebNow(clamped);
+      }
+
+      // keep side effects / state in sync
+      seekInternal(clamped);
+    },
+    [dur, getLiveDuration, seekInternal],
+  );
+
+  // ✅ Web play/pause must act on the <video> (native uses expo player)
+  const onPlayPause = useCallback(async () => {
+    if (isWeb) {
+      const el = webVideoRef.current;
+      if (!el) return;
+
+      try {
+        el.muted = false;
+        el.volume = 1;
+
+        if (el.paused) {
+          await el.play();
+        } else {
+          el.pause();
+        }
+      } catch (e) {
+        console.log('[web video play error]', e);
+      }
+      return;
+    }
+
+    await onPlayPauseInternal();
+  }, [onPlayPauseInternal]);
 
   const {
     events,
@@ -220,7 +289,7 @@ export default function PlaybackScreen() {
     showChrome,
     onSkipLeft: skipLeft5,
     onSkipRight: skipRight5,
-    onPlayPause,
+    onPlayPause, // (not used by screen taps)
     doubleTapMs: 280,
     singleTapShowsChrome: true,
     skipSeconds: 5,
@@ -246,6 +315,9 @@ export default function PlaybackScreen() {
     setEditTargetId(null);
     try {
       (player as any)?.pause?.();
+    } catch {}
+    try {
+      webVideoRef.current?.pause?.();
     } catch {}
   };
 
@@ -352,59 +424,10 @@ export default function PlaybackScreen() {
 
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
- const handlePlayPress = async () => {
-  showChrome();
-
-  if (isWeb) {
-    const el = webVideoRef.current;
-    if (!el) return;
-
-    try {
-      el.muted = false;   // allow audio
-      el.volume = 1;
-
-      if (el.paused) {
-        await el.play();
-      } else {
-        el.pause();
-      }
-    } catch (e) {
-      console.log('[web video play error]', e);
-    }
-    return;
-  }
-
-  await onPlayPause();
-};
-
-
-  // -------------------------
-  // ✅ WEB VIDEO ELEMENT
-  // -------------------------
-  const webVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  // Keep web <video> in sync with scrubbing / seeking
-  useEffect(() => {
-    if (!isWeb) return;
-    const el = webVideoRef.current;
-    if (!el) return;
-    // only adjust if we're far off, avoids fighting playback
-    if (Math.abs((el.currentTime || 0) - (now || 0)) > 0.25) {
-      try {
-        el.currentTime = now || 0;
-      } catch {}
-    }
-  }, [now]);
-
-  // When source changes, force reload
-  useEffect(() => {
-    if (!isWeb) return;
-    const el = webVideoRef.current;
-    if (!el) return;
-    try {
-      el.load();
-    } catch {}
-  }, [loadedSrc, videoKey]);
+  const handlePlayPress = async () => {
+    showChrome();
+    await onPlayPause();
+  };
 
   const shouldMountVideoView = isWeb ? isReady : true;
 
@@ -418,16 +441,13 @@ export default function PlaybackScreen() {
             <View style={{ flex: 1, backgroundColor: 'black' }}>
               <video
                 key={videoKey}
-                ref={(r) => {
-  webVideoRef.current = r;
-}}
-
+                ref={(node) => {
+                  webVideoRef.current = node;
+                }}
                 src={loadedSrc || undefined}
                 playsInline
                 controls={false}
-                // ✅ IMPORTANT: do NOT default muted on web if you want audio
                 muted={false}
-                // ✅ Keep aspect correct, no zoom
                 style={{
                   width: '100%',
                   height: '100%',
@@ -436,14 +456,16 @@ export default function PlaybackScreen() {
                 }}
                 onLoadedMetadata={(e) => {
                   const el = e.currentTarget;
-                  // align scrubbing
-                  try {
-                    if (now) el.currentTime = now;
-                  } catch {}
+                  setWebDur(Number.isFinite(el.duration) ? el.duration : 0);
+                  setWebNow(el.currentTime || 0);
                 }}
-                onPlay={() => {
-                  // no-op (your UI uses expo player state)
+                onTimeUpdate={(e) => {
+                  const el = e.currentTarget;
+                  setWebNow(el.currentTime || 0);
                 }}
+                onPlay={() => setWebIsPlaying(true)}
+                onPause={() => setWebIsPlaying(false)}
+                onEnded={() => setWebIsPlaying(false)}
               />
             </View>
           ) : (
@@ -463,7 +485,7 @@ export default function PlaybackScreen() {
           </View>
         )}
 
-        {/* ✅ Tap anywhere ONLY to reveal chrome (no play/pause). Only active when chrome is hidden. */}
+        {/* Tap anywhere ONLY to reveal chrome when hidden */}
         <Pressable
           onPress={showChrome}
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
@@ -497,6 +519,7 @@ export default function PlaybackScreen() {
 
         {!editMode && (
           <>
+            {/* Double-tap skip zones */}
             <View
               style={{
                 position: 'absolute',
@@ -535,7 +558,7 @@ export default function PlaybackScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => setOverlayMenuOpen(v => !v)}
+              onPress={() => setOverlayMenuOpen((v) => !v)}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
@@ -559,7 +582,7 @@ export default function PlaybackScreen() {
               mode={overlayMode}
               insets={insets as Insets}
               onClose={() => setOverlayMenuOpen(false)}
-              onSelect={m => {
+              onSelect={(m) => {
                 setOverlayMode(m);
                 setOverlayMenuOpen(false);
               }}
@@ -569,7 +592,7 @@ export default function PlaybackScreen() {
               <TopScrubber
                 current={now}
                 duration={dur}
-                onSeek={t => {
+                onSeek={(t) => {
                   onSeek(t);
                   showChrome();
                 }}
@@ -634,7 +657,7 @@ export default function PlaybackScreen() {
                 onSeek={onSeek}
                 bottomInset={insets.bottom}
                 colorFor={colorForPill}
-                onPillLongPress={ev => setQuickEditFor(ev)}
+                onPillLongPress={(ev) => setQuickEditFor(ev)}
               />
             )}
 
@@ -645,7 +668,7 @@ export default function PlaybackScreen() {
               onCancel={() => setQuickEditFor(null)}
               onDelete={() => {
                 if (!quickEditFor) return;
-                const next = events.filter(e => e._id !== quickEditFor._id);
+                const next = events.filter((e) => e._id !== quickEditFor._id);
                 const ordered = [...next].sort((a, b) => a.t - b.t);
                 const withScores = accumulateEvents(ordered);
                 setEvents(withScores);
@@ -662,6 +685,9 @@ export default function PlaybackScreen() {
                 setEditTargetId(id);
                 try {
                   (player as any)?.pause?.();
+                } catch {}
+                try {
+                  webVideoRef.current?.pause?.();
                 } catch {}
               }}
             />
@@ -682,7 +708,7 @@ export default function PlaybackScreen() {
             isPlaying={isPlaying}
             enterAddMode={enterAddMode}
             onOverlayEvent={handleOverlayEventFromModule}
-            onPillLongPress={ev => setQuickEditFor(ev)}
+            onPillLongPress={(ev) => setQuickEditFor(ev)}
             liveScore={liveScore}
             finalScore={effectiveFinalScore}
             editMode={editMode}
