@@ -161,6 +161,35 @@ export function EventBelt(props: {
 
   const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
 
+  // === Period detection (supports meta.period, meta.periodNumber, meta.label like "P1" / "Period 2", or kind "period1")
+  const getPeriodLabel = (e: EventRow): string | null => {
+    const meta = (e as any).meta ?? {};
+    const label = String(meta?.label ?? '').trim();
+
+    const rawPeriod =
+      typeof meta.period === 'number'
+        ? meta.period
+        : typeof meta.periodNumber === 'number'
+          ? meta.periodNumber
+          : undefined;
+
+    if (typeof rawPeriod === 'number' && rawPeriod > 0) return `P${rawPeriod}`;
+
+    if (label) {
+      const fromLabel = label.match(/^p\s*(\d+)/i) || label.match(/^period\s*(\d+)/i);
+      if (fromLabel?.[1]) {
+        const pn = parseInt(fromLabel[1], 10);
+        if (!Number.isNaN(pn) && pn > 0) return `P${pn}`;
+      }
+    }
+
+    const k = String((e as any).kind ?? '').toLowerCase();
+    const m = k.match(/^period\s*(\d+)/) || k.match(/^p\s*(\d+)/);
+    if (m?.[1]) return `P${m[1]}`;
+
+    return null;
+  };
+
   const layout = useMemo(() => {
     const twoLane = events.map(e =>
       e.actor === 'home' || e.actor === 'opponent' ? e : { ...e, actor: 'opponent' as const },
@@ -174,21 +203,33 @@ export function EventBelt(props: {
       opponent: BASE_LEFT - PILL_W,
     };
 
-    const items: Array<{ e: EventRow; x: number; y: number; c: string }> = [];
+    const items: Array<{
+      e: EventRow;
+      x: number;
+      y: number;
+      c: string;
+      isPeriod: boolean;
+      periodLabel?: string;
+    }> = [];
 
     for (const { e } of indexed) {
       const lane = (e.actor === 'home' ? 'home' : 'opponent') as 'home' | 'opponent';
+
       const desiredX = e.t * PX_PER_SEC;
       const desiredLeft = Math.max(desiredX - PILL_W / 2, BASE_LEFT);
       const prevLeft = lastLeft[lane];
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP, BASE_LEFT);
       lastLeft[lane] = placedLeft;
 
+      const periodLabel = getPeriodLabel(e);
+
       items.push({
         e,
         x: placedLeft + PILL_W / 2,
         y: rowY(lane),
         c: colorFor(e),
+        isPeriod: !!periodLabel,
+        periodLabel: periodLabel || undefined,
       });
     }
 
@@ -246,6 +287,40 @@ export function EventBelt(props: {
 
           {layout.items.map((it, i) => {
             const isPassed = current >= it.e.t;
+
+            // ✅ PERIOD pill: white + centered between rows (like your old PlaybackScreen)
+            if (it.isPeriod) {
+              const numLabel = (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
+
+              return (
+                <Pressable
+                  key={`${it.e._id ?? 'period'}-${i}`}
+                  onPress={() => onSeek(it.e.t)}
+                  onLongPress={() => onPillLongPress(it.e)}
+                  delayLongPress={280}
+                  style={{
+                    position: 'absolute',
+                    left: it.x - PILL_W / 2,
+                    top: BELT_H / 2 - 14,
+                    width: PILL_W,
+                    height: 28,
+                    borderRadius: 999,
+                    backgroundColor: '#ffffff',
+                    borderWidth: 1,
+                    borderColor: 'rgba(148,163,184,0.9)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: isPassed ? 0.9 : 1,
+                  }}
+                >
+                  <Text style={{ color: '#111', fontWeight: '900', fontSize: 14 }}>
+                    {numLabel || it.periodLabel}
+                  </Text>
+                </Pressable>
+              );
+            }
+
+            // Normal event pill (unchanged)
             return (
               <Pressable
                 key={`${it.e._id ?? 'n'}-${i}`}
@@ -268,12 +343,14 @@ export function EventBelt(props: {
                 }}
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
-                  {`${abbrKind(it.e.kind)}${
-                    typeof it.e.points === 'number' && it.e.points > 0 ? `+${it.e.points}` : ''
+                  {`${abbrKind((it.e as any).kind)}${
+                    typeof (it.e as any).points === 'number' && (it.e as any).points > 0 ? `+${(it.e as any).points}` : ''
                   }`}
                 </Text>
 
-                <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>{fmt(it.e.t)}</Text>
+                <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>
+                  {fmt((it.e as any).t)}
+                </Text>
               </Pressable>
             );
           })}
@@ -317,22 +394,16 @@ export function QuickEditSheet(props: {
       }}
     >
       <Text style={{ color: '#fff', fontWeight: '900', marginBottom: 6, fontSize: 14, textAlign: 'center' }}>
-        Edit {abbrKind(event.kind)}
-        {event.points ? `+${event.points}` : ''} @ {fmt(event.t)}
+        Edit {abbrKind((event as any).kind)}
+        {(event as any).points ? `+${(event as any).points}` : ''} @ {fmt((event as any).t)}
       </Text>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-        <Pressable
-          onPress={onReplace}
-          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}
-        >
+        <Pressable onPress={onReplace} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}>
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Replace…</Text>
         </Pressable>
 
-        <Pressable
-          onPress={onDelete}
-          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}
-        >
+        <Pressable onPress={onDelete} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}>
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Delete</Text>
         </Pressable>
 
