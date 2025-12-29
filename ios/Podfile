@@ -1,4 +1,4 @@
-# 🚩 CRITICAL FIX: This line tells 'ffmpeg-kit-react-native' to use your custom pod.
+# 🚩 CRITICAL FIX: Tell ffmpeg-kit-react-native which package to use
 ENV['FFMPEG_KIT_PACKAGE'] = 'full'
 
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
@@ -20,12 +20,15 @@ prepare_react_native_project!
 target 'sportapp' do
   use_expo_modules!
 
-  # ✅ FFmpegKit secured via Mateo-Tome fork (ONLY KEEP THIS LINE)
+  # ✅ 1) Your custom FULL iOS podspec (KEEP THIS)
   pod 'ffmpeg-kit-ios-full',
       :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
-  
-  # Ensure NO OTHER FFmpeg pod lines exist here! (e.g., no ffmpeg-kit-ios-https)
 
+  # ✅ 2) Force the RN wrapper to use FULL (prevents it from trying https/gpl variants)
+  # IMPORTANT: This only works correctly if autolinking does NOT also add ffmpeg-kit-react-native.
+  pod 'ffmpeg-kit-react-native', :path => '../node_modules/ffmpeg-kit-react-native', :subspecs => ['full']
+
+  # ---- Expo / RN autolinking ----
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"]
   else
@@ -55,7 +58,6 @@ target 'sportapp' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
-    
     # Xcode signs resource bundles by default for devices; disable for pods.
     installer.target_installation_results.pod_target_installation_results.each do |_, result|
       result.resource_bundle_targets.each do |rb|
