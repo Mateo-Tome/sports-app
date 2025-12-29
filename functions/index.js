@@ -35,12 +35,25 @@ function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
   )}`;
 }
 
+// ✅ NEW: Build Cloudflare CDN URL for a B2 object key like "videos/<uid>/<file>.mp4"
+function buildCdnUrl(fileKey, b2DownloadAuthToken) {
+  const CDN_BASE = 'https://media.quickclipapp.com';
+
+  // fileKey already looks like: videos/.../file.mp4
+  // Keep the path as-is, only ensure no leading slash
+  const path = String(fileKey || '').replace(/^\/+/, '');
+
+  // Token gets appended as query param (Worker reads it and adds B2 Authorization header)
+  return `${CDN_BASE}/${path}?token=${encodeURIComponent(b2DownloadAuthToken)}`;
+}
+
 /**
  * Shared helper: authorize B2 + create a short-lived download authorization token.
  * Returns { downloadUrl, downloadAuthToken, expiresInSec }
  *
- * This token is currently scoped to the prefix "videos/" (broad).
- * We'll use a NEW endpoint below that scopes tokens to a SINGLE file path for production/CDN.
+ * This token can be scoped to:
+ * - 'videos/' (broad)
+ * - or 'videos/<uid>/<file>' (single file) depending on prefix passed
  */
 async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
   const B2_KEY_ID = clean(process.env.B2_KEY_ID);
@@ -122,7 +135,15 @@ async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
 }
 
 /**
- * Existing: returns signed URLs for mp4 + json (public share flow)
+ * ✅ UPDATED: returns Cloudflare CDN URLs for mp4 + json (public share flow)
+ *
+ * Your app overlays/event belt continue to work because the app still loads:
+ * - videoUrl (mp4)
+ * - sidecarUrl (json)
+ *
+ * Now both are served via Cloudflare:
+ *   https://media.quickclipapp.com/videos/...mp4?token=...
+ *   https://media.quickclipapp.com/videos/...json?token=...
  */
 exports.getPlaybackUrls = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
@@ -159,14 +180,12 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
         return res.status(403).json({ error: 'shareId mismatch' });
       }
 
-      const B2_BUCKET_NAME = clean(process.env.B2_BUCKET_NAME);
-      if (!B2_BUCKET_NAME) return res.status(500).json({ error: 'Missing B2_BUCKET_NAME env var' });
+      // Broad token (videos/) for public share viewing
+      const { downloadAuthToken, expiresInSec } = await getB2DownloadAuth('videos/', 60 * 60);
 
-      // Broad token (videos/) for share viewing (existing behavior)
-      const { downloadUrl, downloadAuthToken, expiresInSec } = await getB2DownloadAuth('videos/', 60 * 60);
-
-      const videoUrl = buildB2FileUrl(downloadUrl, B2_BUCKET_NAME, b2VideoKey, downloadAuthToken);
-      const sidecarUrl = buildB2FileUrl(downloadUrl, B2_BUCKET_NAME, b2SidecarKey, downloadAuthToken);
+      // ✅ Return CDN URLs (not raw B2)
+      const videoUrl = buildCdnUrl(b2VideoKey, downloadAuthToken);
+      const sidecarUrl = buildCdnUrl(b2SidecarKey, downloadAuthToken);
 
       return res.json({
         message: 'OK',
@@ -189,6 +208,8 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
 
 /**
  * Existing: Proxy the sidecar JSON to avoid browser CORS issues.
+ * (You may not need this anymore if your Worker sets CORS headers for JSON too,
+ * but keeping it won’t hurt.)
  */
 exports.getSidecar = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
@@ -198,7 +219,6 @@ exports.getSidecar = onRequest(async (req, res) => {
       const shareId = (req.query.shareId ?? '').toString().trim();
       if (!shareId) return res.status(400).json({ error: 'Missing shareId' });
 
-      // ---- Read shareIndex/{shareId} ----
       const shareRef = admin.firestore().doc(`shareIndex/${shareId}`);
       const shareSnap = await shareRef.get();
       if (!shareSnap.exists) return res.status(404).json({ error: 'Share not found' });
@@ -209,7 +229,6 @@ exports.getSidecar = onRequest(async (req, res) => {
       const videoId = share.videoId;
       if (!videoId) return res.status(500).json({ error: 'shareIndex missing videoId' });
 
-      // ---- Read videos/{videoId} ----
       const vidRef = admin.firestore().doc(`videos/${videoId}`);
       const vidSnap = await vidRef.get();
       if (!vidSnap.exists) return res.status(404).json({ error: 'Video not found' });
