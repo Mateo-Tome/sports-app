@@ -2,7 +2,7 @@
   "expo": {
     "name": "sport-app",
     "slug": "sport-app",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "sportapp",
@@ -24,6 +24,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
+      "buildNumber": "10",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
