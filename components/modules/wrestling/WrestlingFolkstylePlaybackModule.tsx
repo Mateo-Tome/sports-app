@@ -6,7 +6,6 @@ import type { PlaybackModuleProps } from '../types';
 const GREEN = '#16a34a';
 const RED = '#dc2626';
 
-// tiny helper to match the old PlaybackScreen look
 function hexToRgba(hex: string, alpha: number) {
   const clean = hex.replace('#', '');
   const r = parseInt(clean.slice(0, 2), 16);
@@ -26,11 +25,9 @@ export default function WrestlingFolkstylePlaybackModule({
   editSubmode,
   onOverlayEvent,
   athleteName,
-  // we’ll still accept these, but only use events to see final color
   now: _now,
   events,
 }: PlaybackModuleProps) {
-  // If overlay is off, nothing draws (same as before)
   if (!overlayOn) return null;
 
   const { width, height } = useWindowDimensions();
@@ -39,23 +36,18 @@ export default function WrestlingFolkstylePlaybackModule({
   const homeScore = liveScore?.home ?? 0;
   const oppScore = liveScore?.opponent ?? 0;
 
-  // Who is “my kid” in the score?
   const athleteIsHome = homeIsAthlete;
   const athleteLiveScore = athleteIsHome ? homeScore : oppScore;
   const opponentLiveScore = athleteIsHome ? oppScore : homeScore;
 
-  // Name to show for athlete (same idea as displayAthlete)
   const athleteLabel = (athleteName ?? '').trim() || 'Athlete';
   const opponentLabel = 'Opponent';
 
   // ========= COLOR MAPPING BY HOW THE MATCH ENDED =========
-  // Default from sidecar/global flag:
   let athleteColor = homeColorIsGreen !== false ? GREEN : RED;
   let opponentColor = homeColorIsGreen !== false ? RED : GREEN;
 
   if (Array.isArray(events) && events.length > 0) {
-    // We only care about the *final* color state when the match ended.
-    // So: look at the LAST event that has myKidColor/opponentColor.
     const pickColorValue = (val: any): 'green' | 'red' | undefined => {
       const v = String(val ?? '').toLowerCase();
       if (v === 'green') return 'green';
@@ -100,7 +92,6 @@ export default function WrestlingFolkstylePlaybackModule({
         athleteColor = mkHex;
         opponentColor = oppHex;
       } else if (mkHex) {
-        // only myKidColor known ⇒ opponent = opposite
         athleteColor = mkHex;
         opponentColor = mkHex === GREEN ? RED : GREEN;
       } else if (oppHex) {
@@ -110,20 +101,17 @@ export default function WrestlingFolkstylePlaybackModule({
     }
   }
 
-  // All scoring we do in playback was originally for your athlete
   const athleteActor: 'home' | 'opponent' = athleteIsHome ? 'home' : 'opponent';
   const opponentActor: 'home' | 'opponent' =
     athleteActor === 'home' ? 'opponent' : 'home';
 
-  // Let palette know if we're in add/replace mode
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
-  // ===== EDIT PALETTE STATE (mimic overlay: my kid color + both sides) =====
+  // ===== EDIT PALETTE STATE =====
   const [editMyKidColor, setEditMyKidColor] = useState<'green' | 'red'>(
-    athleteColor === GREEN ? 'green' : 'red'
+    athleteColor === GREEN ? 'green' : 'red',
   );
 
-  // keep edit palette in sync if the final match color changes
   useEffect(() => {
     setEditMyKidColor(athleteColor === GREEN ? 'green' : 'red');
   }, [athleteColor]);
@@ -131,12 +119,37 @@ export default function WrestlingFolkstylePlaybackModule({
   const editAthleteColor = editMyKidColor === 'green' ? GREEN : RED;
   const editOpponentColor = editMyKidColor === 'green' ? RED : GREEN;
 
+  // ===== Period (for edit-mode pill like recording overlay) =====
+  const [period, setPeriod] = useState<number>(1);
+
+  // If your events include prior period markers, keep the pill in sync when opening edit mode.
+  useEffect(() => {
+    if (!showPalette) return;
+
+    let maxP = 1;
+    if (Array.isArray(events)) {
+      for (const e of events) {
+        const meta: any = e?.meta ?? {};
+        const inner: any = meta?.meta ?? {};
+        const fromMeta = meta.period ?? meta.periodNumber;
+        const fromInner = inner.period ?? inner.periodNumber;
+        const labelMatch =
+          typeof e?.label === 'string' && e.label.toUpperCase().startsWith('P')
+            ? parseInt(e.label.slice(1), 10)
+            : undefined;
+
+        const p = Number(fromMeta ?? fromInner ?? labelMatch);
+        if (Number.isFinite(p) && p > maxP) maxP = p;
+      }
+    }
+    setPeriod(maxP);
+  }, [showPalette, events]);
+
   // Which side are we editing NF / S/C / PIN for?
   const [nfFor, setNfFor] = useState<null | 'athlete' | 'opponent'>(null);
   const [scFor, setScFor] = useState<null | 'athlete' | 'opponent'>(null);
   const [pinFor, setPinFor] = useState<null | 'athlete' | 'opponent'>(null);
 
-  // local counts just to show "Next: ..." in the S/C popup (like overlay)
   const [stallCount, setStallCount] = useState<{ athlete: number; opponent: number }>({
     athlete: 0,
     opponent: 0,
@@ -146,19 +159,18 @@ export default function WrestlingFolkstylePlaybackModule({
     opponent: 0,
   });
 
-  // fire helpers – always attach myKidColor/opponentColor meta so the belt + pills stay consistent
   const myKidColorStr = editMyKidColor;
   const opponentColorStr = editMyKidColor === 'green' ? 'red' : 'green';
 
   const fireFor = (
-    actor: 'home' | 'opponent',
+    actor: 'home' | 'opponent' | 'neutral',
     key: string,
     value: number | undefined,
     label: string,
-    meta?: Record<string, any>
+    meta?: Record<string, any>,
   ) => {
     onOverlayEvent?.({
-      actor,
+      actor: actor as any,
       key,
       value,
       label,
@@ -167,26 +179,25 @@ export default function WrestlingFolkstylePlaybackModule({
         myKidColor: myKidColorStr,
         opponentColor: opponentColorStr,
       },
-    });
+    } as any);
   };
 
-  const fireAthlete = (
-    key: string,
-    value: number | undefined,
-    label: string,
-    meta?: Record<string, any>
-  ) => fireFor(athleteActor, key, value, label, meta);
+  const fireAthlete = (key: string, value: number | undefined, label: string, meta?: Record<string, any>) =>
+    fireFor(athleteActor, key, value, label, meta);
 
-  const fireOpponent = (
-    key: string,
-    value: number | undefined,
-    label: string,
-    meta?: Record<string, any>
-  ) => fireFor(opponentActor, key, value, label, meta);
+  const fireOpponent = (key: string, value: number | undefined, label: string, meta?: Record<string, any>) =>
+    fireFor(opponentActor, key, value, label, meta);
 
-  // ==== Final outcome summary: W/L/T & final score, color-coded ====
+  const handleNextPeriod = () => {
+    const next = (period || 1) + 1;
+    setPeriod(next);
+    // Period markers should be neutral + no points
+    fireFor('neutral', 'period', 0, `P${next}`, { period: next });
+  };
+
+  // ==== Final outcome summary ====
   let resultLabel = '';
-  let resultColor = 'rgba(148,163,184,0.95)'; // neutral slate
+  let resultColor = 'rgba(148,163,184,0.95)';
   if (finalScore) {
     const a = athleteIsHome ? finalScore.home : finalScore.opponent;
     const b = athleteIsHome ? finalScore.opponent : finalScore.home;
@@ -215,7 +226,6 @@ export default function WrestlingFolkstylePlaybackModule({
           top: insets.top + 36,
         }}
       >
-        {/* Top-center result pill (W/L/T + final score) */}
         {resultLabel ? (
           <View style={{ alignItems: 'center', marginBottom: 4 }}>
             <View
@@ -228,21 +238,12 @@ export default function WrestlingFolkstylePlaybackModule({
                 borderColor: resultColor,
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>
-                {resultLabel}
-              </Text>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{resultLabel}</Text>
             </View>
           </View>
         ) : null}
 
-        {/* Athlete / Opponent score chips – SAME LOOK as old PlaybackScreen */}
-        <View
-          style={{
-            marginTop: 6,
-            paddingHorizontal: 24,
-          }}
-        >
-          {/* Left: Athlete */}
+        <View style={{ marginTop: 6, paddingHorizontal: 24 }}>
           <View
             style={{
               position: 'absolute',
@@ -260,7 +261,6 @@ export default function WrestlingFolkstylePlaybackModule({
             </Text>
           </View>
 
-          {/* Right: Opponent */}
           <View
             style={{
               position: 'absolute',
@@ -278,7 +278,6 @@ export default function WrestlingFolkstylePlaybackModule({
             </Text>
           </View>
 
-          {/* spacer to give this container height */}
           <View style={{ height: 32 }} />
         </View>
       </View>
@@ -287,13 +286,10 @@ export default function WrestlingFolkstylePlaybackModule({
 
   // =========================
   // BRANCH 2: EDIT MODE
-  // (Make it look like the live overlay)
   // =========================
-
   const screenW = width;
   const screenH = height;
 
-  // same layout constants as WrestlingFolkstyleOverlay
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
   const TOP = insets.top + 52;
@@ -310,15 +306,7 @@ export default function WrestlingFolkstylePlaybackModule({
 
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
-  const EditCircle = ({
-    label,
-    color,
-    onPress,
-  }: {
-    label: string;
-    color: string;
-    onPress: () => void;
-  }) => (
+  const EditCircle = ({ label, color, onPress }: { label: string; color: string; onPress: () => void }) => (
     <Pressable
       onPress={onPress}
       style={{
@@ -335,15 +323,10 @@ export default function WrestlingFolkstylePlaybackModule({
         elevation: 2,
       }}
     >
-      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>
-        {label}
-      </Text>
+      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{label}</Text>
     </Pressable>
   );
 
-  // ====== S/C + NF + PIN helpers (same logic as before, but positioned like overlay) ======
-
-  // ====== NF chooser (NF2 / NF3 / NF4) – side-aware (athlete vs opponent) ======
   const NFChooser = () =>
     nfFor && (
       <View
@@ -380,11 +363,8 @@ export default function WrestlingFolkstylePlaybackModule({
             <Pressable
               key={v}
               onPress={() => {
-                if (nfFor === 'athlete') {
-                  fireAthlete('nearfall', v, `NF${v}`);
-                } else {
-                  fireOpponent('nearfall', v, `NF${v}`);
-                }
+                if (nfFor === 'athlete') fireAthlete('nearfall', v, `NF${v}`);
+                else fireOpponent('nearfall', v, `NF${v}`);
                 setNfFor(null);
               }}
               style={{
@@ -416,7 +396,6 @@ export default function WrestlingFolkstylePlaybackModule({
       </View>
     );
 
-  // ====== S/C chooser – overlay-style (Next: Warn/+1/+2) ======
   const SCCooser = () =>
     scFor && (
       <View
@@ -431,14 +410,10 @@ export default function WrestlingFolkstylePlaybackModule({
       >
         {(() => {
           const offenderKey: 'athlete' | 'opponent' = scFor;
-          const offenderActor =
-            offenderKey === 'athlete' ? athleteActor : opponentActor;
-          const offenderLabel =
-            offenderKey === 'athlete' ? athleteLabel : opponentLabel;
-          const offenderColor =
-            offenderKey === 'athlete' ? editAthleteColor : editOpponentColor;
-          const receiverActor: 'home' | 'opponent' =
-            offenderActor === 'home' ? 'opponent' : 'home';
+          const offenderActor = offenderKey === 'athlete' ? athleteActor : opponentActor;
+          const offenderLabel = offenderKey === 'athlete' ? athleteLabel : opponentLabel;
+          const offenderColor = offenderKey === 'athlete' ? editAthleteColor : editOpponentColor;
+          const receiverActor: 'home' | 'opponent' = offenderActor === 'home' ? 'opponent' : 'home';
 
           const bumpStall = (kind: 'warn' | '+1' | '+2') => {
             setStallCount(prev => {
@@ -462,8 +437,7 @@ export default function WrestlingFolkstylePlaybackModule({
           };
 
           const stc = stallCount[offenderKey];
-          const stNext =
-            stc <= 0 ? 'Warn' : stc === 1 || stc === 2 ? '+1' : '+2';
+          const stNext = stc <= 0 ? 'Warn' : stc === 1 || stc === 2 ? '+1' : '+2';
 
           const cc = cautionCount[offenderKey];
           const cNext = cc <= 1 ? 'Warn' : '+1';
@@ -479,25 +453,11 @@ export default function WrestlingFolkstylePlaybackModule({
                 borderColor: 'rgba(255,255,255,0.25)',
               }}
             >
-              <Text
-                style={{
-                  color: '#fff',
-                  fontSize: 10,
-                  fontWeight: '800',
-                }}
-              >
-                Next: {text}
-              </Text>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>Next: {text}</Text>
             </View>
           );
 
-          const ChipBtn = ({
-            label,
-            onPress,
-          }: {
-            label: string;
-            onPress: () => void;
-          }) => (
+          const ChipBtn = ({ label, onPress }: { label: string; onPress: () => void }) => (
             <Pressable
               onPress={() => {
                 onPress();
@@ -519,9 +479,7 @@ export default function WrestlingFolkstylePlaybackModule({
                 elevation: 2,
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '900' }}>
-                {label}
-              </Text>
+              <Text style={{ color: '#fff', fontWeight: '900' }}>{label}</Text>
             </Pressable>
           );
 
@@ -537,23 +495,8 @@ export default function WrestlingFolkstylePlaybackModule({
                 borderColor: 'rgba(255,255,255,0.3)',
               }}
             >
-              {/* Header */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: 6,
-                }}
-              >
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '900',
-                    fontSize: 14,
-                    marginRight: 8,
-                  }}
-                >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+                <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
                   {offenderLabel}: S/C
                 </Text>
                 <Pressable
@@ -565,37 +508,12 @@ export default function WrestlingFolkstylePlaybackModule({
                     backgroundColor: 'rgba(255,255,255,0.1)',
                   }}
                 >
-                  <Text
-                    style={{
-                      color: '#fff',
-                      fontWeight: '700',
-                      fontSize: 12,
-                    }}
-                  >
-                    Cancel
-                  </Text>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Cancel</Text>
                 </Pressable>
               </View>
 
-              {/* Caution row */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  justifyContent: 'center',
-                  marginVertical: 4,
-                }}
-              >
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '800',
-                    marginRight: 6,
-                  }}
-                >
-                  Caution
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+                <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Caution</Text>
                 <Tag text={cNext} />
 
                 <ChipBtn
@@ -603,15 +521,9 @@ export default function WrestlingFolkstylePlaybackModule({
                   onPress={() => {
                     bumpCaution('warn');
                     if (offenderKey === 'athlete') {
-                      fireAthlete('caution', 0, 'CAUTION WARN', {
-                        kind: 'caution',
-                        offender: offenderActor,
-                      });
+                      fireAthlete('caution', 0, 'CAUTION WARN', { kind: 'caution', offender: offenderActor });
                     } else {
-                      fireOpponent('caution', 0, 'CAUTION WARN', {
-                        kind: 'caution',
-                        offender: offenderActor,
-                      });
+                      fireOpponent('caution', 0, 'CAUTION WARN', { kind: 'caution', offender: offenderActor });
                     }
                   }}
                 />
@@ -620,43 +532,15 @@ export default function WrestlingFolkstylePlaybackModule({
                   label="+1"
                   onPress={() => {
                     bumpCaution('+1');
-                    // +1 goes to the *other* actor
-                    fireFor(receiverActor, 'caution', 1, 'CAUTION +1', {
-                      kind: 'caution',
-                      offender: offenderActor,
-                    });
+                    fireFor(receiverActor, 'caution', 1, 'CAUTION +1', { kind: 'caution', offender: offenderActor });
                   }}
                 />
               </View>
 
-              {/* Divider */}
-              <View
-                style={{
-                  height: 1,
-                  backgroundColor: 'rgba(255,255,255,0.2)',
-                  marginVertical: 6,
-                }}
-              />
+              <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
 
-              {/* Stalling row */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  justifyContent: 'center',
-                  marginVertical: 4,
-                }}
-              >
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '800',
-                    marginRight: 6,
-                  }}
-                >
-                  Stalling
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+                <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Stalling</Text>
                 <Tag text={stNext} />
 
                 <ChipBtn
@@ -664,15 +548,9 @@ export default function WrestlingFolkstylePlaybackModule({
                   onPress={() => {
                     bumpStall('warn');
                     if (offenderKey === 'athlete') {
-                      fireAthlete('stalling', 0, 'ST WARN', {
-                        kind: 'stall',
-                        offender: offenderActor,
-                      });
+                      fireAthlete('stalling', 0, 'ST WARN', { kind: 'stall', offender: offenderActor });
                     } else {
-                      fireOpponent('stalling', 0, 'ST WARN', {
-                        kind: 'stall',
-                        offender: offenderActor,
-                      });
+                      fireOpponent('stalling', 0, 'ST WARN', { kind: 'stall', offender: offenderActor });
                     }
                   }}
                 />
@@ -681,10 +559,7 @@ export default function WrestlingFolkstylePlaybackModule({
                   label="+1"
                   onPress={() => {
                     bumpStall('+1');
-                    fireFor(receiverActor, 'stalling', 1, 'ST +1', {
-                      kind: 'stall',
-                      offender: offenderActor,
-                    });
+                    fireFor(receiverActor, 'stalling', 1, 'ST +1', { kind: 'stall', offender: offenderActor });
                   }}
                 />
 
@@ -706,7 +581,6 @@ export default function WrestlingFolkstylePlaybackModule({
       </View>
     );
 
-  // ====== PIN confirm – side-aware ======
   const PinConfirm = () =>
     pinFor && (
       <View
@@ -730,24 +604,11 @@ export default function WrestlingFolkstylePlaybackModule({
             borderColor: 'rgba(255,255,255,0.3)',
           }}
         >
-          <Text
-            style={{
-              color: '#fff',
-              fontWeight: '900',
-              textAlign: 'center',
-              marginBottom: 10,
-            }}
-          >
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
             Confirm PIN for {pinFor === 'athlete' ? athleteLabel : opponentLabel}?
           </Text>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'center',
-              gap: 12,
-            }}
-          >
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
             <Pressable
               onPress={() => setPinFor(null)}
               style={{
@@ -764,11 +625,8 @@ export default function WrestlingFolkstylePlaybackModule({
 
             <Pressable
               onPress={() => {
-                if (pinFor === 'athlete') {
-                  fireAthlete('pin', 0, 'PIN', { winBy: 'pin' });
-                } else {
-                  fireOpponent('pin', 0, 'PIN', { winBy: 'pin' });
-                }
+                if (pinFor === 'athlete') fireAthlete('pin', 0, 'PIN', { winBy: 'pin' });
+                else fireOpponent('pin', 0, 'PIN', { winBy: 'pin' });
                 setPinFor(null);
               }}
               style={{
@@ -778,18 +636,13 @@ export default function WrestlingFolkstylePlaybackModule({
                 backgroundColor: '#d4a017',
               }}
             >
-              <Text style={{ color: '#111', fontWeight: '900' }}>
-                Confirm
-              </Text>
+              <Text style={{ color: '#111', fontWeight: '900' }}>Confirm</Text>
             </Pressable>
           </View>
         </View>
       </View>
     );
 
-  // =========================
-  // EDIT MODE LAYOUT (overlay-style)
-  // =========================
   return (
     <View
       pointerEvents="box-none"
@@ -801,7 +654,7 @@ export default function WrestlingFolkstylePlaybackModule({
         bottom: BOTTOM,
       }}
     >
-      {/* Flip colors control — same vibe/position as overlay */}
+      {/* Flip colors control */}
       <View
         style={{
           position: 'absolute',
@@ -813,9 +666,7 @@ export default function WrestlingFolkstylePlaybackModule({
         pointerEvents="box-none"
       >
         <Pressable
-          onPress={() =>
-            setEditMyKidColor(c => (c === 'green' ? 'red' : 'green'))
-          }
+          onPress={() => setEditMyKidColor(c => (c === 'green' ? 'red' : 'green'))}
           style={{
             paddingHorizontal: 12,
             paddingVertical: 6,
@@ -828,6 +679,31 @@ export default function WrestlingFolkstylePlaybackModule({
           <Text style={{ color: 'white', fontWeight: '700' }}>
             Flip Colors (My Kid: {editMyKidColor.toUpperCase()})
           </Text>
+        </Pressable>
+      </View>
+
+      {/* Period button — top-right ONLY (matches recording overlay vibe) */}
+      <View
+        style={{
+          position: 'absolute',
+          top: -36,
+          right: EDGE_R,
+          alignItems: 'flex-end',
+        }}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          onPress={handleNextPeriod}
+          style={{
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.2)',
+            borderWidth: 1,
+            borderColor: 'white',
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>P{period}</Text>
         </Pressable>
       </View>
 
@@ -858,44 +734,13 @@ export default function WrestlingFolkstylePlaybackModule({
           {athleteLabel}
         </Text>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            width: COL_W,
-            gap: GAP,
-          }}
-        >
-          <EditCircle
-            label="T3"
-            color={editAthleteColor}
-            onPress={() => fireAthlete('takedown', 3, 'T3')}
-          />
-          <EditCircle
-            label="E1"
-            color={editAthleteColor}
-            onPress={() => fireAthlete('escape', 1, 'E1')}
-          />
-          <EditCircle
-            label="R2"
-            color={editAthleteColor}
-            onPress={() => fireAthlete('reversal', 2, 'R2')}
-          />
-          <EditCircle
-            label="NF"
-            color={editAthleteColor}
-            onPress={() => setNfFor('athlete')}
-          />
-          <EditCircle
-            label="S/C"
-            color={editAthleteColor}
-            onPress={() => setScFor('athlete')}
-          />
-          <EditCircle
-            label="PIN"
-            color={editAthleteColor}
-            onPress={() => setPinFor('athlete')}
-          />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
+          <EditCircle label="T3" color={editAthleteColor} onPress={() => fireAthlete('takedown', 3, 'T3')} />
+          <EditCircle label="E1" color={editAthleteColor} onPress={() => fireAthlete('escape', 1, 'E1')} />
+          <EditCircle label="R2" color={editAthleteColor} onPress={() => fireAthlete('reversal', 2, 'R2')} />
+          <EditCircle label="NF" color={editAthleteColor} onPress={() => setNfFor('athlete')} />
+          <EditCircle label="S/C" color={editAthleteColor} onPress={() => setScFor('athlete')} />
+          <EditCircle label="PIN" color={editAthleteColor} onPress={() => setPinFor('athlete')} />
         </View>
       </View>
 
@@ -926,49 +771,16 @@ export default function WrestlingFolkstylePlaybackModule({
           {opponentLabel}
         </Text>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            width: COL_W,
-            gap: GAP,
-            justifyContent: 'flex-end',
-          }}
-        >
-          <EditCircle
-            label="T3"
-            color={editOpponentColor}
-            onPress={() => fireOpponent('takedown', 3, 'T3')}
-          />
-          <EditCircle
-            label="E1"
-            color={editOpponentColor}
-            onPress={() => fireOpponent('escape', 1, 'E1')}
-          />
-          <EditCircle
-            label="R2"
-            color={editOpponentColor}
-            onPress={() => fireOpponent('reversal', 2, 'R2')}
-          />
-          <EditCircle
-            label="NF"
-            color={editOpponentColor}
-            onPress={() => setNfFor('opponent')}
-          />
-          <EditCircle
-            label="S/C"
-            color={editOpponentColor}
-            onPress={() => setScFor('opponent')}
-          />
-          <EditCircle
-            label="PIN"
-            color={editOpponentColor}
-            onPress={() => setPinFor('opponent')}
-          />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
+          <EditCircle label="T3" color={editOpponentColor} onPress={() => fireOpponent('takedown', 3, 'T3')} />
+          <EditCircle label="E1" color={editOpponentColor} onPress={() => fireOpponent('escape', 1, 'E1')} />
+          <EditCircle label="R2" color={editOpponentColor} onPress={() => fireOpponent('reversal', 2, 'R2')} />
+          <EditCircle label="NF" color={editOpponentColor} onPress={() => setNfFor('opponent')} />
+          <EditCircle label="S/C" color={editOpponentColor} onPress={() => setScFor('opponent')} />
+          <EditCircle label="PIN" color={editOpponentColor} onPress={() => setPinFor('opponent')} />
         </View>
       </View>
 
-      {/* Popups aligned like overlay, safely under the camera bump */}
       <NFChooser />
       <SCCooser />
       <PinConfirm />
