@@ -1,14 +1,21 @@
 {
-  "extends": "expo/tsconfig.base",
+  "extends": "./node_modules/expo/tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx",            // 👈  THIS is the key
+    "jsx": "react-jsx",
     "strict": true,
-    "moduleResolution": "Bundler",
+
+    "target": "es2019",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+
     "baseUrl": ".",
-    "paths": { "@/*": ["./*"] },
-    "types": ["node", "react", "react-native"],
+    "paths": {
+      "@/*": ["./*"]
+    },
+
     "resolveJsonModule": true,
-    "noEmit": true
+    "noEmit": true,
+    "skipLibCheck": true
   },
   "include": [
     "**/*.ts",
@@ -19,5 +26,3 @@
     "expo-env.d.ts"
   ]
 }
-
-
