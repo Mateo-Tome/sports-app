@@ -1,7 +1,7 @@
 // components/playback/PlaybackChrome.tsx
 
-import { useEffect, useMemo, useRef } from 'react';
-import { Dimensions, Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { Dimensions, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 // Import EventRow as a *type only* so this has no runtime dependency.
 import type { EventRow } from './playbackCore';
@@ -239,12 +239,31 @@ export function EventBelt(props: {
   }, [events, screenW, colorFor]);
 
   const scrollRef = useRef<ScrollView>(null);
-  const userScrolling = useRef(false);
+
+  // ✅ user interaction lock (covers BOTH dragging and clicking)
+  const userInteracting = useRef(false);
+  const unlockTimer = useRef<any>(null);
+
+  const lockUser = useCallback((ms = 900) => {
+    userInteracting.current = true;
+    if (unlockTimer.current) clearTimeout(unlockTimer.current);
+    unlockTimer.current = setTimeout(() => {
+      userInteracting.current = false;
+      unlockTimer.current = null;
+    }, ms);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (unlockTimer.current) clearTimeout(unlockTimer.current);
+    };
+  }, []);
+
   const lastAuto = useRef(0);
 
   useEffect(() => {
     if (!duration) return;
-    if (userScrolling.current) return;
+    if (userInteracting.current) return;
 
     const playheadX = current * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
@@ -257,19 +276,32 @@ export function EventBelt(props: {
   }, [current, duration, screenW]);
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: bottomInset + 4 }}>
+    <View
+      pointerEvents="auto"
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: bottomInset + 4,
+        // ensure belt is clickable above other overlays
+        zIndex: 999,
+        elevation: 999,
+      }}
+    >
       <ScrollView
         ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
-        onScrollBeginDrag={() => (userScrolling.current = true)}
-        onScrollEndDrag={() => (userScrolling.current = false)}
-        onMomentumScrollBegin={() => (userScrolling.current = true)}
-        onMomentumScrollEnd={() => (userScrolling.current = false)}
+        onScrollBeginDrag={() => lockUser(1400)}
+        onScrollEndDrag={() => lockUser(900)}
+        onMomentumScrollBegin={() => lockUser(1400)}
+        onMomentumScrollEnd={() => lockUser(900)}
+        scrollEventThrottle={16}
         contentContainerStyle={{
           height: BELT_H,
           paddingHorizontal: EDGE_PAD,
           width: layout.contentW + EDGE_PAD * 2,
+          ...(Platform.OS === 'web' ? ({ userSelect: 'none' } as any) : null),
         }}
       >
         <View style={{ width: layout.contentW, height: BELT_H }}>
@@ -288,16 +320,27 @@ export function EventBelt(props: {
           {layout.items.map((it, i) => {
             const isPassed = current >= it.e.t;
 
-            // ✅ PERIOD pill: white + centered between rows (like your old PlaybackScreen)
+            const handlePress = () => {
+              lockUser(1200); // ✅ stops snap-back while click happens
+              onSeek(it.e.t);
+            };
+
+            const handleLong = () => {
+              lockUser(1400);
+              onPillLongPress(it.e);
+            };
+
+            // ✅ PERIOD pill: white + centered between rows
             if (it.isPeriod) {
               const numLabel = (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
 
               return (
                 <Pressable
                   key={`${it.e._id ?? 'period'}-${i}`}
-                  onPress={() => onSeek(it.e.t)}
-                  onLongPress={() => onPillLongPress(it.e)}
+                  onPress={handlePress}
+                  onLongPress={handleLong}
                   delayLongPress={280}
+                  pointerEvents="auto"
                   style={{
                     position: 'absolute',
                     left: it.x - PILL_W / 2,
@@ -320,13 +363,14 @@ export function EventBelt(props: {
               );
             }
 
-            // Normal event pill (unchanged)
+            // Normal event pill
             return (
               <Pressable
                 key={`${it.e._id ?? 'n'}-${i}`}
-                onPress={() => onSeek(it.e.t)}
-                onLongPress={() => onPillLongPress(it.e)}
+                onPress={handlePress}
+                onLongPress={handleLong}
                 delayLongPress={280}
+                pointerEvents="auto"
                 style={{
                   position: 'absolute',
                   left: it.x - PILL_W / 2,
@@ -344,7 +388,9 @@ export function EventBelt(props: {
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
                   {`${abbrKind((it.e as any).kind)}${
-                    typeof (it.e as any).points === 'number' && (it.e as any).points > 0 ? `+${(it.e as any).points}` : ''
+                    typeof (it.e as any).points === 'number' && (it.e as any).points > 0
+                      ? `+${(it.e as any).points}`
+                      : ''
                   }`}
                 </Text>
 

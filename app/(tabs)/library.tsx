@@ -8,35 +8,6 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import {
-  LibraryVideoRow,
-  type LibraryRow,
-} from '../../components/library/LibraryVideoRow';
-import {
-  readIndex,
-  writeIndexAtomic,
-  type IndexMeta,
-} from '../../lib/library/indexStore';
-
-// ✅ NEW: tiny helper so this file doesn't keep growing
-import { pushPlayback } from '../../src/hooks/navigation/pushPlayback';
-
-
-// retagging logic
-import retagVideo from '../../lib/library/retag';
-
-import { readOutcomeFor } from '../../lib/library/sidecars';
-import {
-  getOrCreateThumb,
-  sweepOrphanThumbs,
-  thumbPathFor,
-} from '../../lib/library/thumbs';
-
-import EditAthleteModal from '../../components/library/EditAthleteModal';
-import EditTitleModal from '../../components/library/EditTitleModal';
-import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
-import { fetchMyVideos } from '../../lib/videos';
-
-import {
   useCallback,
   useEffect,
   useMemo,
@@ -53,14 +24,45 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const DIR = FileSystem.documentDirectory + 'videos/';
+import {
+  LibraryVideoRow,
+  type LibraryRow,
+} from '../../components/library/LibraryVideoRow';
+
+import EditAthleteModal from '../../components/library/EditAthleteModal';
+import EditTitleModal from '../../components/library/EditTitleModal';
+import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
+
+import {
+  readIndex,
+  writeIndexAtomic,
+  type IndexMeta,
+} from '../../lib/library/indexStore';
+
+import retagVideo from '../../lib/library/retag';
+import { readOutcomeFor } from '../../lib/library/sidecars';
+import {
+  getOrCreateThumb,
+  sweepOrphanThumbs,
+  thumbPathFor,
+} from '../../lib/library/thumbs';
+
+// ✅ NEW: move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
+import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
+
+// ✅ NEW: tiny helper so this file doesn't keep growing
+import { pushPlayback } from '../../src/hooks/navigation/pushPlayback';
+
+// (still here, unused for now)
+import { fetchMyVideos } from '../../lib/videos';
+
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
 type Row = LibraryRow;
 type Athlete = { id: string; name: string; photoUri?: string | null };
 
-// ----- bounded concurrency helper -----
+// ----- bounded concurrency helper (still used for lazy thumbs + legacy fallback load) -----
 async function mapLimit<T, R>(
   items: T[],
   limit: number,
@@ -111,7 +113,7 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
-  // Cloud videos from Firestore for this user
+  // Cloud videos from Firestore for this user (still unused)
   const [cloudVideos, setCloudVideos] = useState<
     { id: string; storageKey: string; sidecarRef?: string; createdAt: number; shareId: string }[]
   >([]);
@@ -132,17 +134,16 @@ export default function LibraryScreen() {
     rowsRef.current = rows;
   }, [rows]);
 
-  // ---------- build 1 row ----------
-  const buildRow = useCallback(
-    async (meta: IndexMeta, eagerThumb: boolean) => {
+  // ---------------- LEGACY (fallback) LOADER ----------------
+  // If buildLibraryRows() ever throws, we fall back to your original behavior
+  const legacyLoad = useCallback(async () => {
+    // ---------- build 1 row ----------
+    const buildRow = async (meta: IndexMeta, eagerThumb: boolean) => {
       const info: any = await FileSystem.getInfoAsync(meta.uri);
       if (!info?.exists) return null;
 
       const scoreBits = await readOutcomeFor(meta.uri);
 
-      // Thumbnails:
-      // - For newest items (eagerThumb === true): generate or fetch immediately.
-      // - For older items: reuse cached file if it already exists so lists "pop in" polished.
       let thumb: string | null = null;
       if (eagerThumb) {
         thumb = await getOrCreateThumb(meta.uri, meta.assetId);
@@ -150,18 +151,13 @@ export default function LibraryScreen() {
         const cached = thumbPathFor(meta.uri);
         try {
           const tInfo: any = await FileSystem.getInfoAsync(cached);
-          if (tInfo?.exists) {
-            thumb = cached;
-          }
-        } catch {
-          // ignore – we'll lazily generate on scroll if needed
-        }
+          if (tInfo?.exists) thumb = cached;
+        } catch {}
       }
 
       const row: Row = {
         uri: meta.uri,
-        displayName:
-          meta.displayName || (meta.uri.split('/').pop() || 'video'),
+        displayName: meta.displayName || (meta.uri.split('/').pop() || 'video'),
         athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
         sport: (meta.sport || 'unknown').trim() || 'unknown',
         assetId: meta.assetId,
@@ -181,55 +177,62 @@ export default function LibraryScreen() {
       };
 
       return row;
-    },
-    [],
-  );
+    };
 
-  // ---------- initial load with bounded concurrency & eager thumbs for first 12 ----------
+    const list: IndexMeta[] = await readIndex();
+    const sorted = [...list].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+    const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => {
+      return await buildRow(meta, i < 12);
+    });
+
+    const filtered = rowsBuilt.filter(Boolean) as Row[];
+    filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+    setRows(filtered);
+
+    try {
+      const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+      setAthleteList(raw ? (JSON.parse(raw) as Athlete[]) : []);
+    } catch {
+      setAthleteList([]);
+    }
+
+    try {
+      const rawUp = await AsyncStorage.getItem(UPLOADED_MAP_KEY);
+      setUploadedMap(rawUp ? JSON.parse(rawUp) : {});
+    } catch {
+      setUploadedMap({});
+    }
+
+    try {
+      await sweepOrphanThumbs(sorted.map((m) => m.uri));
+    } catch {}
+  }, []);
+
+  // ✅ SMALLER LOAD: delegated to buildLibraryRows() with fallback
   const load = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const list: IndexMeta[] = await readIndex();
-      const sorted = [...list].sort(
-        (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
-      );
-
-      const rowsBuilt = await mapLimit(sorted, 4, async (meta, i) => {
-        return await buildRow(meta, i < 12);
-      });
-
-      const filtered = rowsBuilt.filter(Boolean) as Row[];
-      filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
-      setRows(filtered);
-
       try {
-        const raw = await AsyncStorage.getItem(ATHLETES_KEY);
-        setAthleteList(raw ? (JSON.parse(raw) as Athlete[]) : []);
-      } catch {
-        setAthleteList([]);
+        const out = await buildLibraryRows();
+        setRows(out.rows);
+        setAthleteList(out.athleteList);
+        setUploadedMap(out.uploadedMap);
+      } catch (e) {
+        console.log('buildLibraryRows failed -> falling back to legacyLoad', e);
+        await legacyLoad();
       }
-
-      try {
-        const rawUp = await AsyncStorage.getItem(UPLOADED_MAP_KEY);
-        setUploadedMap(rawUp ? JSON.parse(rawUp) : {});
-      } catch {
-        setUploadedMap({});
-      }
-
-      // opportunistically sweep orphan thumbs (quietly)
-      try {
-        await sweepOrphanThumbs(sorted.map((m) => m.uri));
-      } catch {}
     } finally {
       loadingRef.current = false;
     }
-  }, [buildRow]);
+  }, [legacyLoad]);
 
   // initial + focus refresh
   useEffect(() => {
     load();
   }, [load]);
+
   useFocusEffect(
     useCallback(() => {
       load();
@@ -272,14 +275,11 @@ export default function LibraryScreen() {
   }, []);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(
-      'sidecarUpdated',
-      async (evt: any) => {
-        const uri = evt?.uri as string | undefined;
-        if (!uri) return;
-        await patchRowFromSidecarPayload(uri);
-      },
-    );
+    const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
+      const uri = evt?.uri as string | undefined;
+      if (!uri) return;
+      await patchRowFromSidecarPayload(uri);
+    });
     return () => sub.remove();
   }, [patchRowFromSidecarPayload]);
 
@@ -309,8 +309,7 @@ export default function LibraryScreen() {
           try {
             const t = thumbPathFor(row.uri);
             const info: any = await FileSystem.getInfoAsync(t);
-            if (info?.exists)
-              await FileSystem.deleteAsync(t, { idempotent: true });
+            if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
           } catch {}
 
           // drop from index
@@ -345,11 +344,7 @@ export default function LibraryScreen() {
         'This removes the file, its index entry, and its cached thumbnail.',
         [
           { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => removeVideo(row),
-          },
+          { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
         ],
       );
     },
@@ -359,17 +354,14 @@ export default function LibraryScreen() {
   const saveToPhotos = useCallback(async (uri: string) => {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted) {
-      Alert.alert(
-        'Photos permission needed',
-        'Allow access to save your video.',
-      );
+      Alert.alert('Photos permission needed', 'Allow access to save your video.');
       return;
     }
     await MediaLibrary.saveToLibraryAsync(uri);
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  // ✅ UPDATED: use helper so this file stays stable when we add cloud navigation
+  // playback nav
   const routerPushPlayback = useCallback(
     (row: Row) => {
       pushPlayback(router, {
@@ -411,17 +403,9 @@ export default function LibraryScreen() {
     [load],
   );
 
-  // ====== GROUPINGS (inline helper instead of separate module) ======
-  const {
-    allRows,
-    rowsByAthlete,
-    rowsBySport,
-    athleteSportsMap,
-  } = useMemo(() => {
-    // Sort newest first
-    const allRowsLocal: Row[] = [...rows].sort(
-      (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
-    );
+  // ====== GROUPINGS ======
+  const { allRows, rowsByAthlete, rowsBySport, athleteSportsMap } = useMemo(() => {
+    const allRowsLocal: Row[] = [...rows].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
 
     const rowsByAthleteLocal: Record<string, Row[]> = {};
     const rowsBySportLocal: Record<string, Row[]> = {};
@@ -431,24 +415,17 @@ export default function LibraryScreen() {
       const athlete = r.athlete || 'Unassigned';
       const sport = r.sport || 'unknown';
 
-      // By athlete
       (rowsByAthleteLocal[athlete] ||= []).push(r);
-
-      // By sport
       (rowsBySportLocal[sport] ||= []).push(r);
 
-      // Nested athlete ➜ sport ➜ rows
       (athleteSportsMapLocal[athlete] ||= {});
       (athleteSportsMapLocal[athlete][sport] ||= []);
       athleteSportsMapLocal[athlete][sport].push(r);
     }
 
-    // Ensure athleteSportsMap lists are also sorted newest-first
     for (const a of Object.keys(athleteSportsMapLocal)) {
       for (const s of Object.keys(athleteSportsMapLocal[a])) {
-        athleteSportsMapLocal[a][s].sort(
-          (x, y) => (y.mtime ?? 0) - (x.mtime ?? 0),
-        );
+        athleteSportsMapLocal[a][s].sort((x, y) => (y.mtime ?? 0) - (x.mtime ?? 0));
       }
     }
 
@@ -461,8 +438,7 @@ export default function LibraryScreen() {
   }, [rows]);
 
   const photoFor = useCallback(
-    (name: string) =>
-      athleteList.find((a) => a.name === name)?.photoUri ?? null,
+    (name: string) => athleteList.find((a) => a.name === name)?.photoUri ?? null,
     [athleteList],
   );
 
@@ -491,12 +467,7 @@ export default function LibraryScreen() {
       try {
         const list = await readIndex();
         const updated: IndexMeta[] = list.map((e) =>
-          e.uri === titleEditRow.uri
-            ? {
-                ...e,
-                displayName: trimmed,
-              }
-            : e,
+          e.uri === titleEditRow.uri ? { ...e, displayName: trimmed } : e,
         );
         await writeIndexAtomic(updated);
         await load();
@@ -538,10 +509,7 @@ export default function LibraryScreen() {
         return;
       }
 
-      // ensure this new athlete exists in the list for future use
-      const exists = athleteList.some(
-        (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
-      );
+      const exists = athleteList.some((a) => a.name.toLowerCase() === trimmed.toLowerCase());
       if (!exists) {
         const newEntry: Athlete = { id: `${Date.now()}`, name: trimmed };
         const nextList = [newEntry, ...athleteList];
@@ -557,7 +525,7 @@ export default function LibraryScreen() {
     [athletePickerOpen, athleteList, doEditAthlete],
   );
 
-  // ====== FlatList row renderer (delegates to LibraryVideoRow) ======
+  // ====== row renderer ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
       const uploaded = !!uploadedMap[keyFor(item)];
@@ -574,14 +542,8 @@ export default function LibraryScreen() {
           onUploaded={(key, url) => {
             const mapKey = keyFor(item);
             setUploadedMap((prev) => {
-              const next = {
-                ...prev,
-                [mapKey]: { key, url, at: Date.now() },
-              };
-              AsyncStorage.setItem(
-                UPLOADED_MAP_KEY,
-                JSON.stringify(next),
-              ).catch(() => {});
+              const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
+              AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
               return next;
             });
           }}
@@ -601,40 +563,39 @@ export default function LibraryScreen() {
 
   // Lazy thumbnails for viewable rows (assetId-aware)
   const thumbQueueRef = useRef<Set<string>>(new Set());
-  const onViewableItemsChanged = useRef(
-    ({ changed }: { changed: ViewToken[] }) => {
-      const toFetch: string[] = [];
-      changed.forEach((vt) => {
-        const row = vt.item as Row;
-        if (!row?.uri) return;
-        if (
-          vt.isViewable &&
-          !row.thumbUri &&
-          !thumbQueueRef.current.has(row.uri)
-        ) {
-          thumbQueueRef.current.add(row.uri);
-          toFetch.push(row.uri);
-        }
-      });
-      if (!toFetch.length) return;
+  const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
+    const toFetch: string[] = [];
+    changed.forEach((vt) => {
+      const row = vt.item as Row;
+      if (!row?.uri) return;
+      if (vt.isViewable && !row.thumbUri && !thumbQueueRef.current.has(row.uri)) {
+        thumbQueueRef.current.add(row.uri);
+        toFetch.push(row.uri);
+      }
+    });
+    if (!toFetch.length) return;
 
-      (async () => {
-        const updated: { uri: string; thumb: string | null }[] =
-          await mapLimit(toFetch, 3, async (uri) => {
-            const row = rowsRef.current.find((r) => r.uri === uri);
-            const thumb = await getOrCreateThumb(uri, row?.assetId);
-            return { uri, thumb };
-          });
-        setRows((prev) =>
-          prev.map((r) => {
-            const hit = updated.find((u) => u.uri === r.uri);
-            return hit ? { ...r, thumbUri: hit.thumb } : r;
-          }),
-        );
-        updated.forEach((u) => thumbQueueRef.current.delete(u.uri));
-      })();
-    },
-  ).current;
+    (async () => {
+      const updated: { uri: string; thumb: string | null }[] = await mapLimit(
+        toFetch,
+        3,
+        async (uri) => {
+          const row = rowsRef.current.find((r) => r.uri === uri);
+          const thumb = await getOrCreateThumb(uri, row?.assetId);
+          return { uri, thumb };
+        },
+      );
+
+      setRows((prev) =>
+        prev.map((r) => {
+          const hit = updated.find((u) => u.uri === r.uri);
+          return hit ? { ...r, thumbUri: hit.thumb } : r;
+        }),
+      );
+
+      updated.forEach((u) => thumbQueueRef.current.delete(u.uri));
+    })();
+  }).current;
 
   const viewConfigRef = useRef({ itemVisiblePercentThreshold: 40 });
 
@@ -664,7 +625,6 @@ export default function LibraryScreen() {
 
       <Modal visible={false} />
 
-      {/* Edit Athlete modal (own component) */}
       <EditAthleteModal
         visible={!!athletePickerOpen}
         row={athletePickerOpen}
@@ -674,7 +634,6 @@ export default function LibraryScreen() {
         onSubmitNewAthlete={handleSubmitNewAthlete}
       />
 
-      {/* Edit Title modal (own component) */}
       <EditTitleModal
         visible={!!titleEditRow}
         row={titleEditRow}
@@ -685,5 +644,4 @@ export default function LibraryScreen() {
   );
 }
 
-// (Optional) empty stylesheet if you want to attach styles later
 const styles = StyleSheet.create({});
