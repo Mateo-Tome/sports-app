@@ -1,7 +1,6 @@
-// app/screens/PlaybackScreen.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,13 +10,9 @@ import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
+import useWebVideoController from '../../src/hooks/useWebVideoController';
 
-import {
-  EditModeMask,
-  LoadingErrorOverlay,
-  ReplayOverlay,
-  SkipHudOverlay,
-} from '../../components/playback/PlaybackOverlays';
+import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
 
 import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
 import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
@@ -124,7 +119,6 @@ export default function PlaybackScreen() {
 
   const source = videoPath ? { videoPath } : { shareId: shareId! };
 
-  // Native player hook (still used for: loading signed URLs, sidecarUrl, etc.)
   const {
     player,
     now: nativeNow,
@@ -140,20 +134,23 @@ export default function PlaybackScreen() {
     refreshSignedUrl,
     sidecarUrl,
     isReady,
-    loadedSrc, // signed URL on share playback
+    loadedSrc,
   } = usePlaybackPlayer(source);
 
   const videoKey = useMemo(() => {
     return videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}` : 'none';
   }, [videoPath, shareId]);
 
-  // -------------------------
-  // ✅ WEB VIDEO STATE (authoritative on web)
-  // -------------------------
-  const webVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [webNow, setWebNow] = useState(0);
-  const [webDur, setWebDur] = useState(0);
-  const [webIsPlaying, setWebIsPlaying] = useState(false);
+  const {
+    bindRef,
+    webNow,
+    webDur,
+    webIsPlaying,
+    seek: webSeek,
+    playPause: webPlayPause,
+    videoHandlers,
+    webVideoRef,
+  } = useWebVideoController();
 
   const now = isWeb ? webNow : nativeNow;
   const dur = isWeb ? webDur : nativeDur;
@@ -165,51 +162,41 @@ export default function PlaybackScreen() {
     return !webIsPlaying && Math.abs((webNow || 0) - dur) < 0.25;
   }, [dur, nativeAtVideoEnd, webIsPlaying, webNow]);
 
-  // ✅ Web-aware seek wrapper (fixes belt + skip + arrows on web)
+  // ✅ Duration helper
+  const getDurationSafe = useCallback(() => {
+    if (isWeb) return dur || 0;
+    try {
+      const D = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
+      return D || 0;
+    } catch {
+      return dur || 0;
+    }
+  }, [dur, getLiveDuration]);
+
+  // ✅ Unified seek (WEB MUST NOT clamp with getLiveDuration)
   const onSeek = useCallback(
     (sec: number) => {
-      const D = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
+      const D = getDurationSafe();
       const clamped = Math.max(0, Math.min(D || 0, sec));
 
       if (isWeb) {
-        const el = webVideoRef.current;
-        if (el) {
-          try {
-            el.currentTime = clamped;
-          } catch {}
-        }
-        setWebNow(clamped);
+        webSeek(clamped);
+        return;
       }
 
-      // keep side effects / state in sync
       seekInternal(clamped);
     },
-    [dur, getLiveDuration, seekInternal],
+    [getDurationSafe, seekInternal, webSeek],
   );
 
-  // ✅ Web play/pause must act on the <video> (native uses expo player)
+  // ✅ Unified play/pause
   const onPlayPause = useCallback(async () => {
     if (isWeb) {
-      const el = webVideoRef.current;
-      if (!el) return;
-
-      try {
-        el.muted = false;
-        el.volume = 1;
-
-        if (el.paused) {
-          await el.play();
-        } else {
-          el.pause();
-        }
-      } catch (e) {
-        console.log('[web video play error]', e);
-      }
+      await webPlayPause();
       return;
     }
-
     await onPlayPauseInternal();
-  }, [onPlayPauseInternal]);
+  }, [onPlayPauseInternal, webPlayPause]);
 
   const {
     events,
@@ -276,20 +263,20 @@ export default function PlaybackScreen() {
   }, [now, onSeek, handleLeftTap]);
 
   const skipRight5 = useCallback(() => {
-    const maxT = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
+    const maxT = getDurationSafe();
     const t = Math.min(maxT, (now || 0) + SKIP_SEC);
     onSeek(t);
     try {
       handleRightTap?.();
     } catch {}
-  }, [now, dur, getLiveDuration, onSeek, handleRightTap]);
+  }, [getDurationSafe, now, onSeek, handleRightTap]);
 
   const { leftZoneProps, rightZoneProps, skipHUD: tapSkipHUD } = useSkipTapZones({
     chromeVisible,
     showChrome,
     onSkipLeft: skipLeft5,
     onSkipRight: skipRight5,
-    onPlayPause, // (not used by screen taps)
+    onPlayPause,
     doubleTapMs: 280,
     singleTapShowsChrome: true,
     skipSeconds: 5,
@@ -337,7 +324,7 @@ export default function PlaybackScreen() {
     const label = (evt as any).label;
     const metaForRow = { ...(label ? { label } : {}), ...baseMeta };
 
-    const tNow = Math.max(0, Math.min(getLiveDuration(), now || 0));
+    const tNow = Math.max(0, Math.min(getDurationSafe(), now || 0));
 
     if (editSubmode === 'add') {
       const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
@@ -431,6 +418,8 @@ export default function PlaybackScreen() {
 
   const shouldMountVideoView = isWeb ? isReady : true;
 
+  const beltBlock = showEventBelt ? BELT_H + insets.bottom : 0;
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -441,9 +430,7 @@ export default function PlaybackScreen() {
             <View style={{ flex: 1, backgroundColor: 'black' }}>
               <video
                 key={videoKey}
-                ref={(node) => {
-                  webVideoRef.current = node;
-                }}
+                ref={bindRef}
                 src={loadedSrc || undefined}
                 playsInline
                 controls={false}
@@ -454,18 +441,7 @@ export default function PlaybackScreen() {
                   objectFit: 'contain',
                   backgroundColor: 'black',
                 }}
-                onLoadedMetadata={(e) => {
-                  const el = e.currentTarget;
-                  setWebDur(Number.isFinite(el.duration) ? el.duration : 0);
-                  setWebNow(el.currentTime || 0);
-                }}
-                onTimeUpdate={(e) => {
-                  const el = e.currentTarget;
-                  setWebNow(el.currentTime || 0);
-                }}
-                onPlay={() => setWebIsPlaying(true)}
-                onPause={() => setWebIsPlaying(false)}
-                onEnded={() => setWebIsPlaying(false)}
+                {...(videoHandlers as any)}
               />
             </View>
           ) : (
@@ -485,10 +461,10 @@ export default function PlaybackScreen() {
           </View>
         )}
 
-        {/* Tap anywhere ONLY to reveal chrome when hidden */}
+        {/* Tap anywhere ONLY to reveal chrome when hidden (but do NOT cover the belt) */}
         <Pressable
           onPress={showChrome}
-          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: beltBlock }}
           pointerEvents={chromeVisible ? 'none' : 'auto'}
         />
 
@@ -519,7 +495,6 @@ export default function PlaybackScreen() {
 
         {!editMode && (
           <>
-            {/* Double-tap skip zones */}
             <View
               style={{
                 position: 'absolute',
@@ -558,7 +533,7 @@ export default function PlaybackScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => setOverlayMenuOpen((v) => !v)}
+              onPress={() => setOverlayMenuOpen(v => !v)}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
