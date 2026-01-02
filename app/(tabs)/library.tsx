@@ -7,13 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   DeviceEventEmitter,
@@ -525,6 +519,18 @@ export default function LibraryScreen() {
     [athletePickerOpen, athleteList, doEditAthlete],
   );
 
+  // ====== OPTIONAL: real uploader hook ======
+  // If you already have a real uploader function, import it and wire it here.
+  // Until then, UploadButton (inside LibraryVideoRow) will still be clickable
+  // and show the "Upload tapped" alert (from UploadButton.tsx), proving taps work.
+  //
+  // Example:
+  // import { uploadLocalVideo } from '../../lib/upload/uploadLocalVideo';
+  //
+  // const onRequestUpload = useCallback(async ({ localUri, sidecar }) => {
+  //   return await uploadLocalVideo({ localUri, sidecar });
+  // }, []);
+
   // ====== row renderer ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
@@ -547,6 +553,12 @@ export default function LibraryScreen() {
               return next;
             });
           }}
+
+          // ✅ If your LibraryVideoRow supports it, you can pass a real uploader:
+          // onRequestUpload={onRequestUpload}
+          //
+          // If your current LibraryVideoRow type DOES NOT include onRequestUpload,
+          // leave this commented out to avoid TS errors.
         />
       );
     },
@@ -629,7 +641,7 @@ export default function LibraryScreen() {
         visible={!!athletePickerOpen}
         row={athletePickerOpen}
         athleteList={athleteList}
-        onClose={closeAthleteModal}
+        onClose={() => setAthletePickerOpen(null)}
         onSelectExisting={handleSelectExistingAthlete}
         onSubmitNewAthlete={handleSubmitNewAthlete}
       />
@@ -637,7 +649,7 @@ export default function LibraryScreen() {
       <EditTitleModal
         visible={!!titleEditRow}
         row={titleEditRow}
-        onClose={closeTitleModal}
+        onClose={() => setTitleEditRow(null)}
         onSubmit={handleSubmitTitle}
       />
     </View>
