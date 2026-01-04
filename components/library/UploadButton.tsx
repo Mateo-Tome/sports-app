@@ -1,4 +1,5 @@
 // components/library/UploadButton.tsx
+
 import * as FileSystem from "expo-file-system";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
@@ -10,7 +11,7 @@ import { testGetUploadUrl } from "../../lib/backend";
 import { uploadVideoToB2 } from "../../lib/uploadVideoToB2";
 
 // -----------------------------
-// Sidecar reader (unchanged)
+// Sidecar reader
 // -----------------------------
 async function readSidecarForUpload(videoUri: string): Promise<any | null> {
   try {
@@ -97,6 +98,22 @@ function isOldStyle(p: Props): p is OldStyleProps {
   return (p as any)?.row?.uri != null;
 }
 
+// small helpers
+function safeString(v: any, fallback: string) {
+  const t = typeof v === "string" ? v.trim() : "";
+  return t.length ? t : fallback;
+}
+
+function fileNameFromUri(uri: string) {
+  const last = uri.split("/").pop();
+  return last && last.length ? last : "video.mp4";
+}
+
+function stripExt(name: string) {
+  const idx = name.lastIndexOf(".");
+  return idx > 0 ? name.slice(0, idx) : name;
+}
+
 export function UploadButton(props: Props) {
   const normalized = useMemo(() => {
     if (isOldStyle(props)) {
@@ -108,18 +125,16 @@ export function UploadButton(props: Props) {
       };
     }
     return {
-      localUri: props.localUri,
-      sidecar: props.sidecar,
-      uploaded: props.uploaded,
-      onUploaded: props.onUploaded,
+      localUri: (props as UploadButtonProps).localUri,
+      sidecar: (props as UploadButtonProps).sidecar,
+      uploaded: (props as UploadButtonProps).uploaded,
+      onUploaded: (props as UploadButtonProps).onUploaded,
     };
   }, [props]);
 
   const { localUri, sidecar, uploaded, onUploaded } = normalized;
 
-  const [state, setState] = useState<"idle" | "uploading" | "done">(
-    uploaded ? "done" : "idle"
-  );
+  const [state, setState] = useState<"idle" | "uploading" | "done">(uploaded ? "done" : "idle");
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
@@ -179,6 +194,7 @@ export function UploadButton(props: Props) {
             let b2SidecarKey: string | null = null;
             let b2SidecarFileId: string | null = null;
 
+            // Prefer actual sidecar file on disk; fallback to passed sidecar prop
             let fullSidecar = await readSidecarForUpload(localUri);
             if (!fullSidecar && sidecar && typeof sidecar === "object") {
               fullSidecar = sidecar as any;
@@ -221,19 +237,36 @@ export function UploadButton(props: Props) {
             }
 
             // -----------------------------
-            // 3) Write Firestore metadata
+            // 3) Write Firestore metadata  ✅ FIXED
             // -----------------------------
             try {
               const db = getFirestore(app);
 
+              // what the user would expect to see as a title (stable, readable)
+              const localName = fileNameFromUri(localUri); // like "IMG_1234.mp4" or whatever
+              const fallbackTitle = stripExt(localName);
+
+              // pull useful display fields from sidecar if available
+              const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
+              const sport = safeString(fullSidecar?.sport, "unknown");
+
+              // if you already store a title in sidecar, use it; otherwise fallback to local filename
+              const title = safeString(fullSidecar?.displayName ?? fullSidecar?.title, fallbackTitle);
+
               const docData = {
                 ownerUid: user.uid,
-                athleteId: null as string | null,
-                sport: null as string | null,
-                style: null as string | null,
+
+                // ✅ display fields (THIS is why your web names were “wrong”)
+                title,
+                athleteName,
+                sport,
+                originalFileName: localName,
+
+                // timestamps
                 createdAt: now,
                 updatedAt: now,
 
+                // storage
                 storageProvider: "b2",
                 b2Bucket: creds1.bucketName ?? "quickclip-videos",
                 b2VideoKey,
