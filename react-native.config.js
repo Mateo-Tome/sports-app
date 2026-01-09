@@ -1,9 +1,10 @@
 module.exports = {
-  dependencies: {
-    'ffmpeg-kit-react-native': {
-      platforms: {
-        ios: null,
+    dependencies: {
+      'ffmpeg-kit-react-native': {
+        platforms: {
+          ios: null,
+        },
       },
     },
-  },
-};
+  };
+  

@@ -64,10 +64,10 @@ type OldStyleProps = {
     mtime?: number | null;
     assetId?: string | undefined;
   };
-  mapKey?: string; // not required by uploader, but your UI passes it
+  mapKey?: string;
   uploaded?: boolean;
   onUploaded?: (cloudKey: string, url: string) => void;
-  sidecar?: unknown; // optional override
+  sidecar?: unknown;
 };
 
 export type UploadButtonProps = {
@@ -81,9 +81,11 @@ type Props = UploadButtonProps | OldStyleProps;
 
 // random shareId
 function randomShareId(length = 12): string {
-  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const chars =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let out = "";
-  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < length; i++)
+    out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
 
@@ -114,6 +116,80 @@ function stripExt(name: string) {
   return idx > 0 ? name.slice(0, idx) : name;
 }
 
+function clampNum(v: any): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function computeScoreBits(fullSidecar: any | null): {
+  scoreFor: number | null;
+  scoreAgainst: number | null;
+  result: "W" | "L" | "T" | null;
+  scoreText: string | null;
+  homeIsAthlete: boolean | null;
+  finalScore: { home: number; opponent: number } | null;
+} {
+  try {
+    if (!fullSidecar) {
+      return {
+        scoreFor: null,
+        scoreAgainst: null,
+        result: null,
+        scoreText: null,
+        homeIsAthlete: null,
+        finalScore: null,
+      };
+    }
+
+    const homeIsAthlete =
+      typeof fullSidecar.homeIsAthlete === "boolean"
+        ? fullSidecar.homeIsAthlete
+        : null;
+
+    const fs = fullSidecar.finalScore;
+    const home = clampNum(fs?.home);
+    const opp = clampNum(fs?.opponent);
+
+    if (home == null || opp == null || homeIsAthlete == null) {
+      return {
+        scoreFor: null,
+        scoreAgainst: null,
+        result: null,
+        scoreText: null,
+        homeIsAthlete,
+        finalScore:
+          home != null && opp != null ? { home, opponent: opp } : null,
+      };
+    }
+
+    const scoreFor = homeIsAthlete ? home : opp;
+    const scoreAgainst = homeIsAthlete ? opp : home;
+
+    const result: "W" | "L" | "T" =
+      scoreFor > scoreAgainst ? "W" : scoreFor < scoreAgainst ? "L" : "T";
+
+    const scoreText = `${result} ${scoreFor}\u2013${scoreAgainst}`; // en-dash
+
+    return {
+      scoreFor,
+      scoreAgainst,
+      result,
+      scoreText,
+      homeIsAthlete,
+      finalScore: { home, opponent: opp },
+    };
+  } catch {
+    return {
+      scoreFor: null,
+      scoreAgainst: null,
+      result: null,
+      scoreText: null,
+      homeIsAthlete: null,
+      finalScore: null,
+    };
+  }
+}
+
 export function UploadButton(props: Props) {
   const normalized = useMemo(() => {
     if (isOldStyle(props)) {
@@ -134,7 +210,9 @@ export function UploadButton(props: Props) {
 
   const { localUri, sidecar, uploaded, onUploaded } = normalized;
 
-  const [state, setState] = useState<"idle" | "uploading" | "done">(uploaded ? "done" : "idle");
+  const [state, setState] = useState<"idle" | "uploading" | "done">(
+    uploaded ? "done" : "idle"
+  );
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
@@ -149,7 +227,6 @@ export function UploadButton(props: Props) {
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <Pressable
         onPress={async (e: any) => {
-          // prevent parent row Pressable from stealing the tap
           e?.stopPropagation?.();
 
           setError(undefined);
@@ -173,7 +250,9 @@ export function UploadButton(props: Props) {
             // -----------------------------
             const creds1: any = await testGetUploadUrl();
             if (!creds1?.uploadUrl || !creds1?.uploadAuthToken) {
-              throw new Error(`testGetUploadUrl missing creds1: ${JSON.stringify(creds1)}`);
+              throw new Error(
+                `testGetUploadUrl missing creds1: ${JSON.stringify(creds1)}`
+              );
             }
 
             const videoUpload = await uploadVideoToB2({
@@ -189,12 +268,11 @@ export function UploadButton(props: Props) {
             const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
 
             // -----------------------------
-            // 2) Upload SIDECAR JSON (optional)
+            // 2) Load + upload SIDECAR JSON (optional)
             // -----------------------------
             let b2SidecarKey: string | null = null;
             let b2SidecarFileId: string | null = null;
 
-            // Prefer actual sidecar file on disk; fallback to passed sidecar prop
             let fullSidecar = await readSidecarForUpload(localUri);
             if (!fullSidecar && sidecar && typeof sidecar === "object") {
               fullSidecar = sidecar as any;
@@ -220,7 +298,9 @@ export function UploadButton(props: Props) {
 
               const creds2: any = await testGetUploadUrl();
               if (!creds2?.uploadUrl || !creds2?.uploadAuthToken) {
-                throw new Error(`testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`);
+                throw new Error(
+                  `testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`
+                );
               }
 
               const sidecarUpload = await uploadVideoToB2({
@@ -237,29 +317,61 @@ export function UploadButton(props: Props) {
             }
 
             // -----------------------------
-            // 3) Write Firestore metadata  ✅ FIXED
+            // 3) Write Firestore metadata
             // -----------------------------
             try {
               const db = getFirestore(app);
 
-              // what the user would expect to see as a title (stable, readable)
-              const localName = fileNameFromUri(localUri); // like "IMG_1234.mp4" or whatever
+              const localName = fileNameFromUri(localUri);
               const fallbackTitle = stripExt(localName);
 
-              // pull useful display fields from sidecar if available
               const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
               const sport = safeString(fullSidecar?.sport, "unknown");
+              const style = safeString(fullSidecar?.style, "");
+              const sportStyle =
+                style && style !== "unknown" ? `${sport}-${style}` : sport;
 
-              // if you already store a title in sidecar, use it; otherwise fallback to local filename
-              const title = safeString(fullSidecar?.displayName ?? fullSidecar?.title, fallbackTitle);
+              // Prefer sidecar-provided title/displayName if present
+              let title = safeString(
+                fullSidecar?.displayName ?? fullSidecar?.title,
+                ""
+              );
 
-              const docData = {
+              // If missing, generate a pretty title (so it doesn't fall back to filename)
+              if (!title) {
+                const createdMs =
+                  typeof fullSidecar?.createdAt === "number"
+                    ? fullSidecar.createdAt
+                    : now;
+
+                const d = new Date(createdMs);
+                const datePart = d.toLocaleDateString([], {
+                  month: "short",
+                  day: "numeric",
+                });
+                const timePart = d.toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+
+                title = `${athleteName} • ${sportStyle} • ${datePart} at ${timePart}`;
+              }
+
+              // Final fallback (rare)
+              if (!title.trim()) title = fallbackTitle;
+
+              // ✅ derive score + result from sidecar
+              const scoreBits = computeScoreBits(fullSidecar);
+
+              const docData: any = {
                 ownerUid: user.uid,
 
-                // ✅ display fields (THIS is why your web names were “wrong”)
+                // display fields
                 title,
                 athleteName,
                 sport,
+                style: style || null,
+                sportStyle: sportStyle || null,
                 originalFileName: localName,
 
                 // timestamps
@@ -276,12 +388,25 @@ export function UploadButton(props: Props) {
 
                 shareId,
                 isPublic: true,
+
+                // ✅ fields web can use for the score pill
+                result: scoreBits.result,
+                scoreFor: scoreBits.scoreFor,
+                scoreAgainst: scoreBits.scoreAgainst,
+                scoreText: scoreBits.scoreText,
+
+                // optional: keep raw score info
+                homeIsAthlete: scoreBits.homeIsAthlete,
+                finalScore: scoreBits.finalScore,
               };
 
               const ref = await addDoc(collection(db, "videos"), docData);
               console.log("[UploadButton] created VideoDoc:", ref.id, docData);
             } catch (metaErr) {
-              console.warn("[UploadButton] upload succeeded but metadata write failed:", metaErr);
+              console.warn(
+                "[UploadButton] upload succeeded but metadata write failed:",
+                metaErr
+              );
             }
 
             setState("done");
@@ -290,7 +415,10 @@ export function UploadButton(props: Props) {
             console.log("UploadButton(B2) error", err);
             setError(err?.message ?? "Upload failed");
             setState("idle");
-            Alert.alert("Upload failed", err?.message ?? "Please try again while online.");
+            Alert.alert(
+              "Upload failed",
+              err?.message ?? "Please try again while online."
+            );
           }
         }}
         style={{

@@ -18,46 +18,23 @@ const THEME = {
 
   card: "rounded-3xl border border-white/10 bg-white/5",
   cardSoft: "rounded-2xl border border-white/10 bg-black/20",
-  input:
-    "h-10 rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-white/25",
-  select:
-    "h-10 rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-white/25",
+  input: "h-10 rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-white/25",
+  select: "h-10 rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-white/25",
   buttonPrimary: "rounded-xl bg-white text-black px-5 py-3 text-sm font-semibold hover:bg-white/90",
   pill: "text-xs rounded-full border border-white/10 bg-black/30 px-2 py-0.5 text-white/70",
 };
 
 function accentClasses(accent: typeof THEME.accent) {
-  // Tailwind must see explicit strings here.
   switch (accent) {
     case "cyan":
-      return {
-        bar: "bg-cyan-400/80",
-        ring: "ring-cyan-400/30",
-        glow: "shadow-cyan-500/20",
-        chip: "border-cyan-400/20 text-cyan-200",
-      };
+      return { bar: "bg-cyan-400/80", ring: "ring-cyan-400/30", glow: "shadow-cyan-500/20", chip: "border-cyan-400/20 text-cyan-200" };
     case "violet":
-      return {
-        bar: "bg-violet-400/80",
-        ring: "ring-violet-400/30",
-        glow: "shadow-violet-500/20",
-        chip: "border-violet-400/20 text-violet-200",
-      };
+      return { bar: "bg-violet-400/80", ring: "ring-violet-400/30", glow: "shadow-violet-500/20", chip: "border-violet-400/20 text-violet-200" };
     case "amber":
-      return {
-        bar: "bg-amber-300/80",
-        ring: "ring-amber-300/30",
-        glow: "shadow-amber-400/20",
-        chip: "border-amber-300/20 text-amber-100",
-      };
+      return { bar: "bg-amber-300/80", ring: "ring-amber-300/30", glow: "shadow-amber-400/20", chip: "border-amber-300/20 text-amber-100" };
     case "lime":
     default:
-      return {
-        bar: "bg-lime-400/80",
-        ring: "ring-lime-400/30",
-        glow: "shadow-lime-500/20",
-        chip: "border-lime-400/20 text-lime-200",
-      };
+      return { bar: "bg-lime-400/80", ring: "ring-lime-400/30", glow: "shadow-lime-500/20", chip: "border-lime-400/20 text-lime-200" };
   }
 }
 
@@ -72,19 +49,26 @@ type VideoDoc = {
 
   sport?: string | null;
   style?: string | null;
+  sportStyle?: string | null;
 
   athleteId?: string | null;
   athleteName?: string | null;
   athlete?: string | null;
 
+  // Score/result fields
+  result?: "W" | "L" | "T" | string | null;
+  scoreFor?: number | null;
+  scoreAgainst?: number | null;
+  scoreText?: string | null;
+
   isPublic?: boolean;
 
-  // B2 era
+  // B2
   b2VideoKey?: string;
   b2SidecarKey?: string;
   b2Bucket?: string;
 
-  // Other era
+  // Other eras
   storageKey?: string;
   sidecarRef?: string;
 
@@ -94,23 +78,38 @@ type VideoDoc = {
   bytes?: number;
 
   title?: string;
+  originalFileName?: string;
 };
 
 // =====================
-// Helpers (keep stable)
+// Helpers
 // =====================
 function formatCreatedAt(createdAt: VideoDoc["createdAt"]) {
   try {
     if (!createdAt) return "—";
     if (createdAt instanceof Timestamp) return createdAt.toDate().toLocaleString();
-    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt) {
-      return new Date((createdAt as any).seconds * 1000).toLocaleString();
-    }
+    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt) return new Date((createdAt as any).seconds * 1000).toLocaleString();
     if (typeof createdAt === "number") return new Date(createdAt).toLocaleString();
     if (typeof createdAt === "string") return new Date(createdAt).toLocaleString();
     return "—";
   } catch {
     return "—";
+  }
+}
+
+function toDateMaybe(createdAt: VideoDoc["createdAt"]): Date | null {
+  try {
+    if (!createdAt) return null;
+    if (createdAt instanceof Timestamp) return createdAt.toDate();
+    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt) return new Date((createdAt as any).seconds * 1000);
+    if (typeof createdAt === "number") return new Date(createdAt);
+    if (typeof createdAt === "string") {
+      const d = new Date(createdAt);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -127,13 +126,51 @@ function getAthleteLabel(v: VideoDoc) {
   return (v.athleteName ?? v.athlete ?? "Unassigned") || "Unassigned";
 }
 
+function looksLikeFilenameTitle(t: string) {
+  const s = t.trim().toLowerCase();
+  // examples: "match_20260108_211125", "match_20260108_195215.mp4"
+  if (s.startsWith("match_")) return true;
+  // also treat raw file names as "bad titles"
+  if (s.endsWith(".mp4") || s.endsWith(".mov") || s.endsWith(".m4v")) return true;
+  return false;
+}
+
+function makePrettyTitle(v: VideoDoc, fallbackId: string) {
+  const athlete = getAthleteLabel(v);
+  const sportStyle = (v.sportStyle ?? v.sport ?? "unknown").toString().trim() || "unknown";
+
+  const d = toDateMaybe(v.createdAt);
+  if (!d) return `${athlete} • ${sportStyle} • ${fallbackId}`;
+
+  const datePart = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  const timePart = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  return `${athlete} • ${sportStyle} • ${datePart} at ${timePart}`;
+}
+
+function getTitleLabel(v: VideoDoc, fallbackId: string) {
+  const t = (v.title ?? "").trim();
+  // ✅ If title exists and looks good, use it.
+  if (t && !looksLikeFilenameTitle(t)) return t;
+
+  // ✅ If title is missing or looks like a filename, generate a pretty one.
+  const generated = makePrettyTitle(v, fallbackId);
+  if (generated.trim()) return generated;
+
+  // fallback: originalFileName without extension
+  const of = v.originalFileName ? String(v.originalFileName) : "";
+  const of2 = of.replace(/\.[^.]+$/, "");
+  if (of2.trim()) return of2.trim();
+
+  return (v.shareId ?? fallbackId) || fallbackId;
+}
+
 function getPlayableLabel(v: VideoDoc) {
   const key = v.b2VideoKey || v.storageKey || v.url || v.storagePath || "—";
   return String(key);
 }
 
 function hasPlayablePointer(v: VideoDoc) {
-  // pointer exists (not guarantee file exists, but helps hide obvious broken docs)
   return Boolean(v.url || v.b2VideoKey || v.storageKey);
 }
 
@@ -141,6 +178,37 @@ function isMissingFromB2(playErr: string | null) {
   if (!playErr) return false;
   const s = playErr.toLowerCase();
   return s.includes("missing from backblaze") || s.includes("not found") || s.includes("404");
+}
+
+// Score pill helpers
+function getScoreDisplay(v: VideoDoc): { text: string; tone: "win" | "loss" | "tie" } | null {
+  const scoreText = (v.scoreText ?? "").trim();
+  const resultRaw = (v.result ?? "").toString().trim().toUpperCase();
+
+  if (scoreText) {
+    const tone: "win" | "loss" | "tie" =
+      scoreText.toUpperCase().startsWith("W") ? "win" : scoreText.toUpperCase().startsWith("L") ? "loss" : "tie";
+    return { text: scoreText, tone };
+  }
+
+  if (resultRaw && v.scoreFor != null && v.scoreAgainst != null) {
+    const tone: "win" | "loss" | "tie" = resultRaw === "W" ? "win" : resultRaw === "L" ? "loss" : "tie";
+    return { text: `${resultRaw} ${v.scoreFor}–${v.scoreAgainst}`, tone };
+  }
+
+  return null;
+}
+
+function scorePillClasses(tone: "win" | "loss" | "tie") {
+  switch (tone) {
+    case "win":
+      return "border-emerald-400/30 bg-emerald-400/10 text-emerald-100";
+    case "loss":
+      return "border-red-500/35 bg-red-500/10 text-red-200";
+    case "tie":
+    default:
+      return "border-amber-300/30 bg-amber-300/10 text-amber-100";
+  }
 }
 
 // =====================
@@ -168,7 +236,6 @@ export default function Page() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Auth state
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -177,12 +244,10 @@ export default function Page() {
     return () => unsub();
   }, []);
 
-  // Redirect only after auth is known
   useEffect(() => {
     if (authReady && !user) router.replace("/login");
   }, [authReady, user, router]);
 
-  // Firestore subscription
   useEffect(() => {
     if (!user) {
       setVideos([]);
@@ -200,7 +265,6 @@ export default function Page() {
         const next = snap.docs.map((d) => ({ id: d.id, data: d.data() as VideoDoc }));
         setVideos(next);
 
-        // Default selection: first playable pointer if possible
         if (!selectedId && next.length > 0) {
           const firstPlayable = next.find((x) => hasPlayablePointer(x.data)) ?? next[0];
           setSelectedId(firstPlayable.id);
@@ -216,7 +280,6 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Filters
   const sportOptions = useMemo(() => {
     const set = new Set<string>();
     for (const v of videos) {
@@ -247,21 +310,19 @@ export default function Page() {
       const matchesAthlete = athleteFilter === "all" ? true : athlete === athleteFilter;
       const matchesMissing = showMissing ? true : hasPlayablePointer(data);
 
-      const hay = `${shareId} ${sport} ${data.style ?? ""} ${athlete} ${getPlayableLabel(data)}`.toLowerCase();
+      const hay = `${shareId} ${sport} ${data.style ?? ""} ${data.sportStyle ?? ""} ${athlete} ${getPlayableLabel(data)}`.toLowerCase();
       const matchesSearch = q.length === 0 ? true : hay.includes(q);
 
       return matchesSport && matchesAthlete && matchesMissing && matchesSearch;
     });
   }, [videos, search, sportFilter, athleteFilter, showMissing]);
 
-  // Playback
   async function playVideo(doc: VideoDoc, idForSelection?: string) {
     setPlayErr(null);
     setLoadingPlay(true);
     setSelectedUrl(null);
 
     try {
-      // Firebase Storage era
       if (doc.url) {
         if (idForSelection) setSelectedId(idForSelection);
         setSelectedDoc(doc);
@@ -276,7 +337,6 @@ export default function Page() {
         return;
       }
 
-      // B2 era
       const key = doc.b2VideoKey || doc.storageKey;
       if (!key) {
         setPlayErr("This clip record has no playable pointer (url / b2VideoKey / storageKey).");
@@ -323,13 +383,11 @@ export default function Page() {
   }
 
   function onVideoError() {
-    // This is “video element couldn’t load / decode”. Usually codec or the file is missing/blocked.
     setPlayErr(
       "This clip can’t be played in this browser (codec not supported) OR the file couldn’t be loaded. If only one clip fails, it’s likely that specific file is missing or encoded differently."
     );
   }
 
-  // Loading / redirect shells
   if (!authReady) {
     return (
       <main className={THEME.page + " p-8"}>
@@ -350,7 +408,6 @@ export default function Page() {
 
   return (
     <main className={THEME.page}>
-      {/* Top bar */}
       <div className={THEME.topbar}>
         <div className={THEME.container + " py-5 flex items-start justify-between"}>
           <div>
@@ -367,7 +424,6 @@ export default function Page() {
 
       <div className={THEME.container + " py-8"}>
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* LEFT: Player */}
           <div className="lg:sticky lg:top-28">
             <div className={THEME.card + " p-6"}>
               <div className="flex items-start justify-between gap-4">
@@ -440,7 +496,6 @@ export default function Page() {
             </div>
           </div>
 
-          {/* RIGHT: Library */}
           <div className={THEME.card + " p-6"}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -494,6 +549,7 @@ export default function Page() {
               {filteredVideos.map(({ id, data }) => {
                 const isSelected = selectedId === id;
                 const missingPointer = !hasPlayablePointer(data);
+                const score = getScoreDisplay(data);
 
                 return (
                   <button
@@ -507,7 +563,6 @@ export default function Page() {
                         : "border-white/10 bg-black/20 hover:bg-black/30 hover:border-white/15",
                     ].join(" ")}
                   >
-                    {/* Accent bar (YouTube-ish selected feel) */}
                     <div
                       className={[
                         "absolute left-0 top-0 h-full w-1 rounded-l-2xl transition-opacity",
@@ -519,11 +574,16 @@ export default function Page() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <div className="text-base font-semibold truncate">{data.shareId ?? id}</div>
+                          <div className="text-base font-semibold truncate">{getTitleLabel(data, id)}</div>
 
                           <div className={THEME.pill}>{prettySport(data.sport)}</div>
-
                           <div className={THEME.pill}>{getAthleteLabel(data)}</div>
+
+                          {score && (
+                            <div className={["text-xs rounded-full border px-2 py-0.5 font-extrabold", scorePillClasses(score.tone)].join(" ")}>
+                              {score.text}
+                            </div>
+                          )}
 
                           {missingPointer && (
                             <div className="text-xs rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-red-200">
@@ -532,8 +592,8 @@ export default function Page() {
                           )}
                         </div>
 
+                        <div className="mt-1 text-xs text-white/50">shareId: {data.shareId ?? id}</div>
                         <div className="mt-1 text-sm text-white/60">{formatCreatedAt(data.createdAt)}</div>
-
                         <div className="mt-2 text-xs text-white/40 break-all">{getPlayableLabel(data)}</div>
                       </div>
 
