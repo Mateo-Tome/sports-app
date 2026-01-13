@@ -2,6 +2,7 @@
 // Node 18/20+ compatible
 
 const { onRequest } = require('firebase-functions/v2/https');
+const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const cors = require('cors');
@@ -35,25 +36,16 @@ function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
   )}`;
 }
 
-// ✅ NEW: Build Cloudflare CDN URL for a B2 object key like "videos/<uid>/<file>.mp4"
+// ✅ Build Cloudflare CDN URL for a B2 object key like "videos/<uid>/<file>.mp4"
 function buildCdnUrl(fileKey, b2DownloadAuthToken) {
   const CDN_BASE = 'https://media.quickclipapp.com';
-
-  // fileKey already looks like: videos/.../file.mp4
-  // Keep the path as-is, only ensure no leading slash
   const path = String(fileKey || '').replace(/^\/+/, '');
-
-  // Token gets appended as query param (Worker reads it and adds B2 Authorization header)
   return `${CDN_BASE}/${path}?token=${encodeURIComponent(b2DownloadAuthToken)}`;
 }
 
 /**
  * Shared helper: authorize B2 + create a short-lived download authorization token.
  * Returns { downloadUrl, downloadAuthToken, expiresInSec }
- *
- * This token can be scoped to:
- * - 'videos/' (broad)
- * - or 'videos/<uid>/<file>' (single file) depending on prefix passed
  */
 async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
   const B2_KEY_ID = clean(process.env.B2_KEY_ID);
@@ -135,15 +127,41 @@ async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
 }
 
 /**
- * ✅ UPDATED: returns Cloudflare CDN URLs for mp4 + json (public share flow)
+ * ✅ NEW: Keep shareIndex/{shareId} synced with videos/{videoId}
+ * This fixes "Share not found" permanently.
  *
- * Your app overlays/event belt continue to work because the app still loads:
- * - videoUrl (mp4)
- * - sidecarUrl (json)
- *
- * Now both are served via Cloudflare:
- *   https://media.quickclipapp.com/videos/...mp4?token=...
- *   https://media.quickclipapp.com/videos/...json?token=...
+ * When a video doc has:
+ *   shareId: "ABC123"
+ * This will ensure:
+ *   shareIndex/ABC123 { videoId, isPublic, ownerUid }
+ */
+exports.syncShareIndex = onDocumentWritten('videos/{videoId}', async (event) => {
+  try {
+    const after = event.data?.after;
+    if (!after || !after.exists) return;
+
+    const v = after.data() || {};
+    const shareId = (v.shareId || '').toString().trim();
+    if (!shareId) return;
+
+    const videoId = event.params.videoId;
+
+    await admin.firestore().doc(`shareIndex/${shareId}`).set(
+      {
+        videoId,
+        isPublic: v.isPublic === true,
+        ownerUid: v.ownerUid || null,
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
+  } catch (e) {
+    console.error('[syncShareIndex] failed:', e);
+  }
+});
+
+/**
+ * ✅ returns Cloudflare CDN URLs for mp4 + json (public share flow)
  */
 exports.getPlaybackUrls = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
@@ -207,9 +225,7 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
 });
 
 /**
- * Existing: Proxy the sidecar JSON to avoid browser CORS issues.
- * (You may not need this anymore if your Worker sets CORS headers for JSON too,
- * but keeping it won’t hurt.)
+ * Proxy the sidecar JSON (public share flow) to avoid browser CORS issues.
  */
 exports.getSidecar = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
@@ -260,15 +276,7 @@ exports.getSidecar = onRequest(async (req, res) => {
 });
 
 /**
- * NEW (owner playback for CDN): return a short-lived B2 download auth token for ONE file path
- *
- * Worker/App calls:
- *   GET /getB2DownloadAuthForPath?path=videos/<uid>/<file>
- * with header:
- *   Authorization: Bearer <Firebase ID token>
- *
- * Returns:
- *   { downloadUrl, bucketName, authToken, expiresInSec }
+ * Owner playback helper: return a short-lived B2 download auth token for ONE file path
  */
 exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {

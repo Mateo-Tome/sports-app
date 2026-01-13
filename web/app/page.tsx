@@ -3,8 +3,11 @@
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { collection, onSnapshot, orderBy, query, Timestamp, where } from "firebase/firestore";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { auth, db } from "../lib/firebase";
+
+import WebPlayback from "../components/web/WebPlayback";
+import { getPlaybackUrlsWeb } from "../lib/getPlaybackUrlsWeb";
 
 // =====================
 // THEME (edit in 1 place)
@@ -88,7 +91,8 @@ function formatCreatedAt(createdAt: VideoDoc["createdAt"]) {
   try {
     if (!createdAt) return "—";
     if (createdAt instanceof Timestamp) return createdAt.toDate().toLocaleString();
-    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt) return new Date((createdAt as any).seconds * 1000).toLocaleString();
+    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt)
+      return new Date((createdAt as any).seconds * 1000).toLocaleString();
     if (typeof createdAt === "number") return new Date(createdAt).toLocaleString();
     if (typeof createdAt === "string") return new Date(createdAt).toLocaleString();
     return "—";
@@ -101,7 +105,8 @@ function toDateMaybe(createdAt: VideoDoc["createdAt"]): Date | null {
   try {
     if (!createdAt) return null;
     if (createdAt instanceof Timestamp) return createdAt.toDate();
-    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt) return new Date((createdAt as any).seconds * 1000);
+    if (typeof createdAt === "object" && createdAt && "seconds" in createdAt)
+      return new Date((createdAt as any).seconds * 1000);
     if (typeof createdAt === "number") return new Date(createdAt);
     if (typeof createdAt === "string") {
       const d = new Date(createdAt);
@@ -128,9 +133,7 @@ function getAthleteLabel(v: VideoDoc) {
 
 function looksLikeFilenameTitle(t: string) {
   const s = t.trim().toLowerCase();
-  // examples: "match_20260108_211125", "match_20260108_195215.mp4"
   if (s.startsWith("match_")) return true;
-  // also treat raw file names as "bad titles"
   if (s.endsWith(".mp4") || s.endsWith(".mov") || s.endsWith(".m4v")) return true;
   return false;
 }
@@ -150,14 +153,11 @@ function makePrettyTitle(v: VideoDoc, fallbackId: string) {
 
 function getTitleLabel(v: VideoDoc, fallbackId: string) {
   const t = (v.title ?? "").trim();
-  // ✅ If title exists and looks good, use it.
   if (t && !looksLikeFilenameTitle(t)) return t;
 
-  // ✅ If title is missing or looks like a filename, generate a pretty one.
   const generated = makePrettyTitle(v, fallbackId);
   if (generated.trim()) return generated;
 
-  // fallback: originalFileName without extension
   const of = v.originalFileName ? String(v.originalFileName) : "";
   const of2 = of.replace(/\.[^.]+$/, "");
   if (of2.trim()) return of2.trim();
@@ -226,6 +226,8 @@ export default function Page() {
   const [selectedDoc, setSelectedDoc] = useState<VideoDoc | null>(null);
 
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
+  const [selectedSidecarUrl, setSelectedSidecarUrl] = useState<string | null>(null);
+
   const [loadingPlay, setLoadingPlay] = useState(false);
   const [playErr, setPlayErr] = useState<string | null>(null);
 
@@ -233,8 +235,6 @@ export default function Page() {
   const [sportFilter, setSportFilter] = useState<string>("all");
   const [athleteFilter, setAthleteFilter] = useState<string>("all");
   const [showMissing, setShowMissing] = useState(false);
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -254,6 +254,7 @@ export default function Page() {
       setSelectedId(null);
       setSelectedDoc(null);
       setSelectedUrl(null);
+      setSelectedSidecarUrl(null);
       return;
     }
 
@@ -279,6 +280,16 @@ export default function Page() {
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // When selectedDoc changes (auto-select on load), attempt to load its URL automatically
+  useEffect(() => {
+    if (!selectedDoc) return;
+    if (!selectedId) return;
+    if (selectedUrl) return;
+
+    playVideo(selectedDoc, selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDoc, selectedId]);
 
   const sportOptions = useMemo(() => {
     const set = new Set<string>();
@@ -321,43 +332,52 @@ export default function Page() {
     setPlayErr(null);
     setLoadingPlay(true);
     setSelectedUrl(null);
+    setSelectedSidecarUrl(null);
 
     try {
+      // 1) Docs with direct URL
       if (doc.url) {
         if (idForSelection) setSelectedId(idForSelection);
         setSelectedDoc(doc);
         setSelectedUrl(doc.url);
-
-        setTimeout(() => {
-          try {
-            videoRef.current?.play?.();
-          } catch {}
-        }, 50);
-
+        setSelectedSidecarUrl(null);
         return;
       }
 
+      const shareId = doc.shareId ?? idForSelection ?? "";
+
+      // 2) Try public shareIndex -> Cloud Run (only if marked public)
+      const shouldUseShareIndex = Boolean(doc.isPublic === true && shareId);
+
+      if (shouldUseShareIndex) {
+        try {
+          const urls = await getPlaybackUrlsWeb(shareId);
+
+          if (idForSelection) setSelectedId(idForSelection);
+          setSelectedDoc(doc);
+          setSelectedUrl(urls.videoUrl);
+          setSelectedSidecarUrl(urls.sidecarUrl ?? null);
+          return;
+        } catch (e: any) {
+          const msg = String(e?.message ?? e);
+          console.warn("[playVideo] shareIndex lookup failed, falling back:", msg);
+        }
+      }
+
+      // 3) Owner fallback: signed mp4 from your Next API using b2VideoKey/storageKey
       const key = doc.b2VideoKey || doc.storageKey;
       if (!key) {
-        setPlayErr("This clip record has no playable pointer (url / b2VideoKey / storageKey).");
+        setPlayErr("No playable pointer (b2VideoKey / storageKey / url).");
         return;
       }
 
       const res = await fetch(`/api/b2-play-url?fileName=${encodeURIComponent(key)}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         const detailStr = typeof data?.detail === "string" ? data.detail : JSON.stringify(data?.detail ?? "");
         const combined = `${data?.error ?? "Failed to get play URL"}${detailStr ? `: ${detailStr}` : ""}`;
-
-        const lower = combined.toLowerCase();
-        if (lower.includes("not found") || lower.includes("404")) {
-          setPlayErr("This clip record exists, but the video file is missing from Backblaze.");
-        } else if (lower.includes("expired_auth_token") || lower.includes("401")) {
-          setPlayErr("Backblaze auth token expired. Click Play again to generate a fresh URL.");
-        } else {
-          setPlayErr(combined);
-        }
+        setPlayErr(combined);
         return;
       }
 
@@ -366,26 +386,21 @@ export default function Page() {
         return;
       }
 
+      // ✅ ALSO load sidecar via same-origin proxy (avoids B2 CORS)
+      const sidecarKey = doc.b2SidecarKey;
+      const sidecarProxyUrl = sidecarKey
+        ? `/api/b2-sidecar?fileName=${encodeURIComponent(sidecarKey)}`
+        : null;
+
       if (idForSelection) setSelectedId(idForSelection);
       setSelectedDoc(doc);
       setSelectedUrl(data.url);
-
-      setTimeout(() => {
-        try {
-          videoRef.current?.play?.();
-        } catch {}
-      }, 50);
+      setSelectedSidecarUrl(sidecarProxyUrl);
     } catch (e: any) {
       setPlayErr(String(e?.message ?? e));
     } finally {
       setLoadingPlay(false);
     }
-  }
-
-  function onVideoError() {
-    setPlayErr(
-      "This clip can’t be played in this browser (codec not supported) OR the file couldn’t be loaded. If only one clip fails, it’s likely that specific file is missing or encoded differently."
-    );
   }
 
   if (!authReady) {
@@ -441,31 +456,8 @@ export default function Page() {
                 ) : null}
               </div>
 
-              <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black">
-                <div className="relative aspect-video w-full">
-                  {selectedUrl ? (
-                    <video
-                      ref={videoRef}
-                      className="absolute inset-0 h-full w-full"
-                      controls
-                      playsInline
-                      src={selectedUrl}
-                      onError={onVideoError}
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-white/50">
-                      {videos.length === 0 ? "No videos yet" : "Select a video to play"}
-                    </div>
-                  )}
-
-                  {loadingPlay && (
-                    <div className="absolute inset-0 grid place-items-center bg-black/60 text-white">
-                      <div className={"rounded-2xl px-4 py-2 bg-black/60 border border-white/10 ring-1 " + A.ring}>
-                        Loading…
-                      </div>
-                    </div>
-                  )}
-                </div>
+              <div className="mt-5">
+                <WebPlayback videoUrl={selectedUrl} sidecarUrl={selectedSidecarUrl} doc={selectedDoc} />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
@@ -483,16 +475,16 @@ export default function Page() {
                 <div
                   className={[
                     "mt-4 rounded-xl border p-3 text-sm",
-                    isMissingFromB2(playErr) ? "border-amber-400/30 bg-amber-400/10 text-amber-100" : "border-red-500/40 bg-red-500/10 text-red-200",
+                    isMissingFromB2(playErr)
+                      ? "border-amber-400/30 bg-amber-400/10 text-amber-100"
+                      : "border-red-500/40 bg-red-500/10 text-red-200",
                   ].join(" ")}
                 >
                   {playErr}
                 </div>
               )}
 
-              <div className="mt-4 text-xs text-white/45">
-                Next: load the clip’s sidecar/events and render the QuickClip overlay + event belt.
-              </div>
+              {loadingPlay && <div className="mt-3 text-xs text-white/60">Loading playback URLs…</div>}
             </div>
           </div>
 
@@ -580,7 +572,11 @@ export default function Page() {
                           <div className={THEME.pill}>{getAthleteLabel(data)}</div>
 
                           {score && (
-                            <div className={["text-xs rounded-full border px-2 py-0.5 font-extrabold", scorePillClasses(score.tone)].join(" ")}>
+                            <div
+                              className={["text-xs rounded-full border px-2 py-0.5 font-extrabold", scorePillClasses(score.tone)].join(
+                                " "
+                              )}
+                            >
                               {score.text}
                             </div>
                           )}
@@ -605,9 +601,7 @@ export default function Page() {
                 );
               })}
 
-              {videos.length === 0 && (
-                <div className={THEME.cardSoft + " p-5 text-white/60 text-sm"}>No videos found for this user yet.</div>
-              )}
+              {videos.length === 0 && <div className={THEME.cardSoft + " p-5 text-white/60 text-sm"}>No videos found for this user yet.</div>}
 
               {videos.length > 0 && filteredVideos.length === 0 && (
                 <div className={THEME.cardSoft + " p-5 text-white/60 text-sm"}>

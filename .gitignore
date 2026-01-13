@@ -56,3 +56,4 @@ functions/.env.*
 # Optional: keep local-only env variants ignored too
 .env*.local
 **/.env*.local
+functions/serviceAccountKey.json
