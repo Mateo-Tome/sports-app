@@ -7,13 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   DeviceEventEmitter,
@@ -33,6 +27,12 @@ import EditAthleteModal from '../../components/library/EditAthleteModal';
 import EditTitleModal from '../../components/library/EditTitleModal';
 import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
 
+// ✅ top toggle UI (Local / Cloud)
+import LibraryDataSourceToggle from '../../components/library/LibraryDataSourceToggle';
+
+// ✅ data-source logic (local vs cloud) + cloud playback routing
+import { useLibraryDataSource } from '../../src/hooks/library/useLibraryDataSource';
+
 import {
   readIndex,
   writeIndexAtomic,
@@ -47,14 +47,8 @@ import {
   thumbPathFor,
 } from '../../lib/library/thumbs';
 
-// ✅ NEW: move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
+// ✅ move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
 import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
-
-// ✅ NEW: tiny helper so this file doesn't keep growing
-import { pushPlayback } from '../../src/hooks/navigation/pushPlayback';
-
-// (still here, unused for now)
-import { fetchMyVideos } from '../../lib/videos';
 
 const ATHLETES_KEY = 'athletes:list';
 const UPLOADED_MAP_KEY = 'uploaded:map';
@@ -113,11 +107,6 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
-  // Cloud videos from Firestore for this user (still unused)
-  const [cloudVideos, setCloudVideos] = useState<
-    { id: string; storageKey: string; sidecarRef?: string; createdAt: number; shareId: string }[]
-  >([]);
-
   // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
 
@@ -128,16 +117,24 @@ export default function LibraryScreen() {
 
   const loadingRef = useRef(false);
 
-  // keep a ref of rows for lazy thumb generation to access assetId
+  // ✅ local vs cloud rows + playback routing for both
+  const {
+    dataSource,
+    setDataSource,
+    sourceRows,
+    cloudCount,
+    routerPushPlayback,
+  } = useLibraryDataSource(router as any, rows);
+
+  // keep a ref of *source* rows for lazy thumb generation to access assetId
   const rowsRef = useRef<Row[]>([]);
   useEffect(() => {
-    rowsRef.current = rows;
-  }, [rows]);
+    rowsRef.current = sourceRows as any;
+  }, [sourceRows]);
 
   // ---------------- LEGACY (fallback) LOADER ----------------
   // If buildLibraryRows() ever throws, we fall back to your original behavior
   const legacyLoad = useCallback(async () => {
-    // ---------- build 1 row ----------
     const buildRow = async (meta: IndexMeta, eagerThumb: boolean) => {
       const info: any = await FileSystem.getInfoAsync(meta.uri);
       if (!info?.exists) return null;
@@ -239,19 +236,6 @@ export default function LibraryScreen() {
     }, [load]),
   );
 
-  // ----- TEMP: load cloud videos from Firestore (for future use) -----
-  useEffect(() => {
-    (async () => {
-      try {
-        const vids = await fetchMyVideos();
-        console.log('🔥 fetchMyVideos ->', vids);
-        setCloudVideos(vids);
-      } catch (e) {
-        console.log('fetchMyVideos error', e);
-      }
-    })();
-  }, []);
-
   // ----- FAST PATH: patch row when sidecarUpdated (just re-read outcome) ---
   const patchRowFromSidecarPayload = useCallback(async (uri: string) => {
     const b = await readOutcomeFor(uri);
@@ -300,6 +284,15 @@ export default function LibraryScreen() {
     async (row: Row) => {
       await enqueueFs(async () => {
         try {
+          // ✅ never delete "cloud:" rows from filesystem
+          if (String(row.uri).startsWith('cloud:')) {
+            Alert.alert(
+              'Cloud clip',
+              'This is a cloud clip. Delete it from your cloud library later.',
+            );
+            return;
+          }
+
           // delete the video file
           try {
             await FileSystem.deleteAsync(row.uri, { idempotent: true });
@@ -336,7 +329,6 @@ export default function LibraryScreen() {
     [load],
   );
 
-  // confirm-before-delete
   const confirmRemove = useCallback(
     (row: Row) => {
       Alert.alert(
@@ -361,24 +353,15 @@ export default function LibraryScreen() {
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  // playback nav
-  const routerPushPlayback = useCallback(
-    (row: Row) => {
-      pushPlayback(router, {
-        kind: 'local',
-        videoPath: row.uri,
-        athlete: row.athlete,
-        sport: row.sport,
-        displayName: row.displayName,
-      });
-    },
-    [router],
-  );
-
   // >>> define doEditAthlete used by the modal (FS-queued retag) <<<
   const doEditAthlete = useCallback(
     async (row: Row, newAthlete: string) => {
       try {
+        if (String(row.uri).startsWith('cloud:')) {
+          Alert.alert('Cloud clip', 'Retagging is local-only for now.');
+          return;
+        }
+
         await retagVideo(
           {
             uri: row.uri,
@@ -403,9 +386,11 @@ export default function LibraryScreen() {
     [load],
   );
 
-  // ====== GROUPINGS ======
+  // ====== GROUPINGS (✅ uses sourceRows so web cloud mode shows items) ======
   const { allRows, rowsByAthlete, rowsBySport, athleteSportsMap } = useMemo(() => {
-    const allRowsLocal: Row[] = [...rows].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+    const allRowsLocal: Row[] = [...(sourceRows as any as Row[])].sort(
+      (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
+    );
 
     const rowsByAthleteLocal: Record<string, Row[]> = {};
     const rowsBySportLocal: Record<string, Row[]> = {};
@@ -435,7 +420,7 @@ export default function LibraryScreen() {
       rowsBySport: rowsBySportLocal,
       athleteSportsMap: athleteSportsMapLocal,
     };
-  }, [rows]);
+  }, [sourceRows]);
 
   const photoFor = useCallback(
     (name: string) => athleteList.find((a) => a.name === name)?.photoUri ?? null,
@@ -446,7 +431,6 @@ export default function LibraryScreen() {
     setTitleEditRow(row);
   }, []);
 
-  // --- title edit helpers ---
   const closeTitleModal = useCallback(() => {
     setTitleEditRow(null);
   }, []);
@@ -454,6 +438,12 @@ export default function LibraryScreen() {
   const handleSubmitTitle = useCallback(
     async (newTitle: string) => {
       if (!titleEditRow) {
+        closeTitleModal();
+        return;
+      }
+
+      if (String(titleEditRow.uri).startsWith('cloud:')) {
+        Alert.alert('Cloud clip', 'Title edits are local-only for now.');
         closeTitleModal();
         return;
       }
@@ -481,7 +471,6 @@ export default function LibraryScreen() {
     [titleEditRow, closeTitleModal, load],
   );
 
-  // --- athlete edit helpers (wire to modal) ---
   const handlePressEditAthlete = useCallback((row: Row) => {
     setAthletePickerOpen(row);
   }, []);
@@ -528,7 +517,8 @@ export default function LibraryScreen() {
   // ====== row renderer ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
-      const uploaded = !!uploadedMap[keyFor(item)];
+      const isCloud = String(item.uri).startsWith('cloud:');
+      const uploaded = isCloud ? true : !!uploadedMap[keyFor(item)];
 
       return (
         <LibraryVideoRow
@@ -538,8 +528,16 @@ export default function LibraryScreen() {
           onPressDelete={() => confirmRemove(item)}
           onPressEditAthlete={() => handlePressEditAthlete(item)}
           onPressEditTitle={() => openEditName(item)}
-          onPressSaveToPhotos={() => saveToPhotos(item.uri)}
+          onPressSaveToPhotos={() => {
+            if (isCloud) {
+              Alert.alert('Cloud clip', 'Save to Photos is local-only for now.');
+              return;
+            }
+            saveToPhotos(item.uri);
+          }}
           onUploaded={(key, url) => {
+            if (isCloud) return;
+
             const mapKey = keyFor(item);
             setUploadedMap((prev) => {
               const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
@@ -561,13 +559,16 @@ export default function LibraryScreen() {
     ],
   );
 
-  // Lazy thumbnails for viewable rows (assetId-aware)
+  // Lazy thumbnails for viewable rows (assetId-aware) — ✅ skip cloud rows
   const thumbQueueRef = useRef<Set<string>>(new Set());
   const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
     const toFetch: string[] = [];
     changed.forEach((vt) => {
       const row = vt.item as Row;
       if (!row?.uri) return;
+
+      if (String(row.uri).startsWith('cloud:')) return;
+
       if (vt.isViewable && !row.thumbUri && !thumbQueueRef.current.has(row.uri)) {
         thumbQueueRef.current.add(row.uri);
         toFetch.push(row.uri);
@@ -602,6 +603,22 @@ export default function LibraryScreen() {
   // ====== UI ======
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
+      {/* ✅ FIX: Safe-area padded header so Local/Cloud toggle won't hide behind Dynamic Island */}
+      <View
+        style={{
+          paddingTop: Math.max(insets.top, 10),
+          paddingHorizontal: 12,
+          paddingBottom: 8,
+          backgroundColor: 'black',
+        }}
+      >
+        <LibraryDataSourceToggle
+          dataSource={dataSource}
+          onChange={setDataSource}
+          cloudCount={cloudCount}
+        />
+      </View>
+
       <LibraryGroupedViews
         view={view}
         setView={setView}

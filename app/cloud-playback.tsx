@@ -1,27 +1,56 @@
 // app/cloud-playback.tsx
 import { AVPlaybackStatus, ResizeMode, Video } from 'expo-av';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useRef, useState } from 'react';
-import {
-    Linking,
-    SafeAreaView,
-    Text,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Linking, SafeAreaView, Text, TouchableOpacity, View } from 'react-native';
+
+// ✅ Import the same API helper you already have
+import { getPlaybackUrls } from '../src/hooks/api/getPlaybackUrls';
 
 export default function CloudPlaybackScreen() {
-  const { uri, shareId } = useLocalSearchParams<{
+  const { uri: uriParam, shareId: shareIdParam } = useLocalSearchParams<{
     uri?: string;
     shareId?: string;
   }>();
 
+  const shareId = useMemo(() => (shareIdParam ? String(shareIdParam) : ''), [shareIdParam]);
+  const [uri, setUri] = useState<string | null>(uriParam ? String(uriParam) : null);
+
   const videoRef = useRef<Video | null>(null);
 
-  const [loadState, setLoadState] = useState<
-    'idle' | 'loading' | 'loaded' | 'error'
-  >('idle');
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  // ✅ If uri missing but shareId exists, resolve playable URL
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolve() {
+      if (uri) return;
+      if (!shareId) return;
+
+      setResolving(true);
+      setErrorMsg(null);
+
+      try {
+        const r = await getPlaybackUrls(shareId);
+        const videoUrl = String((r as any)?.videoUrl || '');
+        if (!videoUrl) throw new Error(`getPlaybackUrls returned no videoUrl for shareId=${shareId}`);
+
+        if (!cancelled) setUri(videoUrl);
+      } catch (e: any) {
+        if (!cancelled) setErrorMsg(String(e?.message || e));
+      } finally {
+        if (!cancelled) setResolving(false);
+      }
+    }
+
+    resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [shareId, uri]);
 
   if (!uri) {
     return (
@@ -31,11 +60,23 @@ export default function CloudPlaybackScreen() {
           backgroundColor: 'black',
           justifyContent: 'center',
           alignItems: 'center',
+          paddingHorizontal: 20,
         }}
       >
-        <Text style={{ color: 'white', marginBottom: 16 }}>
-          No cloud video URL provided.
+        <Text style={{ color: 'white', marginBottom: 10, textAlign: 'center' }}>
+          {resolving
+            ? 'Resolving cloud video URL…'
+            : shareId
+            ? 'No cloud video URL provided (trying shareId)…'
+            : 'No cloud video URL provided.'}
         </Text>
+
+        {!!errorMsg && (
+          <Text style={{ color: 'tomato', marginBottom: 16, textAlign: 'center' }}>
+            error: {errorMsg}
+          </Text>
+        )}
+
         <TouchableOpacity
           onPress={() => router.back()}
           style={{
@@ -77,47 +118,26 @@ export default function CloudPlaybackScreen() {
         </TouchableOpacity>
 
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text
-            style={{
-              color: 'white',
-              fontWeight: '800',
-              fontSize: 14,
-            }}
-            numberOfLines={1}
-          >
+          <Text style={{ color: 'white', fontWeight: '800', fontSize: 14 }} numberOfLines={1}>
             Cloud playback
           </Text>
           {!!shareId && (
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 11,
-              }}
-              numberOfLines={1}
-            >
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }} numberOfLines={1}>
               shareId: {shareId}
             </Text>
           )}
         </View>
       </View>
 
-      {/* Debug info about URL + load state + open in browser */}
+      {/* Debug info */}
       <View style={{ paddingHorizontal: 16, marginBottom: 4 }}>
-        <Text
-          style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}
-          numberOfLines={2}
-        >
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }} numberOfLines={2}>
           uri: {uri}
         </Text>
-        <Text
-          style={{
-            color: 'rgba(255,255,255,0.7)',
-            fontSize: 11,
-            marginTop: 2,
-          }}
-        >
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 2 }}>
           loadState: {loadState}
         </Text>
+
         {!!errorMsg && (
           <Text style={{ color: 'tomato', fontSize: 11, marginTop: 2 }}>
             error: {errorMsg}
@@ -143,43 +163,29 @@ export default function CloudPlaybackScreen() {
       </View>
 
       {/* Video */}
-      <View
-        style={{
-          flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <Video
           ref={videoRef}
           source={{ uri }}
-          style={{
-            width: '100%',
-            aspectRatio: 16 / 9,
-            backgroundColor: 'black',
-          }}
+          style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: 'black' }}
           useNativeControls
           resizeMode={ResizeMode.CONTAIN}
           onLoadStart={() => {
-            console.log('[CloudPlayback] onLoadStart');
             setLoadState('loading');
             setErrorMsg(null);
           }}
-          onLoad={(data) => {
-            console.log('[CloudPlayback] onLoad success', data);
+          onLoad={() => {
             setLoadState('loaded');
           }}
           onError={(err) => {
-            console.log('[CloudPlayback] onError', err);
             setLoadState('error');
-            const msg =
-              (err as any)?.error?.message ?? JSON.stringify(err);
+            const msg = (err as any)?.error?.message ?? JSON.stringify(err);
             setErrorMsg(msg);
           }}
           onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
             if (!status.isLoaded) return;
             if ((status as any).didJustFinish) {
-              console.log('[CloudPlayback] playback finished');
+              // noop
             }
           }}
         />

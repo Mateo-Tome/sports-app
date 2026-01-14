@@ -24,9 +24,12 @@ export type LibraryRow = {
   myScore?: number | null;
   oppScore?: number | null;
 
-  // NOTE: your stored rows sometimes contain nulls — keep them allowed here
   highlightGold?: boolean | null;
   edgeColor?: string | null;
+
+  // Optional cloud-ish fields (safe to ignore if missing)
+  shareId?: string | null;
+  storageKey?: string | null;
 };
 
 type Props = {
@@ -52,6 +55,36 @@ const outcomeColor = (o?: Outcome | null) =>
     ? '#eab308'
     : 'rgba(255,255,255,0.25)';
 
+function formatWhen(ms?: number | null) {
+  if (!ms) return '—';
+  const d = new Date(ms);
+
+  const month = d.toLocaleString(undefined, { month: 'short' }); // Jan
+  const day = d.getDate(); // 11
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); // 5:52 PM
+  return `${month} ${day} at ${time}`;
+}
+
+function clean(str?: string | null) {
+  const s = (str ?? '').trim();
+  return s.length ? s : '';
+}
+
+function formatRowTitle(row: LibraryRow) {
+  const athlete = clean(row.athlete) || 'Unassigned';
+  const sport = clean(row.sport) || 'unknown';
+  const name = clean(row.displayName) || 'clip';
+  const when = formatWhen(row.mtime);
+
+  // If your displayName is already a good “event name”, keep it.
+  // This yields: "Anakin • wrestling • Jan 11 at 5:52 PM"
+  // And a secondary smaller line can show name if needed.
+  return {
+    primary: `${athlete} • ${sport} • ${when}`,
+    secondary: name,
+  };
+}
+
 // ----- SportCard types + default fallback -----
 type Chip = { text: string; color: string };
 
@@ -64,40 +97,56 @@ type SportCardProps = {
     outcome?: Outcome | null;
     myScore?: number | null;
     oppScore?: number | null;
-    // (other fields can exist; registry components may read more)
     [k: string]: any;
   };
   subtitle: string;
   chip: Chip | null;
 };
 
-const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => (
-  <View>
-    <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
-      {row.displayName}
-    </Text>
-    <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
-      {subtitle}
-    </Text>
+const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => {
+  const t = formatRowTitle(row as any);
 
-    {chip && (
-      <View
-        style={{
-          marginTop: 6,
-          alignSelf: 'flex-start',
-          paddingVertical: 4,
-          paddingHorizontal: 10,
-          borderRadius: 999,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          borderWidth: 1,
-          borderColor: chip.color,
-        }}
+  return (
+    <View>
+      <Text style={{ color: 'white', fontWeight: '900' }} numberOfLines={1}>
+        {t.primary}
+      </Text>
+
+      <Text
+        style={{ color: 'rgba(255,255,255,0.75)', marginTop: 6 }}
+        numberOfLines={1}
       >
-        <Text style={{ color: chip.color, fontWeight: '800' }}>{chip.text}</Text>
-      </View>
-    )}
-  </View>
-);
+        {t.secondary}
+      </Text>
+
+      {!!subtitle && (
+        <Text
+          style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }}
+          numberOfLines={1}
+        >
+          {subtitle}
+        </Text>
+      )}
+
+      {chip && (
+        <View
+          style={{
+            marginTop: 8,
+            alignSelf: 'flex-start',
+            paddingVertical: 4,
+            paddingHorizontal: 10,
+            borderRadius: 999,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            borderWidth: 1,
+            borderColor: chip.color,
+          }}
+        >
+          <Text style={{ color: chip.color, fontWeight: '900' }}>{chip.text}</Text>
+        </View>
+      )}
+    </View>
+  );
+};
 
 // ----- Main row component -----
 function LibraryVideoRowComponent({
@@ -110,16 +159,11 @@ function LibraryVideoRowComponent({
   onPressSaveToPhotos,
   onUploaded,
 }: Props) {
-  const when = row.mtime ? new Date(row.mtime) : null;
-  const dateOnly = when ? when.toLocaleDateString() : '—';
-  const timeOnly = when
-    ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : '—';
-
   const subtitleBits = [
-    row.athlete ? `👤 ${row.athlete}` : null,
-    row.sport ? `🏷️ ${row.sport}` : null,
-    `${bytesToMB(row.size)}`,
+    // Clean meta line (no emojis)
+    clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
+    clean(row.sport) ? `Sport: ${clean(row.sport)}` : null,
+    `Size: ${bytesToMB(row.size)}`,
   ].filter(Boolean);
 
   const subtitle = subtitleBits.join(' • ');
@@ -135,14 +179,15 @@ function LibraryVideoRowComponent({
         }
       : null;
 
-  // Normalize for registry + TS (convert null -> undefined where needed)
   const safeRow = {
     ...row,
     highlightGold: row.highlightGold ?? undefined,
     outcome: row.outcome ?? undefined,
   };
 
-  const rowEdgeColor = (row.edgeColor?.trim() ? row.edgeColor : null) ?? outcomeColor(row.outcome ?? null);
+  const rowEdgeColor =
+    (row.edgeColor?.trim() ? row.edgeColor : null) ??
+    outcomeColor(row.outcome ?? null);
 
   const SportCard = getSportCardComponent(safeRow as any);
   const SportCardComponent = (SportCard ?? DefaultSportCard) as any;
@@ -158,7 +203,9 @@ function LibraryVideoRowComponent({
         overflow: 'hidden',
         borderWidth: row.highlightGold ? 0 : 2,
         borderColor: row.highlightGold ? 'transparent' : rowEdgeColor,
-        backgroundColor: row.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
+        backgroundColor: row.highlightGold
+          ? 'transparent'
+          : 'rgba(255,255,255,0.06)',
       }}
     >
       {row.highlightGold && (
@@ -183,43 +230,15 @@ function LibraryVideoRowComponent({
       )}
 
       <View style={{ padding: 12 }}>
-        {/* Header row: date/time + Edit Title */}
+        {/* Header row: Edit Title */}
         <View
           style={{
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            justifyContent: 'flex-end',
             marginBottom: 8,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View
-              style={{
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                borderRadius: 999,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: '800' }}>{dateOnly}</Text>
-            </View>
-
-            <View
-              style={{
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                borderRadius: 999,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: '800' }}>{timeOnly}</Text>
-            </View>
-          </View>
-
           <TouchableOpacity
             onPress={(e: any) => {
               e?.stopPropagation?.();
@@ -264,7 +283,9 @@ function LibraryVideoRowComponent({
                 alignItems: 'center',
               }}
             >
-              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>
+                No preview
+              </Text>
             </View>
           )}
 
@@ -288,7 +309,6 @@ function LibraryVideoRowComponent({
                 <Text style={{ color: 'black', fontWeight: '700' }}>Save to Photos</Text>
               </TouchableOpacity>
 
-              {/* ✅ PLAY button restored */}
               <TouchableOpacity
                 onPress={(e: any) => {
                   e?.stopPropagation?.();
@@ -321,7 +341,6 @@ function LibraryVideoRowComponent({
                 <Text style={{ color: 'white', fontWeight: '800' }}>Delete</Text>
               </TouchableOpacity>
 
-              {/* ✅ label restored */}
               <TouchableOpacity
                 onPress={(e: any) => {
                   e?.stopPropagation?.();
@@ -339,7 +358,6 @@ function LibraryVideoRowComponent({
                 <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
               </TouchableOpacity>
 
-              {/* Upload */}
               <View style={{ marginTop: 8, alignItems: 'center' }}>
                 <UploadButton
                   localUri={row.uri}
