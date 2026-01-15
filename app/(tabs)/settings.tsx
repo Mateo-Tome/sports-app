@@ -2,30 +2,42 @@
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TouchableOpacity, View } from 'react-native';
 
 import { signOut } from 'firebase/auth';
 import { testGetUploadUrl } from '../../lib/backend';
 import { auth, ensureAnonymous, storage } from '../../lib/firebase';
 import { uploadVideoToB2 } from '../../lib/uploadVideoToB2';
-import { fetchMyVideos } from '../../lib/videos';
-
-type CloudVideo = {
-  id: string;
-  storageKey: string;
-  sidecarRef?: string;
-  createdAt: number;
-  shareId: string;
-};
+import { fetchMyVideos, type VideoRow } from '../../lib/videos';
 
 // 🔥 TEMP: hardcode a shareId you know exists in Firestore shareIndex/videos
 const TEST_SHARE_ID = 'vXdCFK3k5Ke6';
 
+function createdAtToMs(createdAt: VideoRow['createdAt']): number | null {
+  try {
+    if (!createdAt) return null;
+
+    // Firestore Timestamp-like { seconds }
+    if (typeof createdAt === 'object' && createdAt && 'seconds' in (createdAt as any)) {
+      return Number((createdAt as any).seconds) * 1000;
+    }
+
+    if (typeof createdAt === 'number') return createdAt;
+
+    const d = new Date(String(createdAt));
+    return isNaN(d.getTime()) ? null : d.getTime();
+  } catch {
+    return null;
+  }
+}
+
 export default function SettingsScreen() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>('Ready');
-  const [cloudVideos, setCloudVideos] = useState<CloudVideo[]>([]);
+
+  // ✅ FIX: store VideoRow[] (matches fetchMyVideos)
+  const [cloudVideos, setCloudVideos] = useState<VideoRow[]>([]);
 
   useEffect(() => {
     const u = auth.currentUser;
@@ -104,7 +116,7 @@ export default function SettingsScreen() {
     }
   };
 
-  // Fetch cloud videos for this user (unchanged)
+  // Fetch cloud videos for this user
   const debugFetchCloud = async () => {
     setBusy(true);
     try {
@@ -119,29 +131,47 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleOpenCloudVideo = async (video: CloudVideo) => {
+  // ✅ FIX: accept VideoRow, and don't assume storageKey exists
+  const handleOpenCloudVideo = async (video: VideoRow) => {
     setBusy(true);
     try {
-      const r = ref(storage, video.storageKey);
-      const url = await getDownloadURL(r);
+      // 1) If this clip is still Firebase Storage era
+      if (video.storageKey) {
+        const r = ref(storage, video.storageKey);
+        const url = await getDownloadURL(r);
 
-      console.log('[Settings] Cloud video download URL:', {
-        shareId: video.shareId,
-        storageKey: video.storageKey,
-        url,
-      });
-
-      setStatus(`Got URL for ${video.shareId}`);
-
-      router.push({
-        pathname: '/cloud-playback',
-        params: {
-          uri: url,
+        console.log('[Settings] Cloud video download URL:', {
           shareId: video.shareId,
-        },
-      });
+          storageKey: video.storageKey,
+          url,
+        });
+
+        setStatus(`Got URL for ${video.shareId ?? video.id}`);
+
+        router.push({
+          pathname: '/cloud-playback',
+          params: {
+            uri: url,
+            shareId: video.shareId ?? '',
+          },
+        } as any);
+
+        return;
+      }
+
+      // 2) Otherwise open by shareId (your cloud-playback should resolve signed URL)
+      if (video.shareId) {
+        setStatus(`Open by shareId: ${video.shareId}`);
+        router.push({
+          pathname: '/cloud-playback',
+          params: { shareId: video.shareId },
+        } as any);
+        return;
+      }
+
+      throw new Error('No storageKey and no shareId on this video doc.');
     } catch (e: any) {
-      setStatus(`getDownloadURL error: ${String(e?.message || e)}`);
+      setStatus(`Open error: ${String(e?.message || e)}`);
     } finally {
       setBusy(false);
     }
@@ -163,13 +193,11 @@ export default function SettingsScreen() {
   const testBackendUploadEndpoint = async () => {
     setBusy(true);
     try {
-      // Ensure we have a user so getIdToken works
       await ensureAnonymous();
 
       console.log('[Settings] Calling testGetUploadUrl...');
       const r: any = await testGetUploadUrl();
 
-      // Typical success payload includes bucketName + uploadUrl
       const bucket = r?.bucketName ?? 'unknown';
       const hasUploadUrl = !!r?.uploadUrl;
 
@@ -182,12 +210,6 @@ export default function SettingsScreen() {
     }
   };
 
-  /**
-   * End-to-end Backblaze test
-   * - gets uploadUrl + uploadAuthToken from your Cloud Function
-   * - writes a tiny local text file
-   * - uploads it to B2 under: videos/<uid>/hello.txt
-   */
   const testB2Upload = async () => {
     setBusy(true);
     try {
@@ -198,7 +220,6 @@ export default function SettingsScreen() {
         isAnonymous: user.isAnonymous,
       });
 
-      // 1) Get uploadUrl + upload token from your backend
       const r: any = await testGetUploadUrl();
 
       if (!r?.uploadUrl || !r?.uploadAuthToken) {
@@ -207,7 +228,6 @@ export default function SettingsScreen() {
         );
       }
 
-      // 2) Create a tiny local file
       const localPath = FileSystem.cacheDirectory + `b2-test-${Date.now()}.txt`;
 
       await FileSystem.writeAsStringAsync(
@@ -216,7 +236,6 @@ export default function SettingsScreen() {
         { encoding: FileSystem.EncodingType.UTF8 }
       );
 
-      // 3) Upload to Backblaze
       const out = await uploadVideoToB2({
         uploadUrl: r.uploadUrl,
         uploadAuthToken: r.uploadAuthToken,
@@ -237,13 +256,19 @@ export default function SettingsScreen() {
   };
 
   const openTestSharePlayback = () => {
-    // This opens the *app* PlaybackScreen with a shareId.
-    // It will need internet to fetch the playable URL for that shareId.
     router.push({
       pathname: '/screens/PlaybackScreen',
       params: { shareId: TEST_SHARE_ID },
-    });
+    } as any);
   };
+
+  // Just for display formatting in the list
+  const cloudList = useMemo(() => {
+    return cloudVideos.map((v) => {
+      const ms = createdAtToMs(v.createdAt);
+      return { v, createdLabel: ms ? new Date(ms).toLocaleString() : '—' };
+    });
+  }, [cloudVideos]);
 
   return (
     <View style={{ flex: 1, padding: 20, backgroundColor: 'black' }}>
@@ -255,7 +280,6 @@ export default function SettingsScreen() {
         {describeCurrentUser()}
       </Text>
 
-      {/* ✅ TEMP TEST BUTTON: ShareId -> PlaybackScreen */}
       <Pressable
         onPress={openTestSharePlayback}
         style={{
@@ -404,7 +428,7 @@ export default function SettingsScreen() {
           Cloud videos for this account: {cloudVideos.length}
         </Text>
 
-        {cloudVideos.map((v) => (
+        {cloudList.map(({ v, createdLabel }) => (
           <TouchableOpacity
             key={v.id}
             onPress={() => handleOpenCloudVideo(v)}
@@ -414,12 +438,12 @@ export default function SettingsScreen() {
               borderBottomColor: 'rgba(255,255,255,0.12)',
             }}
           >
-            <Text style={{ color: 'white', fontSize: 12 }}>shareId: {v.shareId}</Text>
+            <Text style={{ color: 'white', fontSize: 12 }}>shareId: {v.shareId ?? '—'}</Text>
             <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
-              storageKey: {v.storageKey}
+              storageKey: {v.storageKey ?? '—'}
             </Text>
             <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>
-              createdAt: {new Date(v.createdAt).toLocaleString()}
+              createdAt: {createdLabel}
             </Text>
             <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
               (Tap to open cloud playback)
