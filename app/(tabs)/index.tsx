@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActionSheetIOS,
   Alert,
@@ -24,6 +24,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, ensureAnonymous } from '../../lib/firebase';
+import { getCloudAthletes } from '../../src/hooks/athletes/cloudAthletes';
+
+// ✅ sync hook (small, isolated)
+import useAthleteSync from '../../src/hooks/athletes/useAthleteSync';
+
 const ATHLETES_KEY = 'athletes:list';
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
@@ -35,8 +42,6 @@ function imagesMediaTypesLegacy(): any {
   const MT = (ImagePicker as any).MediaType;
   return MT?.Images ?? MT?.images ?? undefined; // fallback to picker default if missing
 }
-
-
 
 async function ensurePickerPermissions(): Promise<boolean> {
   try {
@@ -96,9 +101,7 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
   }
 
   // Let all interactions/animations finish
-  await new Promise<void>((resolve) =>
-    InteractionManager.runAfterInteractions(() => resolve())
-  );
+  await new Promise<void>((resolve) => InteractionManager.runAfterInteractions(() => resolve()));
   await new Promise((r) => requestAnimationFrame(() => r(null)));
   await wait(140);
 
@@ -109,14 +112,12 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ['Cancel', 'Take Photo', 'Choose from Library'],
-          // cancel index
           cancelButtonIndex: 0,
           userInterfaceStyle: 'dark',
         },
         async (idx) => {
           try {
             if (idx === 1) {
-              // Take Photo
               await new Promise<void>((resolve2) =>
                 InteractionManager.runAfterInteractions(() => resolve2())
               );
@@ -205,7 +206,13 @@ export default function HomeAthletes() {
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  // ✅ Sync hook (safe merge) — unchanged behavior
+  const { syncing, syncNow } = useAthleteSync({
+    getLocal: () => athletes,
+    setLocal: (list) => setAthletes(list as any),
+  });
+
+  const loadLocal = useCallback(async () => {
     try {
       const raw = await AsyncStorage.getItem(ATHLETES_KEY);
       const list = raw ? (JSON.parse(raw) as Athlete[]) : [];
@@ -214,15 +221,36 @@ export default function HomeAthletes() {
       console.log('athletes load error:', e);
     }
   }, []);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    loadLocal();
+  }, [loadLocal]);
+
+  // ✅ On app open (including Expo Web), if signed in, load cloud athletes once.
+  // Unchanged behavior — just keeps web in sync when account already has athletes.
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      try {
+        const u = user ?? (await ensureAnonymous());
+        const cloud = await getCloudAthletes(u.uid);
+
+        // Only apply if cloud has something (don’t overwrite local with empty)
+        if (Array.isArray(cloud) && cloud.length) {
+          setAthletes(cloud as any);
+          await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(cloud));
+        }
+      } catch (e) {
+        console.log('[Athletes] initial cloud load failed:', e);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await load();
+    await loadLocal();
     setRefreshing(false);
-  }, [load]);
+  }, [loadLocal]);
 
   const saveAthletes = async (list: Athlete[]) => {
     setAthletes(list);
@@ -243,7 +271,6 @@ export default function HomeAthletes() {
     setAddOpen(false);
   };
 
-  // NOTE: We close the modal before launching the picker and pass `true`
   const pickPendingPhoto = async () => {
     setAddOpen(false);
     const uri = await pickImageWithChoice(true);
@@ -251,7 +278,6 @@ export default function HomeAthletes() {
     setAddOpen(true);
   };
 
-  // Outside of a modal, pass `false`
   const setPhotoForAthlete = async (id: string) => {
     const uri = await pickImageWithChoice(false);
     if (!uri) return;
@@ -281,15 +307,66 @@ export default function HomeAthletes() {
   // ROUTE: Quick Record -> plain camera (no overlay)
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
-    router.push({ pathname: '/record/camera', params: { athlete: 'Unassigned', sport: 'plain', style: 'none' } });
+    router.push({
+      pathname: '/record/camera',
+      params: { athlete: 'Unassigned', sport: 'plain', style: 'none' },
+    });
   };
 
-  // ✅ ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
+  // ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
   const recordWithAthlete = async (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
     await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
     router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
+
+  // ---------- Premium + futuristic button styling (visual only) ----------
+  const styles = useMemo(() => {
+    const pillBase = {
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 999,
+    } as const;
+
+    // “Glass cyan” vibe on black: premium + futuristic (no neon lime)
+    const syncPill = {
+      ...pillBase,
+      backgroundColor: syncing ? 'rgba(34,211,238,0.20)' : 'rgba(34,211,238,0.14)',
+      borderWidth: 1,
+      borderColor: syncing ? 'rgba(34,211,238,0.75)' : 'rgba(34,211,238,0.55)',
+      opacity: syncing ? 0.78 : 1,
+    } as const;
+
+    const syncText = {
+      color: 'rgba(224,251,255,1)',
+      fontWeight: '900' as const,
+      letterSpacing: 0.2,
+    };
+
+    const secondaryPill = {
+      ...pillBase,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.85)',
+      backgroundColor: 'rgba(255,255,255,0.06)',
+    } as const;
+
+    const secondaryText = {
+      color: 'white',
+      fontWeight: '900' as const,
+    };
+
+    const primaryPill = {
+      ...pillBase,
+      backgroundColor: '#DC2626',
+    } as const;
+
+    const primaryText = {
+      color: 'white',
+      fontWeight: '900' as const,
+    };
+
+    return { syncPill, syncText, secondaryPill, secondaryText, primaryPill, primaryText };
+  }, [syncing]);
 
   const AthleteCard = ({ a }: { a: Athlete }) => {
     const [editOpen, setEditOpen] = useState(false);
@@ -336,7 +413,7 @@ export default function HomeAthletes() {
       };
       let style;
       if (kind === 'primary') {
-        style = { ...base, backgroundColor: '#DC2626', borderColor: '#DC2626' }; // red-600
+        style = { ...base, backgroundColor: '#DC2626', borderColor: '#DC2626' };
       } else if (kind === 'danger') {
         style = { ...base, backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.35)' };
       } else {
@@ -400,13 +477,9 @@ export default function HomeAthletes() {
           </View>
         </View>
 
-        {/* Actions */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
           <ActionBtn label="Record" kind="primary" onPress={() => recordWithAthlete(a.name)} />
-          <ActionBtn
-            label={a.photoUri ? 'Change Photo' : 'Set Photo'}
-            onPress={() => setPhotoForAthlete(a.id)}
-          />
+          <ActionBtn label={a.photoUri ? 'Change Photo' : 'Set Photo'} onPress={() => setPhotoForAthlete(a.id)} />
           <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
           {isWide ? (
             <ActionBtn label="Delete" kind="danger" onPress={() => deleteAthleteShell(a.id)} />
@@ -415,7 +488,6 @@ export default function HomeAthletes() {
           )}
         </View>
 
-        {/* Rename modal */}
         <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
             <View
@@ -474,30 +546,25 @@ export default function HomeAthletes() {
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
-      {/* Header */}
-      <View
-        style={{
-          paddingHorizontal: 16,
-          paddingBottom: 8,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 10,
-        }}
-      >
-        <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity
-            onPress={recordNoAthlete}
-            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#DC2626' }}
-          >
-            <Text style={{ color: 'white', fontWeight: '900' }}>Quick Record</Text>
+      {/* Header (2 rows so buttons never go off-screen) */}
+      <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+        {/* Row 1: title + Sync */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
+
+          <TouchableOpacity onPress={syncNow} disabled={syncing} style={styles.syncPill}>
+            <Text style={styles.syncText}>{syncing ? 'Syncing…' : 'Sync'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setAddOpen(true)}
-            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'white' }}
-          >
-            <Text style={{ color: 'white', fontWeight: '900' }}>Add Athlete</Text>
+        </View>
+
+        {/* Row 2: actions (wrap-safe) */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          <TouchableOpacity onPress={recordNoAthlete} style={styles.primaryPill}>
+            <Text style={styles.primaryText}>Quick Record</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setAddOpen(true)} style={styles.secondaryPill}>
+            <Text style={styles.secondaryText}>Add Athlete</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -535,6 +602,7 @@ export default function HomeAthletes() {
             <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>
               Enter a name and (optionally) pick a photo.
             </Text>
+
             <TextInput
               value={nameInput}
               onChangeText={setNameInput}
@@ -550,6 +618,7 @@ export default function HomeAthletes() {
                 color: 'white',
               }}
             />
+
             <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               {pendingPhoto ? (
                 <Image
@@ -575,6 +644,7 @@ export default function HomeAthletes() {
                   <Text style={{ color: 'white', opacity: 0.6 }}>👤</Text>
                 </View>
               )}
+
               <TouchableOpacity
                 onPress={pickPendingPhoto}
                 style={{
@@ -591,6 +661,7 @@ export default function HomeAthletes() {
                 </Text>
               </TouchableOpacity>
             </View>
+
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
               <TouchableOpacity
                 onPress={() => {
@@ -606,9 +677,15 @@ export default function HomeAthletes() {
               >
                 <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={addAthlete}
-                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                  backgroundColor: 'white',
+                }}
               >
                 <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
               </TouchableOpacity>

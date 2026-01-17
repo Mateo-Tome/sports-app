@@ -112,7 +112,6 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     safeStr((v as any).scoreText, '') ||
     (myScore != null && oppScore != null && outcome ? `${outcome} ${myScore}\u2013${oppScore}` : '');
 
-  // ✅ This makes cloud cards look like your web list:
   // "Anakin • wrestling-folkstyle • Jan 11 at 5:53 PM"
   const titleParts = [athleteName, sportStyle];
   if (when) titleParts.push(when);
@@ -144,10 +143,8 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
 
 /**
  * NOTE:
- * - We keep local playback routing EXACTLY as you had it to avoid breaking anything.
- * - We change ONLY cloud playback routing to use the SAME PlaybackScreen pipeline
- *   (score pills, event belt, modules, sidecar, colors).
- * - Cloud playback should pass { shareId } and (optionally) athlete. PlaybackScreen resolves the signed URL itself.
+ * - Local playback must pass `videoPath` (PlaybackScreen expects that for local files).
+ * - Cloud playback must pass `shareId` (PlaybackScreen resolves signed URLs).
  */
 export function useLibraryDataSource(router: any, localRows: any[]) {
   const [dataSource, setDataSourceState] = useState<'local' | 'cloud'>('local');
@@ -207,17 +204,21 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     async (row: any) => {
       const isCloud = String(row?.uri ?? '').startsWith('cloud:');
 
-      // ✅ Keep local behavior unchanged to avoid breaking anything
+      // ✅ Local: PlaybackScreen expects `videoPath`
       if (!isCloud) {
         router.push({
           pathname: '/screens/PlaybackScreen',
-          params: { uri: row.uri },
+          params: {
+            videoPath: row.uri,
+            athlete: row?.athlete ?? '',
+            sport: row?.sport ?? '',
+            displayName: row?.displayName ?? '',
+          },
         });
         return;
       }
 
-      // ✅ Cloud: route to the SAME PlaybackScreen pipeline.
-      // DO NOT resolve videoUrl here. PlaybackScreen/usePlaybackPlayer will resolve/refresh signed URLs.
+      // ✅ Cloud: PlaybackScreen expects `shareId`
       const shareId = String(row.uri).replace(/^cloud:/, '').trim();
       if (!shareId) return;
 
@@ -226,6 +227,8 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
         params: {
           shareId,
           athlete: row?.athlete ?? '',
+          sport: row?.sport ?? '',
+          displayName: row?.displayName ?? '',
         },
       });
     },

@@ -3,10 +3,12 @@
 console.log("FIREBASE KEY =", process.env.EXPO_PUBLIC_FIREBASE_API_KEY);
 console.log("FIREBASE PROJECT =", process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
 
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getStorage } from 'firebase/storage';
+
+// ✅ Firestore
+import { getFirestore } from 'firebase/firestore';
 
 // Typed imports you need:
 import {
@@ -46,6 +48,9 @@ const auth = (() => {
 
 const storage = getStorage(app);
 
+// ✅ Firestore instance
+const db = getFirestore(app);
+
 export async function ensureAnonymous(): Promise<User> {
   if (!auth.currentUser) {
     const { user } = await signInAnonymously(auth);
@@ -54,5 +59,5 @@ export async function ensureAnonymous(): Promise<User> {
   return auth.currentUser as User;
 }
 
-export { app, auth, storage };
+export { app, auth, db, storage };
 
