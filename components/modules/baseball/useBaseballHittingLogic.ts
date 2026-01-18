@@ -1,7 +1,4 @@
 // components/modules/baseball/useBaseballHittingLogic.ts
-import { useMemo, useState } from 'react';
-
-type AnyEvent = { t?: number; meta?: any };
 
 export const BALL_COLOR = '#22c55e'; // green
 export const STRIKE_COLOR = '#ef4444'; // red
@@ -24,232 +21,98 @@ export const KEY_COLOR: Record<string, string> = {
   strikeout: K_COLOR,
 };
 
+// -------- time helpers (seconds-first) ----------
+// In your app, playback `now` is seconds.
+// Most of your events are seconds (PlaybackScreen creates EventRow.t as seconds).
+// But some older sidecars might have ms. We normalize to seconds safely.
+function toSec(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  // if it looks like milliseconds within a clip (e.g., 12000ms) OR epoch ms, convert to seconds
+  if (n >= 1e6) return n / 1000; // big values: almost certainly ms
+  // if it’s normal clip-time seconds, keep it
+  return n;
+}
+
+function getEventTimeSec(ev: any): number | null {
+  const t = ev?.t ?? ev?.time ?? ev?.ts;
+  if (typeof t === 'number' && Number.isFinite(t)) return toSec(t);
+  if (typeof t === 'string') {
+    const parsed = Number(t);
+    if (Number.isFinite(parsed)) return toSec(parsed);
+  }
+  return null;
+}
+
+function getCountMeta(ev: any): any | null {
+  // support both meta and meta.meta nesting
+  return ev?.meta?.meta ?? ev?.meta ?? null;
+}
+
 /**
- * Baseball module logic packed into one hook:
- * - derived count from events during normal playback
- * - edit mode state + event firing + toast + choosers
+ * Derive {balls,strikes,fouls} at playback time (nowSec) by scanning events.
+ * We pick the *last* event <= now that has count fields.
  */
-export function useBaseballHittingLogic(args: {
-  events: AnyEvent[] | undefined;
-  now: number;
-  showPalette: boolean;
-  onOverlayEvent?: (e: any) => void;
-}) {
-  const { events, now, showPalette, onOverlayEvent } = args;
+export function deriveCountAtTime(events: any[] | undefined, now: number | undefined) {
+  const nowSec = typeof now === 'number' && Number.isFinite(now) ? toSec(now) : 0;
 
-  // ======== COUNT FROM EVENTS FOR NORMAL PLAYBACK =========
-  const lastCount = useMemo(() => {
-    if (!Array.isArray(events) || events.length === 0) return null;
-    let found: { balls: number; strikes: number; fouls: number } | null = null;
+  if (!Array.isArray(events) || events.length === 0) {
+    return { balls: 0, strikes: 0, fouls: 0 };
+  }
 
-    for (let i = 0; i < events.length; i++) {
-      const row: any = events[i];
+  // Sort by time so we can break early correctly
+  const ordered = [...events].sort((a, b) => {
+    const ta = getEventTimeSec(a);
+    const tb = getEventTimeSec(b);
+    if (ta == null && tb == null) return 0;
+    if (ta == null) return 1;
+    if (tb == null) return -1;
+    return ta - tb;
+  });
 
-      // Only consider events up to the current playback time
-      if (typeof row.t === 'number' && row.t > now) break;
+  let found: { balls: number; strikes: number; fouls: number } | null = null;
 
-      const m = row?.meta;
-      if (!m) continue;
+  for (let i = 0; i < ordered.length; i++) {
+    const ev: any = ordered[i];
 
-      const hasCountMeta =
-        typeof m.balls === 'number' ||
-        typeof m.strikes === 'number' ||
-        typeof m.fouls === 'number' ||
-        typeof m.ballsAfter === 'number' ||
-        typeof m.strikesAfter === 'number' ||
-        typeof m.foulsAfter === 'number';
+    const evSec = getEventTimeSec(ev);
+    // If event time exists and is after playback time, stop.
+    // ✅ Do NOT use truthy checks; nowSec can be 0.
+    if (evSec != null && evSec > nowSec) break;
 
-      if (hasCountMeta) {
-        found = {
-          balls:
-            typeof m.ballsAfter === 'number'
-              ? m.ballsAfter
-              : typeof m.balls === 'number'
-              ? m.balls
-              : 0,
-          strikes:
-            typeof m.strikesAfter === 'number'
-              ? m.strikesAfter
-              : typeof m.strikes === 'number'
-              ? m.strikes
-              : 0,
-          fouls:
-            typeof m.foulsAfter === 'number'
-              ? m.foulsAfter
-              : typeof m.fouls === 'number'
-              ? m.fouls
-              : 0,
-        };
-      }
-    }
+    const m = getCountMeta(ev);
+    if (!m) continue;
 
-    return found;
-  }, [events, now]);
+    const hasCountMeta =
+      typeof m.balls === 'number' ||
+      typeof m.strikes === 'number' ||
+      typeof m.fouls === 'number' ||
+      typeof m.ballsAfter === 'number' ||
+      typeof m.strikesAfter === 'number' ||
+      typeof m.foulsAfter === 'number';
 
-  const derivedBalls = lastCount?.balls ?? 0;
-  const derivedStrikes = lastCount?.strikes ?? 0;
+    if (!hasCountMeta) continue;
 
-  // ======== LOCAL STATE FOR EDIT MODE (overlay-style) =========
-  const [balls, setBalls] = useState(0);
-  const [strikes, setStrikes] = useState(0);
-  const [fouls, setFouls] = useState(0);
-  const [outs, setOuts] = useState(0);
+    found = {
+      balls:
+        typeof m.ballsAfter === 'number'
+          ? m.ballsAfter
+          : typeof m.balls === 'number'
+          ? m.balls
+          : 0,
+      strikes:
+        typeof m.strikesAfter === 'number'
+          ? m.strikesAfter
+          : typeof m.strikes === 'number'
+          ? m.strikes
+          : 0,
+      fouls:
+        typeof m.foulsAfter === 'number'
+          ? m.foulsAfter
+          : typeof m.fouls === 'number'
+          ? m.fouls
+          : 0,
+    };
+  }
 
-  const [resultChooserOpen, setResultChooserOpen] = useState(false);
-  const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
-  const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
-
-  const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
-  const showToast = (text: string, tint: string) => setToast({ text, tint });
-
-  const resetCount = () => {
-    setBalls(0);
-    setStrikes(0);
-    setFouls(0);
-  };
-
-  const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
-    const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
-
-    onOverlayEvent?.({
-      key,
-      label,
-      actor: 'neutral',
-      value: undefined,
-      meta: {
-        color,
-        tint: color,
-        buttonColor: color,
-        chipColor: color,
-        balls,
-        strikes,
-        fouls,
-        outs,
-        ...(extraMeta || {}),
-      },
-    });
-  };
-
-  // --- Count actions --------------------------------------------------------
-  const onBall = () => {
-    setBalls(prev => {
-      const next = Math.min(prev + 1, 4);
-      fire('ball', 'Ball', { ballsAfter: next });
-      showToast(`Ball ${next}`, BALL_COLOR);
-      return next;
-    });
-  };
-
-  const onStrike = () => {
-    setStrikes(prev => {
-      const next = Math.min(prev + 1, 3);
-      fire('strike', 'Strike', { strikesAfter: next });
-      showToast(`Strike ${next}`, STRIKE_COLOR);
-      return next;
-    });
-  };
-
-  const onFoul = () => {
-    setFouls(prevFouls => {
-      let nextStrikes: number;
-      setStrikes(prevStrikes => {
-        nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', {
-          foulsAfter: prevFouls + 1,
-          strikesAfter: nextStrikes,
-        });
-        return nextStrikes;
-      });
-      const newFouls = prevFouls + 1;
-      showToast(`Foul (${newFouls})`, FOUL_COLOR);
-      return newFouls;
-    });
-  };
-
-  const incrementOuts = (type: string) => {
-    setOuts(prev => {
-      const next = Math.min(prev + 1, 3);
-      fire('out', 'Out', { type, outsAfter: next });
-      showToast(type, OUT_COLOR);
-      return next;
-    });
-    resetCount();
-  };
-
-  const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
-    fire('hit', 'Hit', { type });
-    showToast(
-      type === 'single'
-        ? 'Single'
-        : type === 'double'
-        ? 'Double'
-        : type === 'triple'
-        ? 'Triple'
-        : 'Bunt',
-      HIT_COLOR,
-    );
-    resetCount();
-  };
-
-  const recordHomerun = () => {
-    fire('homerun', 'Home Run', { type: 'homerun' });
-    showToast('Home Run', HR_COLOR);
-    resetCount();
-  };
-
-  const recordWalk = () => {
-    fire('walk', 'Walk', { type: 'walk' });
-    showToast('Walk', WALK_COLOR);
-    resetCount();
-  };
-
-  const recordStrikeout = (kind: 'swinging' | 'looking') => {
-    setOuts(prev => {
-      const next = Math.min(prev + 1, 3);
-      fire('strikeout', 'Strikeout', { kind, outsAfter: next });
-      showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', K_COLOR);
-      return next;
-    });
-    resetCount();
-  };
-
-  // If palette is off, the UI should not show choosers (avoid “stuck open”)
-  const safeResultOpen = showPalette ? resultChooserOpen : false;
-  const safeStrikeoutOpen = showPalette ? strikeoutChooserOpen : false;
-  const safeHrOpen = showPalette ? hrConfirmOpen : false;
-
-  return {
-    // derived (normal playback)
-    derivedBalls,
-    derivedStrikes,
-
-    // edit state
-    balls,
-    strikes,
-    fouls,
-    outs,
-
-    // chooser state
-    resultChooserOpen: safeResultOpen,
-    strikeoutChooserOpen: safeStrikeoutOpen,
-    hrConfirmOpen: safeHrOpen,
-    setResultChooserOpen,
-    setStrikeoutChooserOpen,
-    setHrConfirmOpen,
-
-    // toast
-    toast,
-    setToast,
-    showToast,
-
-    // actions
-    onBall,
-    onStrike,
-    onFoul,
-    incrementOuts,
-    recordHit,
-    recordHomerun,
-    recordWalk,
-    recordStrikeout,
-  };
+  return found ?? { balls: 0, strikes: 0, fouls: 0 };
 }

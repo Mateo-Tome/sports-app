@@ -33,6 +33,7 @@ function fmt(sec: number): string {
 
 /**
  * Local helper: abbreviate event kind for belt pill
+ * (Wrestling stays as-is; Baseball kinds will be handled via label fallback when kind is unknown.)
  */
 function abbrKind(kind?: string): string {
   if (!kind) return '';
@@ -142,6 +143,125 @@ export function OverlayModeMenu(props: {
 
 /* ==================== Event Belt ==================== */
 
+/**
+ * Helpers for belt lane inference (baseball only, safe for other sports)
+ */
+function normalizeBeltToken(raw: any): string {
+  let k = String(raw ?? '').toLowerCase().trim();
+  k = k.replace(/\s+/g, ' '); // collapse whitespace
+  // normalize common phrases
+  k = k.replace('home run', 'homerun');
+  k = k.replace('strike out', 'strikeout');
+  return k;
+}
+
+function extractBeltKey(e: EventRow): string {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  const raw =
+    (e as any)?.key ??
+    (e as any)?.kind ??
+    meta?.key ??
+    meta?.kind ??
+    meta?.label ??
+    inner?.key ??
+    inner?.kind ??
+    inner?.label ??
+    '';
+
+  return normalizeBeltToken(raw);
+}
+
+/**
+ * ✅ Baseball lane inference (ONLY triggers on baseball-ish words)
+ * - TOP: balls + hitter-positive (hit/walk/hr + singles/doubles/triples/bunt)
+ * - BOTTOM: strikes + fouls + strikeout/K + outs
+ */
+function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
+  const k = extractBeltKey(e);
+  if (!k) return null;
+
+  const isBaseballish =
+    k.includes('ball') ||
+    k.includes('strike') ||
+    k.includes('foul') ||
+    k.includes('walk') ||
+    k.includes('hit') ||
+    k.includes('single') ||
+    k.includes('double') ||
+    k.includes('triple') ||
+    k.includes('bunt') ||
+    k.includes('homerun') ||
+    k.includes('out') ||
+    k.includes('strikeout') ||
+    k.startsWith('k ' ) ||
+    k === 'k' ||
+    k.includes('k swinging') ||
+    k.includes('k looking');
+
+  if (!isBaseballish) return null;
+
+  // TOP lane: balls + hitter-positive
+  if (
+    k === 'ball' ||
+    k.startsWith('ball ') ||
+    k === 'hit' ||
+    k.includes('single') ||
+    k.includes('double') ||
+    k.includes('triple') ||
+    k.includes('bunt') ||
+    k === 'walk' ||
+    k.includes('walk') ||
+    k === 'homerun'
+  ) return 'top';
+
+  // BOTTOM lane: strikes + fouls + outs
+  if (
+    k === 'strike' ||
+    k.startsWith('strike ') ||
+    k.includes('foul') ||
+    k === 'strikeout' ||
+    k.includes('strikeout') ||
+    k === 'out' ||
+    k.includes('out') ||
+    k === 'k' ||
+    k.startsWith('k ') ||
+    k.includes('k swinging') ||
+    k.includes('k looking')
+  ) return 'bottom';
+
+  return null;
+}
+
+/**
+ * Read beltLane from meta defensively (top/bottom, any casing/spacing)
+ */
+function readBeltLaneMeta(e: EventRow): 'top' | 'bottom' | null {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  const raw = meta?.beltLane ?? inner?.beltLane ?? meta?.beltlane ?? inner?.beltlane;
+  const v = normalizeBeltToken(raw);
+
+  if (v === 'top') return 'top';
+  if (v === 'bottom') return 'bottom';
+  return null;
+}
+
+/**
+ * Prefer kind, but if kind is missing/unknown, use label/key for display (baseball quality-of-life)
+ */
+function displayKindForPill(e: EventRow): string {
+  const kind = String((e as any)?.kind ?? '');
+  if (kind && kind.toLowerCase() !== 'unknown') return kind;
+
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+  const raw = meta?.label ?? inner?.label ?? (e as any)?.key ?? meta?.key ?? inner?.key ?? kind;
+  return String(raw ?? kind);
+}
+
 export function EventBelt(props: {
   duration: number;
   current: number;
@@ -159,9 +279,31 @@ export function EventBelt(props: {
   const PX_PER_SEC = 10;
   const BASE_LEFT = EDGE_PAD;
 
-  const rowY = (actor?: string) => (actor === 'home' ? 10 : 40);
+  const rowY = (lane: 'home' | 'opponent') => (lane === 'home' ? 10 : 40);
 
-  // === Period detection (supports meta.period, meta.periodNumber, meta.label like "P1" / "Period 2", or kind "period1")
+  /**
+   * Lane choice priority:
+   * 1) meta.beltLane (new baseball clips)
+   * 2) inference (old baseball clips)
+   * 3) actor fallback (everything else, including wrestling)
+   */
+  const laneFor = (e: EventRow): 'home' | 'opponent' => {
+    const beltLane = readBeltLaneMeta(e);
+    if (beltLane === 'top') return 'home';
+    if (beltLane === 'bottom') return 'opponent';
+
+    const inferred = inferBeltLaneFromEvent(e);
+    if (inferred === 'top') return 'home';
+    if (inferred === 'bottom') return 'opponent';
+
+    // fallback to actor (preserves other sports behavior)
+    if ((e as any).actor === 'home') return 'home';
+    if ((e as any).actor === 'opponent') return 'opponent';
+
+    return 'opponent';
+  };
+
+  // === Period detection
   const getPeriodLabel = (e: EventRow): string | null => {
     const meta = (e as any).meta ?? {};
     const label = String(meta?.label ?? '').trim();
@@ -191,11 +333,7 @@ export function EventBelt(props: {
   };
 
   const layout = useMemo(() => {
-    const twoLane = events.map(e =>
-      e.actor === 'home' || e.actor === 'opponent' ? e : { ...e, actor: 'opponent' as const },
-    );
-
-    const indexed = twoLane.map((e, i) => ({ e, i }));
+    const indexed = (events ?? []).map((e, i) => ({ e, i }));
     indexed.sort((a, b) => a.e.t - b.e.t || a.i - b.i);
 
     const lastLeft: Record<'home' | 'opponent', number> = {
@@ -213,7 +351,7 @@ export function EventBelt(props: {
     }> = [];
 
     for (const { e } of indexed) {
-      const lane = (e.actor === 'home' ? 'home' : 'opponent') as 'home' | 'opponent';
+      const lane = laneFor(e);
 
       const desiredX = e.t * PX_PER_SEC;
       const desiredLeft = Math.max(desiredX - PILL_W / 2, BASE_LEFT);
@@ -283,7 +421,6 @@ export function EventBelt(props: {
         left: 0,
         right: 0,
         bottom: bottomInset + 4,
-        // ensure belt is clickable above other overlays
         zIndex: 999,
         elevation: 999,
       }}
@@ -321,7 +458,7 @@ export function EventBelt(props: {
             const isPassed = current >= it.e.t;
 
             const handlePress = () => {
-              lockUser(1200); // ✅ stops snap-back while click happens
+              lockUser(1200);
               onSeek(it.e.t);
             };
 
@@ -330,13 +467,12 @@ export function EventBelt(props: {
               onPillLongPress(it.e);
             };
 
-            // ✅ PERIOD pill: white + centered between rows
             if (it.isPeriod) {
               const numLabel = (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
 
               return (
                 <Pressable
-                  key={`${it.e._id ?? 'period'}-${i}`}
+                  key={`${(it.e as any)._id ?? 'period'}-${i}`}
                   onPress={handlePress}
                   onLongPress={handleLong}
                   delayLongPress={280}
@@ -363,10 +499,11 @@ export function EventBelt(props: {
               );
             }
 
-            // Normal event pill
+            const pillKind = displayKindForPill(it.e);
+
             return (
               <Pressable
-                key={`${it.e._id ?? 'n'}-${i}`}
+                key={`${(it.e as any)._id ?? 'n'}-${i}`}
                 onPress={handlePress}
                 onLongPress={handleLong}
                 delayLongPress={280}
@@ -387,7 +524,7 @@ export function EventBelt(props: {
                 }}
               >
                 <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
-                  {`${abbrKind((it.e as any).kind)}${
+                  {`${abbrKind(pillKind)}${
                     typeof (it.e as any).points === 'number' && (it.e as any).points > 0
                       ? `+${(it.e as any).points}`
                       : ''
@@ -440,16 +577,22 @@ export function QuickEditSheet(props: {
       }}
     >
       <Text style={{ color: '#fff', fontWeight: '900', marginBottom: 6, fontSize: 14, textAlign: 'center' }}>
-        Edit {abbrKind((event as any).kind)}
+        Edit {abbrKind(displayKindForPill(event))}
         {(event as any).points ? `+${(event as any).points}` : ''} @ {fmt((event as any).t)}
       </Text>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-        <Pressable onPress={onReplace} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}>
+        <Pressable
+          onPress={onReplace}
+          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}
+        >
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Replace…</Text>
         </Pressable>
 
-        <Pressable onPress={onDelete} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}>
+        <Pressable
+          onPress={onDelete}
+          style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}
+        >
           <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Delete</Text>
         </Pressable>
 

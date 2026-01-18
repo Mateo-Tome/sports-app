@@ -1,4 +1,3 @@
-// components/modules/baseball/BaseballHittingPlaybackModule.tsx
 import { useMemo, useState } from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import type { PlaybackModuleProps } from '../types';
@@ -12,10 +11,34 @@ import {
   RightStack,
   StrikeoutChooser,
 } from './baseballUiParts';
+
 import {
-  BALL_COLOR, deriveCountAtTime, FOUL_COLOR,
-  HIT_COLOR, HR_COLOR, K_COLOR, KEY_COLOR, OUT_COLOR, STRIKE_COLOR, WALK_COLOR
+  BALL_COLOR,
+  deriveCountAtTime,
+  FOUL_COLOR,
+  HIT_COLOR,
+  HR_COLOR,
+  K_COLOR,
+  KEY_COLOR,
+  OUT_COLOR,
+  STRIKE_COLOR,
+  WALK_COLOR,
 } from './useBaseballHittingLogic';
+
+/**
+ * Lane rule:
+ * - TOP: balls + hitter-positive (hit/walk/hr)
+ * - BOTTOM: strikes + fouls + outs
+ * Stored in meta.beltLane so EventBelt can read it.
+ */
+type BeltLane = 'top' | 'bottom' | undefined;
+
+function beltLaneForKey(key: string): BeltLane {
+  const k = String(key || '').toLowerCase();
+  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'top';
+  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
+  return undefined;
+}
 
 export default function BaseballHittingPlaybackModule({
   overlayOn,
@@ -48,7 +71,7 @@ export default function BaseballHittingPlaybackModule({
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
-  // ✅ FIX: derive count using robust time normalization + nested meta support
+  // derive count from event stream (for playback mode)
   const derived = useMemo(() => deriveCountAtTime(events as any[], now as any), [events, now]);
   const derivedBalls = derived.balls;
   const derivedStrikes = derived.strikes;
@@ -72,14 +95,25 @@ export default function BaseballHittingPlaybackModule({
     setFouls(0);
   };
 
+  // actor fallback (still fine to keep)
+  const actorForKey = (key: string): 'home' | 'opponent' | 'neutral' => {
+    const k = String(key || '').toLowerCase();
+    if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'home';
+    if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'opponent';
+    return 'neutral';
+  };
+
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
     const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+    const beltLane = beltLaneForKey(key);
+
     onOverlayEvent?.({
       key,
       label,
-      actor: 'neutral',
+      actor: actorForKey(key),
       value: undefined,
       meta: {
+        beltLane, // ✅ EventBelt will use this (when present)
         color,
         tint: color,
         buttonColor: color,
@@ -93,7 +127,7 @@ export default function BaseballHittingPlaybackModule({
     });
   };
 
-  // ---- actions
+  // actions
   const onBall = () => {
     setBalls(prev => {
       const next = Math.min(prev + 1, 4);
@@ -138,7 +172,10 @@ export default function BaseballHittingPlaybackModule({
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
     fire('hit', 'Hit', { type });
-    showToast(type === 'single' ? 'Single' : type === 'double' ? 'Double' : type === 'triple' ? 'Triple' : 'Bunt', HIT_COLOR);
+    showToast(
+      type === 'single' ? 'Single' : type === 'double' ? 'Double' : type === 'triple' ? 'Triple' : 'Bunt',
+      HIT_COLOR,
+    );
     resetCount();
   };
 
