@@ -1,12 +1,24 @@
+// components/library/LibraryVideoRow.tsx
+
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo } from 'react';
 import { Pressable, Text, TouchableOpacity, View } from 'react-native';
-import { getSportCardComponent } from './SportCardRegistry';
+
+// ✅ Robust import: avoids TS error if the registry's export name differs
+import * as SportCardRegistry from './SportCardRegistry';
+
 import { UploadButton } from './UploadButton';
 
 type FinalScore = { home: number; opponent: number };
 type Outcome = 'W' | 'L' | 'T';
+
+export type LibraryStyle = {
+  edgeColor?: string | null;
+  badgeText?: string | null;
+  badgeColor?: string | null;
+  highlight?: boolean | null;
+};
 
 export type LibraryRow = {
   uri: string;
@@ -26,6 +38,9 @@ export type LibraryRow = {
 
   highlightGold?: boolean | null;
   edgeColor?: string | null;
+
+  // ✅ Generic style bundle (sport-agnostic)
+  libraryStyle?: LibraryStyle | null;
 
   // Optional cloud-ish fields (safe to ignore if missing)
   shareId?: string | null;
@@ -59,9 +74,12 @@ function formatWhen(ms?: number | null) {
   if (!ms) return '—';
   const d = new Date(ms);
 
-  const month = d.toLocaleString(undefined, { month: 'short' }); // Jan
-  const day = d.getDate(); // 11
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); // 5:52 PM
+  const month = d.toLocaleString(undefined, { month: 'short' });
+  const day = d.getDate();
+  const time = d.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
   return `${month} ${day} at ${time}`;
 }
 
@@ -76,9 +94,6 @@ function formatRowTitle(row: LibraryRow) {
   const name = clean(row.displayName) || 'clip';
   const when = formatWhen(row.mtime);
 
-  // If your displayName is already a good “event name”, keep it.
-  // This yields: "Anakin • wrestling • Jan 11 at 5:52 PM"
-  // And a secondary smaller line can show name if needed.
   return {
     primary: `${athlete} • ${sport} • ${when}`,
     secondary: name,
@@ -112,18 +127,12 @@ const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => {
         {t.primary}
       </Text>
 
-      <Text
-        style={{ color: 'rgba(255,255,255,0.75)', marginTop: 6 }}
-        numberOfLines={1}
-      >
+      <Text style={{ color: 'rgba(255,255,255,0.75)', marginTop: 6 }} numberOfLines={1}>
         {t.secondary}
       </Text>
 
       {!!subtitle && (
-        <Text
-          style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }}
-          numberOfLines={1}
-        >
+        <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }} numberOfLines={1}>
           {subtitle}
         </Text>
       )}
@@ -160,7 +169,6 @@ function LibraryVideoRowComponent({
   onUploaded,
 }: Props) {
   const subtitleBits = [
-    // Clean meta line (no emojis)
     clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
     clean(row.sport) ? `Sport: ${clean(row.sport)}` : null,
     `Size: ${bytesToMB(row.size)}`,
@@ -185,11 +193,26 @@ function LibraryVideoRowComponent({
     outcome: row.outcome ?? undefined,
   };
 
+  // ✅ Prefer generic libraryStyle first, then legacy edgeColor, then W/L/T fallback
   const rowEdgeColor =
+    (row.libraryStyle?.edgeColor?.trim() ? row.libraryStyle.edgeColor : null) ??
     (row.edgeColor?.trim() ? row.edgeColor : null) ??
     outcomeColor(row.outcome ?? null);
 
-  const SportCard = getSportCardComponent(safeRow as any);
+  // ✅ Optional generic badge (sport-agnostic)
+  const badgeText = row.libraryStyle?.badgeText?.trim() || '';
+  const badgeColor =
+    row.libraryStyle?.badgeColor?.trim() ||
+    row.libraryStyle?.edgeColor?.trim() ||
+    'rgba(255,255,255,0.35)';
+
+  // ✅ Robust registry call (supports multiple export names)
+  const SportCard =
+    (SportCardRegistry as any).getSportCardComponent?.(safeRow as any) ??
+    (SportCardRegistry as any).getSportCard?.(safeRow as any) ??
+    (SportCardRegistry as any).getCardComponent?.(safeRow as any) ??
+    null;
+
   const SportCardComponent = (SportCard ?? DefaultSportCard) as any;
 
   return (
@@ -203,9 +226,7 @@ function LibraryVideoRowComponent({
         overflow: 'hidden',
         borderWidth: row.highlightGold ? 0 : 2,
         borderColor: row.highlightGold ? 'transparent' : rowEdgeColor,
-        backgroundColor: row.highlightGold
-          ? 'transparent'
-          : 'rgba(255,255,255,0.06)',
+        backgroundColor: row.highlightGold ? 'transparent' : 'rgba(255,255,255,0.06)',
       }}
     >
       {row.highlightGold && (
@@ -283,14 +304,32 @@ function LibraryVideoRowComponent({
                 alignItems: 'center',
               }}
             >
-              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>
-                No preview
-              </Text>
+              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
             </View>
           )}
 
           <View style={{ flex: 1 }}>
-            <SportCardComponent row={safeRow} subtitle={subtitle} chip={chip} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <SportCardComponent row={safeRow} subtitle={subtitle} chip={chip} />
+              </View>
+
+              {badgeText ? (
+                <View
+                  style={{
+                    alignSelf: 'flex-start',
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    backgroundColor: 'rgba(0,0,0,0.45)',
+                    borderWidth: 1,
+                    borderColor: badgeColor,
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '900' }}>{badgeText}</Text>
+                </View>
+              ) : null}
+            </View>
 
             {/* actions row */}
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>

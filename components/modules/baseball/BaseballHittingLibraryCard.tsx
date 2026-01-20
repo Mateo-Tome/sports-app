@@ -3,61 +3,52 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 
-type SportChip = { text: string; color: string };
-
 type RowLike = {
   displayName: string;
   sport: string;
   athlete?: string;
   size?: number | null;
-  highlightGold?: boolean;
 
-  // NEW: extra fields coming from Library
+  // optional
+  highlightGold?: boolean | null;
+
+  // style + label
   edgeColor?: string | null;
-  hittingLabel?: string | null; // e.g. "BB", "K", "HR", etc.
+  hittingLabel?: string | null; // e.g. "BB", "K", "1B", "HR"
 };
 
 export type BaseballHittingLibraryCardProps = {
   row: RowLike;
   subtitle: string;
-  chip?: SportChip | null; // still here if we ever want it, but unused for now
+
+  // NOTE: we accept chip to match the registry signature,
+  // but we intentionally ignore it for baseball (no W/L pill here).
+  chip?: any;
 };
 
-export const BaseballHittingLibraryCard: React.FC<
-  BaseballHittingLibraryCardProps
-> = ({ row, subtitle }) => {
-  // Text for the little pill
-  const label = row.hittingLabel ?? 'Hitting';
+export const BaseballHittingLibraryCard: React.FC<BaseballHittingLibraryCardProps> = ({
+  row,
+  subtitle,
+}) => {
+  const label = (row.hittingLabel ?? '').trim() || 'Hitting';
 
-  // Color for the pill: match the edgeColor if we have one (green/red/yellow)
-  const pillBorderColor =
-    row.edgeColor ?? 'rgba(59, 130, 246, 0.65)'; // fallback blue
-  const pillBgColor = row.edgeColor
-    ? 'rgba(0, 0, 0, 0.55)'
-    : 'rgba(59, 130, 246, 0.18)';
+  const pillBorderColor = (row.edgeColor ?? '').trim() || 'rgba(59,130,246,0.65)';
+  const pillBgColor = (row.edgeColor ?? '').trim()
+    ? 'rgba(0,0,0,0.55)'
+    : 'rgba(59,130,246,0.18)';
 
   return (
     <View>
-      {/* Top row: title + result pill + optional HR marker */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
+      {/* Title row + baseball label pill */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Text
-          style={{
-            color: 'white',
-            fontWeight: '700',
-            flexShrink: 1,
-          }}
+          style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
           numberOfLines={2}
         >
           {row.displayName}
         </Text>
 
-        {/* Result / count pill: uses hittingLabel + edgeColor */}
+        {/* Baseball label pill (K / BB / 1B / HR / etc) */}
         <View
           style={{
             paddingHorizontal: 8,
@@ -71,8 +62,8 @@ export const BaseballHittingLibraryCard: React.FC<
           <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
         </View>
 
-        {/* Gold HR badge if this clip is marked highlightGold */}
-        {row.highlightGold && (
+        {/* Gold HR badge if highlightGold */}
+        {!!row.highlightGold && (
           <View
             style={{
               paddingHorizontal: 8,
@@ -88,13 +79,8 @@ export const BaseballHittingLibraryCard: React.FC<
         )}
       </View>
 
-      {/* Subtitle still comes from Library: "👤 athlete • 🏷️ sport • 123 MB" */}
       <Text
-        style={{
-          color: 'white',
-          opacity: 0.85,
-          marginTop: 4,
-        }}
+        style={{ color: 'white', opacity: 0.85, marginTop: 4 }}
         numberOfLines={1}
       >
         {subtitle}

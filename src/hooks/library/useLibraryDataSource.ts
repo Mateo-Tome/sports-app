@@ -4,6 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { fetchMyVideos, type VideoRow } from '../../../lib/videos';
 
+export type LibraryStyle = {
+  edgeColor?: string | null;
+  badgeText?: string | null;
+  badgeColor?: string | null;
+  highlight?: boolean | null;
+};
+
 export type LibraryRowLike = {
   uri: string;
   displayName: string;
@@ -14,15 +21,17 @@ export type LibraryRowLike = {
   size?: number | null;
   thumbUri?: string | null;
 
-  // IMPORTANT: keep permissive so it accepts your real LibraryRow type too
-  // (your local LibraryRow.finalScore is FinalScore | null | undefined)
   finalScore?: any;
   homeIsAthlete?: boolean;
   outcome?: any;
   myScore?: number | null;
   oppScore?: number | null;
+
   highlightGold?: boolean;
   edgeColor?: string;
+
+  // ✅ NEW: sport-agnostic style
+  libraryStyle?: LibraryStyle | null;
 };
 
 const DS_KEY = 'library:dataSource';
@@ -61,17 +70,16 @@ function computeOutcomeLabel(outcome: any): 'W' | 'L' | '' {
   return '';
 }
 
-function computeEdgeColor(o: 'W' | 'L' | '', existing?: any) {
-  const ex = safeStr(existing);
-  if (ex) return ex;
+function computeEdgeColorFromWL(o: 'W' | 'L' | '') {
   if (o === 'W') return '#22c55e';
   if (o === 'L') return '#ef4444';
   return 'rgba(255,255,255,0.18)';
 }
 
 /**
- * Map Firestore VideoRow -> mobile LibraryRow-like
- * Supports multiple legacy field names.
+ * Map Firestore VideoRow -> LibraryRow-like
+ * IMPORTANT: Cloud needs style stored in Firestore (libraryStyle / edgeColor),
+ * otherwise baseball will fall back to gray (because W/L doesn't apply).
  */
 function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
   const shareId = safeStr((v as any).shareId, safeStr((v as any).id, ''));
@@ -104,17 +112,27 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
       ? (v as any).scoreAgainst
       : null;
 
-  const outcome = computeOutcomeLabel((v as any).outcome ?? (v as any).result);
+  const outcomeWL = computeOutcomeLabel((v as any).outcome ?? (v as any).result);
 
-  // Prefer a server formatted label if it exists, else generate one
   const finalScoreText =
     safeStr((v as any).finalScore, '') ||
     safeStr((v as any).scoreText, '') ||
-    (myScore != null && oppScore != null && outcome ? `${outcome} ${myScore}\u2013${oppScore}` : '');
+    (myScore != null && oppScore != null && outcomeWL ? `${outcomeWL} ${myScore}\u2013${oppScore}` : '');
 
-  // "Anakin • wrestling-folkstyle • Jan 11 at 5:53 PM"
+  // Title: "Anakin • baseball-hitting • Jan 11 at 5:53 PM"
   const titleParts = [athleteName, sportStyle];
   if (when) titleParts.push(when);
+
+  const libStyle = ((v as any).libraryStyle ?? null) as LibraryStyle | null;
+
+  // ✅ Border color priority:
+  // 1) libraryStyle.edgeColor (sport-agnostic, best)
+  // 2) legacy doc edgeColor
+  // 3) W/L fallback (only helps wrestling/etc)
+  const edgeColor =
+    (safeStr(libStyle?.edgeColor, '') || null) ??
+    (safeStr((v as any).edgeColor, '') || null) ??
+    computeEdgeColorFromWL(outcomeWL);
 
   return {
     uri: `cloud:${shareId}`,
@@ -125,33 +143,30 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     mtime: createdAt,
 
     assetId: null,
-    size: null,
+    size: (v as any).bytes ?? null,
     thumbUri: null,
 
-    outcome: outcome || undefined,
+    outcome: outcomeWL || undefined,
     myScore,
     oppScore,
 
-    // keep permissive
     finalScore: finalScoreText || null,
 
-    homeIsAthlete: typeof (v as any).homeIsAthlete === 'boolean' ? (v as any).homeIsAthlete : undefined,
+    homeIsAthlete:
+      typeof (v as any).homeIsAthlete === 'boolean' ? (v as any).homeIsAthlete : undefined,
+
     highlightGold: !!(v as any).highlightGold,
-    edgeColor: computeEdgeColor(outcome, (v as any).edgeColor),
+
+    edgeColor,
+    libraryStyle: libStyle,
   };
 }
 
-/**
- * NOTE:
- * - Local playback must pass `videoPath` (PlaybackScreen expects that for local files).
- * - Cloud playback must pass `shareId` (PlaybackScreen resolves signed URLs).
- */
 export function useLibraryDataSource(router: any, localRows: any[]) {
   const [dataSource, setDataSourceState] = useState<'local' | 'cloud'>('local');
   const [cloudRows, setCloudRows] = useState<LibraryRowLike[]>([]);
   const [cloudCount, setCloudCount] = useState<number>(0);
 
-  // Load persisted choice
   useEffect(() => {
     (async () => {
       try {
@@ -168,7 +183,6 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     } catch {}
   }, []);
 
-  // Fetch cloud on demand
   useEffect(() => {
     if (dataSource !== 'cloud') return;
 
@@ -204,7 +218,6 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     async (row: any) => {
       const isCloud = String(row?.uri ?? '').startsWith('cloud:');
 
-      // ✅ Local: PlaybackScreen expects `videoPath`
       if (!isCloud) {
         router.push({
           pathname: '/screens/PlaybackScreen',
@@ -218,7 +231,6 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
         return;
       }
 
-      // ✅ Cloud: PlaybackScreen expects `shareId`
       const shareId = String(row.uri).replace(/^cloud:/, '').trim();
       if (!shareId) return;
 

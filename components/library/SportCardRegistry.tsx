@@ -13,42 +13,37 @@ export type SportCardProps = {
     displayName: string;
     athlete: string;
     sport: string;
+
+    // optional
     highlightGold?: boolean;
     outcome?: 'W' | 'L' | 'T' | null;
     myScore?: number | null;
     oppScore?: number | null;
+
+    // optional sport-ish extras
+    edgeColor?: string | null;
+    hittingLabel?: string | null;
+
+    [k: string]: any;
   };
   subtitle: string;
   chip?: SportChip | null;
 };
 
 // default / generic card (used for highlights or unknown sports)
-export const DefaultLibraryCard: React.FC<SportCardProps> = ({
-  row,
-  subtitle,
-  chip,
-}) => {
+export const DefaultLibraryCard: React.FC<SportCardProps> = ({ row, subtitle, chip }) => {
   return (
     <View>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Text
-          style={{
-            color: 'white',
-            fontWeight: '700',
-            flexShrink: 1,
-          }}
+          style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
           numberOfLines={2}
         >
           {row.displayName}
         </Text>
 
-        {chip && (
+        {/* Generic chip only if caller provides it */}
+        {chip ? (
           <View
             style={{
               paddingHorizontal: 8,
@@ -59,13 +54,11 @@ export const DefaultLibraryCard: React.FC<SportCardProps> = ({
               borderColor: `${chip.color}66`,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900' }}>
-              {chip.text}
-            </Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>{chip.text}</Text>
           </View>
-        )}
+        ) : null}
 
-        {row.highlightGold && (
+        {row.highlightGold ? (
           <View
             style={{
               paddingHorizontal: 8,
@@ -76,21 +69,12 @@ export const DefaultLibraryCard: React.FC<SportCardProps> = ({
               borderColor: '#ffffff55',
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900' }}>
-              PIN / HR / SUB
-            </Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>HIGHLIGHT</Text>
           </View>
-        )}
+        ) : null}
       </View>
 
-      <Text
-        style={{
-          color: 'white',
-          opacity: 0.85,
-          marginTop: 4,
-        }}
-        numberOfLines={1}
-      >
+      <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>
         {subtitle}
       </Text>
     </View>
@@ -100,16 +84,15 @@ export const DefaultLibraryCard: React.FC<SportCardProps> = ({
 export function getSportCardComponent(
   row: SportCardProps['row'],
 ): React.ComponentType<SportCardProps> {
-  const s = (row.sport || '').toLowerCase();
+  const s = String(row.sport || '').toLowerCase();
 
   if (s.includes('baseball') && s.includes('hitting')) {
-    return BaseballHittingLibraryCard as React.ComponentType<SportCardProps>;
+    return BaseballHittingLibraryCard as unknown as React.ComponentType<SportCardProps>;
   }
 
   if (s.startsWith('wrestling')) {
-    return WrestlingFolkstyleLibraryCard as React.ComponentType<SportCardProps>;
+    return WrestlingFolkstyleLibraryCard as unknown as React.ComponentType<SportCardProps>;
   }
 
-  // fallback: generic
   return DefaultLibraryCard;
 }

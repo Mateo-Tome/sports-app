@@ -9,6 +9,13 @@ import {
 } from 'firebase/firestore';
 import { app, ensureAnonymous } from './firebase';
 
+export type LibraryStyle = {
+  edgeColor?: string | null;
+  badgeText?: string | null;
+  badgeColor?: string | null;
+  highlight?: boolean | null;
+};
+
 export type VideoRow = {
   id: string;
 
@@ -26,11 +33,18 @@ export type VideoRow = {
   title?: string | null;
   originalFileName?: string | null;
 
-  // scoring
+  // scoring (some sports won't use these)
   result?: 'W' | 'L' | 'T' | string | null;
   scoreFor?: number | null;
   scoreAgainst?: number | null;
   scoreText?: string | null;
+  finalScore?: string | null;
+  outcome?: string | null;
+
+  // ✅ optional generic style fields (future-proof)
+  edgeColor?: string | null;
+  highlightGold?: boolean | null;
+  libraryStyle?: LibraryStyle | null;
 
   // storage pointers (any era)
   b2VideoKey?: string | null;
@@ -59,9 +73,6 @@ export async function fetchMyVideos(): Promise<VideoRow[]> {
   return snap.docs.map((d) => {
     const data = d.data() as any;
 
-    // helpful debug once:
-    // console.log('VIDEO DOC', d.id, data);
-
     return {
       id: d.id,
       shareId: data.shareId ?? d.id,
@@ -79,6 +90,13 @@ export async function fetchMyVideos(): Promise<VideoRow[]> {
       scoreFor: data.scoreFor ?? null,
       scoreAgainst: data.scoreAgainst ?? null,
       scoreText: data.scoreText ?? null,
+      finalScore: data.finalScore ?? null,
+      outcome: data.outcome ?? null,
+
+      // ✅ pull through if present (not required)
+      edgeColor: data.edgeColor ?? null,
+      highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
+      libraryStyle: (data.libraryStyle ?? null) as any,
 
       b2VideoKey: data.b2VideoKey ?? null,
       b2SidecarKey: data.b2SidecarKey ?? null,
