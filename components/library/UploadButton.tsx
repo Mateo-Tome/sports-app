@@ -10,6 +10,9 @@ import { app, auth, ensureAnonymous } from "../../lib/firebase";
 import { testGetUploadUrl } from "../../lib/backend";
 import { uploadVideoToB2 } from "../../lib/uploadVideoToB2";
 
+// ✅ one central, sport-agnostic color function
+import { computeSportColor } from "../../lib/sportColors/computeSportColor";
+
 // -----------------------------
 // Sidecar reader
 // -----------------------------
@@ -279,7 +282,8 @@ export function UploadButton(props: Props) {
             }
 
             if (fullSidecar) {
-              const jsonPath = FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
+              const jsonPath =
+                FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
 
               const payload = {
                 ...fullSidecar,
@@ -292,9 +296,13 @@ export function UploadButton(props: Props) {
                 },
               };
 
-              await FileSystem.writeAsStringAsync(jsonPath, JSON.stringify(payload), {
-                encoding: FileSystem.EncodingType.UTF8,
-              });
+              await FileSystem.writeAsStringAsync(
+                jsonPath,
+                JSON.stringify(payload),
+                {
+                  encoding: FileSystem.EncodingType.UTF8,
+                }
+              );
 
               const creds2: any = await testGetUploadUrl();
               if (!creds2?.uploadUrl || !creds2?.uploadAuthToken) {
@@ -325,7 +333,10 @@ export function UploadButton(props: Props) {
               const localName = fileNameFromUri(localUri);
               const fallbackTitle = stripExt(localName);
 
-              const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
+              const athleteName = safeString(
+                fullSidecar?.athlete,
+                "Unassigned"
+              );
               const sport = safeString(fullSidecar?.sport, "unknown");
               const style = safeString(fullSidecar?.style, "");
               const sportStyle =
@@ -360,8 +371,31 @@ export function UploadButton(props: Props) {
               // Final fallback (rare)
               if (!title.trim()) title = fallbackTitle;
 
-              // ✅ derive score + result from sidecar
+              // ✅ derive score + result from sidecar (if available)
               const scoreBits = computeScoreBits(fullSidecar);
+
+              // ✅ ONE place for edge color (sport-agnostic):
+              // use computeSportColor which delegates to sport helper files.
+              const scSport = String(fullSidecar?.sport ?? sport ?? "");
+              const scEvents = Array.isArray(fullSidecar?.events)
+                ? fullSidecar.events
+                : [];
+              const scHomeIsAthlete =
+                typeof fullSidecar?.homeIsAthlete === "boolean"
+                  ? fullSidecar.homeIsAthlete
+                  : true;
+
+              const colorRes = computeSportColor(
+                { sport: scSport, events: scEvents, homeIsAthlete: scHomeIsAthlete },
+                scoreBits.result ?? null,
+                false,
+                scoreBits.finalScore
+              );
+
+              const libraryStyle =
+                colorRes?.edgeColor
+                  ? { edgeColor: colorRes.edgeColor }
+                  : null;
 
               const docData: any = {
                 ownerUid: user.uid,
@@ -389,15 +423,20 @@ export function UploadButton(props: Props) {
                 shareId,
                 isPublic: true,
 
-                // ✅ fields web can use for the score pill
+                // optional scoring
                 result: scoreBits.result,
                 scoreFor: scoreBits.scoreFor,
                 scoreAgainst: scoreBits.scoreAgainst,
                 scoreText: scoreBits.scoreText,
-
-                // optional: keep raw score info
                 homeIsAthlete: scoreBits.homeIsAthlete,
                 finalScore: scoreBits.finalScore,
+
+                // ✅ the only thing Library needs to paint borders for any sport
+                libraryStyle,
+
+                // ✅ legacy fields (safe; helps older code paths)
+                edgeColor: colorRes?.edgeColor ?? null,
+                highlightGold: !!colorRes?.highlightGold,
               };
 
               const ref = await addDoc(collection(db, "videos"), docData);
