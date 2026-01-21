@@ -33,18 +33,18 @@ export type VideoRow = {
   title?: string | null;
   originalFileName?: string | null;
 
-  // scoring (some sports won't use these)
+  // scoring (legacy / optional)
   result?: 'W' | 'L' | 'T' | string | null;
   scoreFor?: number | null;
   scoreAgainst?: number | null;
   scoreText?: string | null;
-  finalScore?: string | null;
-  outcome?: string | null;
 
-  // ✅ optional generic style fields (future-proof)
+  // ✅ NEW: generic, sport-agnostic presentation bundle
+  libraryStyle?: LibraryStyle | null;
+
+  // ✅ legacy presentation fields (optional)
   edgeColor?: string | null;
   highlightGold?: boolean | null;
-  libraryStyle?: LibraryStyle | null;
 
   // storage pointers (any era)
   b2VideoKey?: string | null;
@@ -90,13 +90,13 @@ export async function fetchMyVideos(): Promise<VideoRow[]> {
       scoreFor: data.scoreFor ?? null,
       scoreAgainst: data.scoreAgainst ?? null,
       scoreText: data.scoreText ?? null,
-      finalScore: data.finalScore ?? null,
-      outcome: data.outcome ?? null,
 
-      // ✅ pull through if present (not required)
+      // ✅ NEW
+      libraryStyle: (data.libraryStyle ?? null) as any,
+
+      // ✅ legacy
       edgeColor: data.edgeColor ?? null,
       highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
-      libraryStyle: (data.libraryStyle ?? null) as any,
 
       b2VideoKey: data.b2VideoKey ?? null,
       b2SidecarKey: data.b2SidecarKey ?? null,

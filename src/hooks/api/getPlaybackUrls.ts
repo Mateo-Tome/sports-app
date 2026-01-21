@@ -1,21 +1,20 @@
-// src/hooks/api/getPlaybackUrls.ts  (or wherever your import points)
+// src/hooks/api/getPlaybackUrls.ts
+
 export type PlaybackUrls = {
   videoUrl: string;
   sidecarUrl?: string;
   expiresAt?: number;
 };
 
-function requireEnv(name: string) {
-  const v = (process.env as any)?.[name];
-  return typeof v === 'string' ? v.trim() : '';
-}
+const FUNCTIONS_BASE_URL = (process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL || '').trim();
+const GET_PLAYBACK_URLS_URL = (process.env.EXPO_PUBLIC_GET_PLAYBACK_URLS_URL || '').trim();
 
 function getEndpoint() {
-  const full = requireEnv('EXPO_PUBLIC_GET_PLAYBACK_URLS_URL');
-  if (full && full.startsWith('http')) return full;
+  if (GET_PLAYBACK_URLS_URL && GET_PLAYBACK_URLS_URL.startsWith('http')) return GET_PLAYBACK_URLS_URL;
 
-  const base = requireEnv('EXPO_PUBLIC_FUNCTIONS_BASE_URL');
-  if (base && base.startsWith('http')) return `${base.replace(/\/+$/, '')}/getPlaybackUrls`;
+  if (FUNCTIONS_BASE_URL && FUNCTIONS_BASE_URL.startsWith('http')) {
+    return `${FUNCTIONS_BASE_URL.replace(/\/+$/, '')}/getPlaybackUrls`;
+  }
 
   return '';
 }
@@ -26,14 +25,16 @@ export async function getPlaybackUrls(
 ): Promise<PlaybackUrls> {
   const endpoint = getEndpoint();
   if (!endpoint) {
-    throw new Error('Missing EXPO_PUBLIC_FUNCTIONS_BASE_URL (or EXPO_PUBLIC_GET_PLAYBACK_URLS_URL)');
+    throw new Error(
+      'Missing EXPO_PUBLIC_FUNCTIONS_BASE_URL (or EXPO_PUBLIC_GET_PLAYBACK_URLS_URL)',
+    );
   }
 
   const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}shareId=${encodeURIComponent(shareId)}`;
 
-  // ✅ super explicit debug
   if (typeof window !== 'undefined') {
-    console.log('[getPlaybackUrls] env base =', requireEnv('EXPO_PUBLIC_FUNCTIONS_BASE_URL'));
+    console.log('[getPlaybackUrls] EXPO_PUBLIC_FUNCTIONS_BASE_URL =', FUNCTIONS_BASE_URL);
+    console.log('[getPlaybackUrls] EXPO_PUBLIC_GET_PLAYBACK_URLS_URL =', GET_PLAYBACK_URLS_URL);
     console.log('[getPlaybackUrls] endpoint =', endpoint);
     console.log('[getPlaybackUrls] GET', url);
   }

@@ -8,6 +8,9 @@ import { Pressable, Text, TouchableOpacity, View } from 'react-native';
 // ✅ Robust import: avoids TS error if the registry's export name differs
 import * as SportCardRegistry from './SportCardRegistry';
 
+// ✅ FIX: ShareButton is a default export (not a named export)
+import ShareButton from './ShareButton';
+
 import { UploadButton } from './UploadButton';
 
 type FinalScore = { home: number; opponent: number };
@@ -157,6 +160,24 @@ const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => {
   );
 };
 
+function resolveShareId(row: LibraryRow, uploaded: boolean): string {
+  // Best case: row already has shareId (cloud rows usually will)
+  const direct = (row.shareId ?? '').trim();
+  if (direct) return direct;
+
+  // If your local rows get a synthetic "cloud:<shareId>" uri, support that too.
+  // (Safe: only runs when uploaded = true)
+  if (uploaded) {
+    const uri = String(row.uri ?? '');
+    if (uri.startsWith('cloud:')) {
+      const sid = uri.replace(/^cloud:/, '').trim();
+      if (sid) return sid;
+    }
+  }
+
+  return '';
+}
+
 // ----- Main row component -----
 function LibraryVideoRowComponent({
   row,
@@ -176,6 +197,7 @@ function LibraryVideoRowComponent({
 
   const subtitle = subtitleBits.join(' • ');
 
+  // Keep your existing W/L chip behavior exactly the same
   const chip: Chip | null =
     row.sport !== 'highlights' &&
     row.outcome &&
@@ -199,7 +221,6 @@ function LibraryVideoRowComponent({
     (row.edgeColor?.trim() ? row.edgeColor : null) ??
     outcomeColor(row.outcome ?? null);
 
-  // ✅ Optional generic badge (sport-agnostic)
   const badgeText = row.libraryStyle?.badgeText?.trim() || '';
   const badgeColor =
     row.libraryStyle?.badgeColor?.trim() ||
@@ -214,6 +235,8 @@ function LibraryVideoRowComponent({
     null;
 
   const SportCardComponent = (SportCard ?? DefaultSportCard) as any;
+
+  const shareId = resolveShareId(row, uploaded);
 
   return (
     <Pressable
@@ -304,7 +327,9 @@ function LibraryVideoRowComponent({
                 alignItems: 'center',
               }}
             >
-              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>No preview</Text>
+              <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>
+                No preview
+              </Text>
             </View>
           )}
 
@@ -397,18 +422,29 @@ function LibraryVideoRowComponent({
                 <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
               </TouchableOpacity>
 
+              {/* Upload becomes Share once uploaded */}
               <View style={{ marginTop: 8, alignItems: 'center' }}>
-                <UploadButton
-                  localUri={row.uri}
-                  uploaded={uploaded}
-                  sidecar={{
-                    videoPath: row.uri,
-                    athlete: row.athlete,
-                    sport: row.sport,
-                    createdAt: row.mtime ?? Date.now(),
-                  }}
-                  onUploaded={onUploaded}
-                />
+                {uploaded ? (
+                  shareId ? (
+                    <ShareButton shareId={shareId} />
+                  ) : (
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+                      Uploaded (missing shareId)
+                    </Text>
+                  )
+                ) : (
+                  <UploadButton
+                    localUri={row.uri}
+                    uploaded={uploaded}
+                    sidecar={{
+                      videoPath: row.uri,
+                      athlete: row.athlete,
+                      sport: row.sport,
+                      createdAt: row.mtime ?? Date.now(),
+                    }}
+                    onUploaded={onUploaded}
+                  />
+                )}
               </View>
             </View>
           </View>
