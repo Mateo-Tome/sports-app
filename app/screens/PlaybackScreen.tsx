@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import React, { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,13 +12,16 @@ import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 import useWebVideoController from '../../src/hooks/useWebVideoController';
 
-import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
+import {
+  EditModeMask,
+  LoadingErrorOverlay,
+  ReplayOverlay,
+  SkipHudOverlay,
+} from '../../components/playback/PlaybackOverlays';
 
-import BaseballHittingPlaybackModule from '../../components/modules/baseball/BaseballHittingPlaybackModule';
-import WrestlingFolkstylePlaybackModule from '../../components/modules/wrestling/WrestlingFolkstylePlaybackModule';
 import TopScrubber from '../../components/playback/TopScrubber';
 
-import type { OverlayEvent, PlaybackModuleProps } from '../../components/modules/types';
+import type { OverlayEvent } from '../../components/modules/types';
 import { Actor, EventRow, PENALTYISH, toActor } from '../../components/playback/playbackCore';
 
 import {
@@ -31,14 +34,12 @@ import {
   SAFE_MARGIN,
 } from '../../components/playback/PlaybackChrome';
 
+// ✅ NEW: centralized playback module registry (robust import style)
+import * as PlaybackModuleRegistry from '../../components/modules/PlaybackModuleRegistry';
+
 const GREEN = '#16a34a';
 const RED = '#dc2626';
 const SKIP_SEC = 5;
-
-const ModuleRegistry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
-  'wrestling:folkstyle': WrestlingFolkstylePlaybackModule,
-  'baseball:hitting': BaseballHittingPlaybackModule,
-};
 
 const isWeb = Platform.OS === 'web';
 
@@ -352,8 +353,9 @@ export default function PlaybackScreen() {
     saveSidecar(next);
   };
 
-  const moduleKey = `${String(effectiveSport || '').toLowerCase()}:${String(effectiveStyle || 'default').toLowerCase()}`;
-  const ModuleCmp = ModuleRegistry[moduleKey];
+  // ✅ module lookup via registry (robust + won't crash even if Metro cached a stale module)
+  const { Module: ModuleCmp } =
+    PlaybackModuleRegistry.getPlaybackModule?.(effectiveSport, effectiveStyle) ?? { Module: null };
 
   const colorForPill = useCallback(
     (e: EventRow) => {

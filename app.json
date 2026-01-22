@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "sport-app",
-    "slug": "sport-app",
+    "name": "QuickClip",
+    "slug": "quickclip",
     "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "sportapp",
+    "scheme": "quickclip",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
     "plugins": [
