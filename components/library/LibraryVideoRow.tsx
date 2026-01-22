@@ -178,6 +178,44 @@ function resolveShareId(row: LibraryRow, uploaded: boolean): string {
   return '';
 }
 
+/**
+ * Clean “confirmed uploaded” status:
+ * - "Uploaded" label
+ * - white circle with green check
+ */
+function UploadedStatus() {
+  return (
+    <View
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 999,
+        backgroundColor: 'white',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 2, // Android
+      }}
+    >
+      <Text
+        style={{
+          color: '#16a34a',
+          fontWeight: '900',
+          fontSize: 14,
+          lineHeight: 14,
+          marginTop: 1, // optical centering
+        }}
+      >
+        ✓
+      </Text>
+    </View>
+  );
+}
+
+
 // ----- Main row component -----
 function LibraryVideoRowComponent({
   row,
@@ -428,9 +466,7 @@ function LibraryVideoRowComponent({
                   shareId ? (
                     <ShareButton shareId={shareId} />
                   ) : (
-                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
-                      Uploaded (missing shareId)
-                    </Text>
+                    <UploadedStatus />
                   )
                 ) : (
                   <UploadButton
