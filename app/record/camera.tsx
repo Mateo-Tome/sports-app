@@ -9,7 +9,7 @@ import ZoomableCameraView from '../../components/ZoomableCameraView';
 
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
-import { JSX, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,12 +22,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import HighlightButton from '../../components/HighlightButton';
-import BaseballHittingOverlay from '../../components/overlays/BaseballHittingOverlay';
 import type {
   OverlayEvent,
-  OverlayProps,
 } from '../../components/overlays/types';
-import WrestlingFolkstyleOverlay from '../../components/overlays/WrestlingFolkstyleOverlay';
+
+// ✅ NEW: centralized recording overlay registry
+import { getRecordingOverlay } from '../../components/overlays/RecordingOverlayRegistry';
 
 // ✅ extracted recording helpers
 import {
@@ -43,18 +43,6 @@ import {
 } from '../../lib/recording/segmentManager';
 
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
-
-// ---- Overlay registry (EASY EXTENSION POINT) -----------------
-
-type OverlayComponent = (props: OverlayProps) => JSX.Element;
-
-const overlayRegistry: Record<string, OverlayComponent> = {
-  'wrestling:folkstyle': WrestlingFolkstyleOverlay,
-  'baseball:hitting': BaseballHittingOverlay,
-  // later:
-  // 'baseball:pitching': BaseballPitchingOverlay,
-  // 'basketball:default': BasketballOverlay,
-};
 
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
@@ -82,22 +70,19 @@ export default function CameraScreen() {
   // include original for saving payloads / folder names
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
 
-  // look up overlay, e.g. "wrestling:folkstyle", "baseball:hitting"
-  let overlayKey = `${sportNorm}:${styleNorm}`;
+  // look up overlay, e.g. "wrestling:folkstyle", "wrestling:freestyle"
+  let { Overlay: ActiveOverlay } = getRecordingOverlay(sportNorm, styleNorm);
 
   // 🔧 If we're on baseball but don't find a matching overlay, default to hitting
-  if (sportNorm === 'baseball' && !overlayRegistry[overlayKey]) {
-    overlayKey = 'baseball:hitting';
+  if (sportNorm === 'baseball' && !ActiveOverlay) {
+    ({ Overlay: ActiveOverlay } = getRecordingOverlay('baseball', 'hitting'));
   }
-
-  const ActiveOverlay = overlayRegistry[overlayKey];
 
   console.log('[CameraScreen overlay]', {
     sportParam,
     styleParam,
     sportNorm,
     styleNorm,
-    overlayKey,
     hasOverlay: !!ActiveOverlay,
   });
 
