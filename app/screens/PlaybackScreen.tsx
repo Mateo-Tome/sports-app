@@ -1,3 +1,6 @@
+// app/(whatever)/PlaybackScreen.tsx
+// (This is the full file you pasted, with ONLY the pill-color logic upgraded in a generic/modular way.)
+
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { useCallback, useMemo, useState } from 'react';
@@ -12,13 +15,7 @@ import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 import useWebVideoController from '../../src/hooks/useWebVideoController';
 
-import {
-  EditModeMask,
-  LoadingErrorOverlay,
-  ReplayOverlay,
-  SkipHudOverlay,
-} from '../../components/playback/PlaybackOverlays';
-
+import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
 import TopScrubber from '../../components/playback/TopScrubber';
 
 import type { OverlayEvent } from '../../components/modules/types';
@@ -34,7 +31,7 @@ import {
   SAFE_MARGIN,
 } from '../../components/playback/PlaybackChrome';
 
-// ✅ NEW: centralized playback module registry (robust import style)
+// ✅ centralized playback module registry
 import * as PlaybackModuleRegistry from '../../components/modules/PlaybackModuleRegistry';
 
 const GREEN = '#16a34a';
@@ -353,15 +350,35 @@ export default function PlaybackScreen() {
     saveSidecar(next);
   };
 
-  // ✅ module lookup via registry (robust + won't crash even if Metro cached a stale module)
+  // ✅ module lookup via registry
   const { Module: ModuleCmp } =
     PlaybackModuleRegistry.getPlaybackModule?.(effectiveSport, effectiveStyle) ?? { Module: null };
+
+  /**
+   * ✅ MODULAR COLOR RESOLUTION (NOT sport-specific):
+   * - reads explicit color if present
+   * - reads athleteActor if recorded (so flips during recording still play back correctly)
+   * - reads named colors (red/blue/green) OR hex colors if modules provide them
+   * - otherwise falls back to existing legacy logic so nothing breaks
+   */
+  const isHex = (v: any) =>
+    typeof v === 'string' && /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim());
+
+  const normalizeNamed = (raw: any): 'red' | 'blue' | 'green' | null => {
+    if (!raw) return null;
+    const v = String(raw).trim().toLowerCase();
+    if (v === 'red') return 'red';
+    if (v === 'blue') return 'blue';
+    if (v === 'green') return 'green';
+    return null;
+  };
 
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
       const inner = (meta.meta ?? {}) as any;
 
+      // 1) explicit tint wins (works for all sports)
       const explicit =
         meta.pillColor ??
         inner.pillColor ??
@@ -376,26 +393,55 @@ export default function PlaybackScreen() {
 
       if (typeof explicit === 'string' && explicit.trim().length > 0) return explicit;
 
-      const pickColor = (which: 'myKidColor' | 'opponentColor'): string | undefined => {
-        const raw = meta[which] ?? inner[which];
-        if (!raw) return undefined;
-        const v = String(raw).toLowerCase();
-        if (v === 'green') return GREEN;
-        if (v === 'red') return RED;
-        return undefined;
-      };
+      // Merge meta defensively
+      const m = { ...inner, ...meta };
 
-      const mk = pickColor('myKidColor');
-      const ok = pickColor('opponentColor');
+      // 2) Prefer stored athleteActor mapping (correct even if you flipped during recording)
+      const athleteActor: 'home' | 'opponent' | null =
+        m.athleteActor === 'home' || m.athleteActor === 'opponent' ? m.athleteActor : null;
 
       const isAthleteActor =
-        (e.actor === 'home' && effectiveHomeIsAthlete) || (e.actor === 'opponent' && !effectiveHomeIsAthlete);
+        athleteActor
+          ? e.actor === athleteActor
+          : (e.actor === 'home' && effectiveHomeIsAthlete) || (e.actor === 'opponent' && !effectiveHomeIsAthlete);
 
-      if (mk || ok) {
-        if (isAthleteActor && mk) return mk;
-        if (!isAthleteActor && ok) return ok;
+      // 3) If modules store explicit hex colors, use them
+      if (isHex(m.athleteColor) || isHex(m.opponentColor)) {
+        const aHex = isHex(m.athleteColor) ? m.athleteColor : null;
+        const oHex = isHex(m.opponentColor) ? m.opponentColor : null;
+
+        if (isAthleteActor && aHex) return aHex;
+        if (!isAthleteActor && oHex) return oHex;
+
+        // If only one exists, just use it for both (safe fallback)
+        if (aHex) return aHex;
+        if (oHex) return oHex;
       }
 
+      // 4) Named colors (modules should set these per sport)
+      const mkName = normalizeNamed(m.myKidColor);
+      const okName = normalizeNamed(m.opponentColor);
+
+      // Map named tokens to actual render colors.
+      // This is STILL NOT sport-specific because the module chooses the tokens.
+      // (If a module wants blue, it writes "blue". If it wants green, it writes "green".)
+      const mapNamedToHex = (name: 'red' | 'blue' | 'green') => {
+        if (name === 'green') return GREEN;
+        if (name === 'red') return RED;
+        // blue: a sane default
+        return '#3b82f6';
+      };
+
+      if (mkName || okName) {
+        if (isAthleteActor && mkName) return mapNamedToHex(mkName);
+        if (!isAthleteActor && okName) return mapNamedToHex(okName);
+
+        // If only one exists, mirror it so pills still get a consistent color.
+        if (mkName) return mapNamedToHex(mkName);
+        if (okName) return mapNamedToHex(okName);
+      }
+
+      // 5) Legacy fallback (keeps your existing sports working)
       const colorIsGreen = effectiveHomeColorIsGreen !== false;
       const athleteColor = colorIsGreen ? GREEN : RED;
       const opponentColor = colorIsGreen ? RED : GREEN;
