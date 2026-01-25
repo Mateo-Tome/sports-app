@@ -8,6 +8,9 @@ import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
 import WrestlingFreestyleOverlay from './wrestlingFreestyleOverlay';
 import WrestlingGrecoOverlay from './wrestlingGrecoOverlay';
 
+// ✅ NEW: Volleyball overlay (adjust the path to match where you create the file)
+import VolleyballOverlay from './vollyball/VollyballOverlay';
+
 export function normalizeKey(sport?: string, style?: string) {
   const s = String(sport ?? '').trim().toLowerCase();
   const st = String(style ?? 'default').trim().toLowerCase();
@@ -15,11 +18,16 @@ export function normalizeKey(sport?: string, style?: string) {
 }
 
 const Registry: Record<string, React.ComponentType<OverlayProps>> = {
+  // Wrestling
   'wrestling:folkstyle': WrestlingFolkstyleOverlay,
   'wrestling:freestyle': WrestlingFreestyleOverlay,
   'wrestling:greco': WrestlingGrecoOverlay,
 
+  // Baseball
   'baseball:hitting': BaseballHittingOverlay,
+
+  // ✅ Volleyball
+  'volleyball:default': VolleyballOverlay,
 };
 
 export function getRecordingOverlay(sport?: string, style?: string) {
