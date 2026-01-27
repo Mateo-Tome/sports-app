@@ -22,11 +22,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import HighlightButton from '../../components/HighlightButton';
-import type {
-  OverlayEvent,
-} from '../../components/overlays/types';
+import type { OverlayEvent } from '../../components/overlays/types';
 
-// ✅ NEW: centralized recording overlay registry
+// ✅ centralized recording overlay registry (+ preroll)
 import { getRecordingOverlay } from '../../components/overlays/RecordingOverlayRegistry';
 
 // ✅ extracted recording helpers
@@ -36,7 +34,7 @@ import {
   MatchEvent,
 } from '../../lib/recording/finalizeRecording';
 
-// ✅ new segmented recording manager
+// ✅ segmented recording manager
 import {
   startNewSegment,
   stopCurrentSegment,
@@ -47,7 +45,14 @@ const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
 
-// --- screen ---------------------------------------------------
+function makeEventId() {
+  // Prefer UUID if available
+  const anyCrypto: any = (globalThis as any).crypto;
+  if (anyCrypto?.randomUUID) return anyCrypto.randomUUID();
+
+  // Fallback: stable enough for local event identity
+  return `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export default function CameraScreen() {
   const params = useLocalSearchParams<{
@@ -70,12 +75,14 @@ export default function CameraScreen() {
   // include original for saving payloads / folder names
   const sportKey = `${sportParam}:${styleParam || 'unknown'}`;
 
-  // look up overlay, e.g. "wrestling:folkstyle", "wrestling:freestyle"
-  let { Overlay: ActiveOverlay } = getRecordingOverlay(sportNorm, styleNorm);
+  // look up overlay + preroll
+  let { Overlay: ActiveOverlay, preRollSec } = getRecordingOverlay(sportNorm, styleNorm);
 
   // 🔧 If we're on baseball but don't find a matching overlay, default to hitting
   if (sportNorm === 'baseball' && !ActiveOverlay) {
-    ({ Overlay: ActiveOverlay } = getRecordingOverlay('baseball', 'hitting'));
+    const fallback = getRecordingOverlay('baseball', 'hitting');
+    ActiveOverlay = fallback.Overlay;
+    preRollSec = fallback.preRollSec;
   }
 
   console.log('[CameraScreen overlay]', {
@@ -84,6 +91,7 @@ export default function CameraScreen() {
     sportNorm,
     styleNorm,
     hasOverlay: !!ActiveOverlay,
+    preRollSec,
   });
 
   const insets = useSafeAreaInsets();
@@ -99,6 +107,7 @@ export default function CameraScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
   const [startMs, setStartMs] = useState<number | null>(null);
   const pauseStartedAtRef = useRef<number | null>(null);
   const totalPausedMsRef = useRef(0);
@@ -223,28 +232,42 @@ export default function CameraScreen() {
     [],
   );
 
+  /**
+   * ✅ Returns the timestamp (seconds) we write into events.
+   * We subtract preRollSec so the pill can appear earlier.
+   * (Real seeking/scoring still uses this stored time; playback will also shift display.)
+   */
   const getCurrentTSec = () => {
     const start = startMs ?? Date.now();
     const pausedNow =
       isPaused && pauseStartedAtRef.current
         ? Date.now() - pauseStartedAtRef.current
         : 0;
-    const effectiveElapsed =
+
+    const effectiveElapsedMs =
       Date.now() - start - totalPausedMsRef.current - pausedNow;
-    return Math.max(0, Math.round(effectiveElapsed / 1000) - 3);
+
+    const rawSec = effectiveElapsedMs / 1000;
+
+    // ✅ Pre-roll shift
+    const shifted = rawSec - (Number.isFinite(preRollSec) ? preRollSec : 0);
+
+    // Keep behavior similar to before (integer seconds, never negative)
+    return Math.max(0, Math.round(shifted));
   };
 
   const handleOverlayEvent = (evt: OverlayEvent) => {
     if (!isRecording || isPaused) return;
+
     const t = getCurrentTSec();
-    const kind = String(evt.key ?? 'unknown');
-    const points = Number.isFinite(evt.value)
-      ? Number(evt.value)
-      : undefined;
+
+    // Normalize event type: prefer key, fall back to kind
+    const kind = String(evt.key ?? evt.kind ?? 'unknown');
+
+    const points = Number.isFinite(evt.value) ? Number(evt.value) : undefined;
+
     const actor: Actor =
-      evt.actor === 'home' || evt.actor === 'opponent'
-        ? evt.actor
-        : 'neutral';
+      evt.actor === 'home' || evt.actor === 'opponent' ? evt.actor : 'neutral';
 
     // only increment scoreboard for positive point events
     if (typeof points === 'number' && points > 0) {
@@ -262,17 +285,30 @@ export default function CameraScreen() {
       setScore(scoreRef.current);
     }
 
-    eventsRef.current = [
-      ...eventsRef.current,
-      {
-        t,
-        kind,
-        points,
-        actor,
-        meta: evt as any,
-        scoreAfter: { ...scoreRef.current },
-      },
-    ];
+    const eventId = makeEventId();
+
+    // Keep meta clean + stable: prefer evt.meta, don’t store whole evt blob
+    const meta =
+      evt && typeof evt.meta === 'object' && evt.meta ? { ...evt.meta } : {};
+
+    // ✅ Store preroll used at record-time so playback can be perfect per-clip/per-event later
+    if (typeof meta.preRollSec !== 'number') {
+      meta.preRollSec = Number.isFinite(preRollSec) ? preRollSec : 0;
+    }
+
+    const next: MatchEvent = {
+      eventId,
+      t,
+      kind,
+      key: evt.key,
+      label: evt.label,
+      points,
+      actor,
+      meta,
+      scoreAfter: { ...scoreRef.current },
+    };
+
+    eventsRef.current = [...eventsRef.current, next];
   };
 
   const handleStart = async () => {
@@ -284,29 +320,31 @@ export default function CameraScreen() {
     if (!micPerm?.granted) {
       const r = await requestMicPerm();
       if (!r?.granted) {
-        Alert.alert(
-          'Microphone needed',
-          'Enable microphone to record audio.',
-        );
+        Alert.alert('Microphone needed', 'Enable microphone to record audio.');
         return;
       }
     }
+
     eventsRef.current = [];
     scoreRef.current = { home: 0, opponent: 0 };
     setScore(scoreRef.current);
+
     setStartMs(Date.now());
     totalPausedMsRef.current = 0;
     pauseStartedAtRef.current = null;
     setIsPaused(false);
+
     setIsRecording(true);
     setMarkers([]);
     segmentsRef.current = [];
+
     try {
       await AsyncStorage.setItem(
         CURRENT_ATHLETE_KEY,
         (athlete || 'Unassigned').trim(),
       );
     } catch {}
+
     await startNewSegment(
       cameraRef,
       cameraReady,
@@ -326,8 +364,7 @@ export default function CameraScreen() {
   const handleResume = async () => {
     if (!isRecording || !isPaused) return;
     if (pauseStartedAtRef.current) {
-      totalPausedMsRef.current +=
-        Date.now() - pauseStartedAtRef.current;
+      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
     }
     pauseStartedAtRef.current = null;
     setIsPaused(false);
@@ -344,8 +381,7 @@ export default function CameraScreen() {
     if (!isRecording || isProcessing) return;
 
     if (isPaused && pauseStartedAtRef.current) {
-      totalPausedMsRef.current +=
-        Date.now() - pauseStartedAtRef.current;
+      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
     }
     pauseStartedAtRef.current = null;
 
@@ -386,6 +422,8 @@ export default function CameraScreen() {
 
   const addHighlight = () => {
     if (!isRecording || isPaused) return;
+
+    // highlight marker should ALSO include lead-up (same preroll idea)
     const t = Math.max(
       0,
       (() => {
@@ -394,11 +432,17 @@ export default function CameraScreen() {
           isPaused && pauseStartedAtRef.current
             ? Date.now() - pauseStartedAtRef.current
             : 0;
+
         const effectiveElapsed =
           Date.now() - start - totalPausedMsRef.current - pausedNow;
-        return Math.round(effectiveElapsed / 1000) - HILITE_DURATION_SEC;
+
+        const rawSec = effectiveElapsed / 1000;
+        const shifted = rawSec - (Number.isFinite(preRollSec) ? preRollSec : 0);
+
+        return Math.round(shifted) - HILITE_DURATION_SEC;
       })(),
     );
+
     setMarkers((m) => [...m, t]);
   };
 
@@ -442,9 +486,7 @@ export default function CameraScreen() {
                 left: 0,
                 right: 0,
               }}
-              pointerEvents={
-                isPaused ? ('none' as any) : ('box-none' as any)
-              }
+              pointerEvents={isPaused ? ('none' as any) : ('box-none' as any)}
             >
               {ActiveOverlay ? (
                 <ActiveOverlay
@@ -527,18 +569,10 @@ export default function CameraScreen() {
           }}
         >
           <ActivityIndicator size="large" color="#FFF" />
-          <Text
-            style={{
-              color: 'white',
-              marginTop: 20,
-              fontWeight: '700',
-            }}
-          >
+          <Text style={{ color: 'white', marginTop: 20, fontWeight: '700' }}>
             Saving and processing video...
           </Text>
-          <Text
-            style={{ color: 'gray', marginTop: 5, fontSize: 12 }}
-          >
+          <Text style={{ color: 'gray', marginTop: 5, fontSize: 12 }}>
             This may take a moment depending on recording length.
           </Text>
         </View>
@@ -577,9 +611,7 @@ export default function CameraScreen() {
               borderColor: 'rgba(255,255,255,0.35)',
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>
-              Back
-            </Text>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -608,15 +640,8 @@ export default function CameraScreen() {
               borderColor: 'rgba(255,255,255,0.35)',
             }}
           >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '800',
-                fontSize: 14,
-              }}
-            >
-              {cameraReady ? 'Ready' : 'Opening camera…'} —{' '}
-              {athlete || 'Unassigned'}
+            <Text style={{ color: 'white', fontWeight: '800', fontSize: 14 }}>
+              {cameraReady ? 'Ready' : 'Opening camera…'} — {athlete || 'Unassigned'}
             </Text>
           </View>
         </View>
@@ -648,20 +673,12 @@ export default function CameraScreen() {
                 borderRadius: 999,
               }}
             >
-              <Text
-                style={{ color: 'white', fontWeight: '600' }}
-              >
-                Start
-              </Text>
+              <Text style={{ color: 'white', fontWeight: '600' }}>Start</Text>
             </TouchableOpacity>
 
             {/* star shown but disabled before recording */}
             <View style={{ marginLeft: 6 }}>
-              <HighlightButton
-                onPress={addHighlight}
-                disabled={true}
-                count={markers.length}
-              />
+              <HighlightButton onPress={addHighlight} disabled={true} count={markers.length} />
             </View>
           </>
         ) : (
@@ -679,11 +696,7 @@ export default function CameraScreen() {
                   borderRadius: 999,
                 }}
               >
-                <Text
-                  style={{ color: 'white', fontWeight: '700' }}
-                >
-                  Pause
-                </Text>
+                <Text style={{ color: 'white', fontWeight: '700' }}>Pause</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -696,11 +709,7 @@ export default function CameraScreen() {
                   borderRadius: 999,
                 }}
               >
-                <Text
-                  style={{ color: 'black', fontWeight: '800' }}
-                >
-                  Resume
-                </Text>
+                <Text style={{ color: 'black', fontWeight: '800' }}>Resume</Text>
               </TouchableOpacity>
             )}
 
@@ -714,20 +723,12 @@ export default function CameraScreen() {
                 borderRadius: 999,
               }}
             >
-              <Text
-                style={{ color: 'black', fontWeight: '600' }}
-              >
-                Stop
-              </Text>
+              <Text style={{ color: 'black', fontWeight: '600' }}>Stop</Text>
             </TouchableOpacity>
 
             {/* star at far right when recording; disabled if paused/processing */}
             <View style={{ marginLeft: 6 }}>
-              <HighlightButton
-                onPress={addHighlight}
-                disabled={isPaused || isProcessing}
-                count={markers.length}
-              />
+              <HighlightButton onPress={addHighlight} disabled={isPaused || isProcessing} count={markers.length} />
             </View>
           </>
         )}

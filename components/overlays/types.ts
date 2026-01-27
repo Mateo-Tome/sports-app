@@ -4,11 +4,26 @@ export type OverlayActor = 'home' | 'opponent' | 'neutral';
 
 export type OverlayEvent = {
   actor?: OverlayActor;
+
+  // event type (takedown, strike, kill, etc.)
   key?: string;
+
+  // optional alias (legacy)
   kind?: string;
+
+  // points or numeric payload
   value?: number;
+
+  // display label (T3, E1, NF3, etc.)
   label?: string;
+
+  // win condition sometimes used (pin, decision)
   winBy?: string;
+
+  // ✅ explicit metadata container (you already use this in wrestling overlay)
+  meta?: Record<string, any>;
+
+  // keep for backwards-compat
   [k: string]: any;
 };
 

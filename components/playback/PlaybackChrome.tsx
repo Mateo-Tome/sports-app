@@ -22,6 +22,12 @@ export type Insets = {
 };
 
 /**
+ * ✅ One knob for now.
+ * Later we can make this sport/event specific, but this gets you perfect “lead-up” today.
+ */
+const GLOBAL_PREROLL_FALLBACK_SEC = 3;
+
+/**
  * Local helper: format seconds as M:SS
  */
 function fmt(sec: number): string {
@@ -33,7 +39,6 @@ function fmt(sec: number): string {
 
 /**
  * Local helper: abbreviate event kind for belt pill
- * (Wrestling stays as-is; Baseball kinds will be handled via label fallback when kind is unknown.)
  */
 function abbrKind(kind?: string): string {
   if (!kind) return '';
@@ -62,10 +67,10 @@ export function OverlayModeMenu(props: {
   if (!visible) return null;
 
   const options: { key: OverlayMode; label: string }[] = [
-    { key: 'all', label: 'All' }, // score + belt
-    { key: 'noBelt', label: 'Score' }, // score only
-    { key: 'noScore', label: 'Belt' }, // belt only
-    { key: 'off', label: 'Off' }, // everything off
+    { key: 'all', label: 'All' },
+    { key: 'noBelt', label: 'Score' },
+    { key: 'noScore', label: 'Belt' },
+    { key: 'off', label: 'Off' },
   ];
 
   return (
@@ -80,19 +85,11 @@ export function OverlayModeMenu(props: {
         zIndex: 70,
       }}
     >
-      {/* backdrop tap to close */}
       <Pressable
         onPress={onClose}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-        }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       />
 
-      {/* menu box */}
       <View
         pointerEvents="auto"
         style={{
@@ -108,14 +105,12 @@ export function OverlayModeMenu(props: {
           minWidth: 120,
         }}
       >
-        {options.map(opt => {
+        {options.map((opt) => {
           const isActive = opt.key === mode;
           return (
             <Pressable
               key={opt.key}
-              onPress={() => {
-                onSelect(opt.key);
-              }}
+              onPress={() => onSelect(opt.key)}
               style={{
                 paddingVertical: 4,
                 paddingHorizontal: 6,
@@ -124,13 +119,7 @@ export function OverlayModeMenu(props: {
                 marginBottom: 2,
               }}
             >
-              <Text
-                style={{
-                  color: '#fff',
-                  fontWeight: '800',
-                  fontSize: 13,
-                }}
-              >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
                 {opt.label}
               </Text>
             </Pressable>
@@ -143,13 +132,9 @@ export function OverlayModeMenu(props: {
 
 /* ==================== Event Belt ==================== */
 
-/**
- * Helpers for belt lane inference (baseball only, safe for other sports)
- */
 function normalizeBeltToken(raw: any): string {
   let k = String(raw ?? '').toLowerCase().trim();
-  k = k.replace(/\s+/g, ' '); // collapse whitespace
-  // normalize common phrases
+  k = k.replace(/\s+/g, ' ');
   k = k.replace('home run', 'homerun');
   k = k.replace('strike out', 'strikeout');
   return k;
@@ -173,11 +158,6 @@ function extractBeltKey(e: EventRow): string {
   return normalizeBeltToken(raw);
 }
 
-/**
- * ✅ Baseball lane inference (ONLY triggers on baseball-ish words)
- * - TOP: balls + hitter-positive (hit/walk/hr + singles/doubles/triples/bunt)
- * - BOTTOM: strikes + fouls + strikeout/K + outs
- */
 function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
   const k = extractBeltKey(e);
   if (!k) return null;
@@ -195,14 +175,13 @@ function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
     k.includes('homerun') ||
     k.includes('out') ||
     k.includes('strikeout') ||
-    k.startsWith('k ' ) ||
+    k.startsWith('k ') ||
     k === 'k' ||
     k.includes('k swinging') ||
     k.includes('k looking');
 
   if (!isBaseballish) return null;
 
-  // TOP lane: balls + hitter-positive
   if (
     k === 'ball' ||
     k.startsWith('ball ') ||
@@ -216,7 +195,6 @@ function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
     k === 'homerun'
   ) return 'top';
 
-  // BOTTOM lane: strikes + fouls + outs
   if (
     k === 'strike' ||
     k.startsWith('strike ') ||
@@ -234,24 +212,16 @@ function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
   return null;
 }
 
-/**
- * Read beltLane from meta defensively (top/bottom, any casing/spacing)
- */
 function readBeltLaneMeta(e: EventRow): 'top' | 'bottom' | null {
   const meta: any = (e as any)?.meta ?? {};
   const inner: any = meta?.meta ?? {};
-
   const raw = meta?.beltLane ?? inner?.beltLane ?? meta?.beltlane ?? inner?.beltlane;
   const v = normalizeBeltToken(raw);
-
   if (v === 'top') return 'top';
   if (v === 'bottom') return 'bottom';
   return null;
 }
 
-/**
- * Prefer kind, but if kind is missing/unknown, use label/key for display (baseball quality-of-life)
- */
 function displayKindForPill(e: EventRow): string {
   const kind = String((e as any)?.kind ?? '');
   if (kind && kind.toLowerCase() !== 'unknown') return kind;
@@ -260,6 +230,21 @@ function displayKindForPill(e: EventRow): string {
   const inner: any = meta?.meta ?? {};
   const raw = meta?.label ?? inner?.label ?? (e as any)?.key ?? meta?.key ?? inner?.key ?? kind;
   return String(raw ?? kind);
+}
+
+/**
+ * ✅ Read preRollSec from event meta (supports both meta and meta.meta).
+ * If missing (old clips), fall back to GLOBAL_PREROLL_FALLBACK_SEC.
+ */
+function readPreRollSec(e: EventRow): number {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  const raw = meta?.preRollSec ?? inner?.preRollSec;
+  const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? ''));
+
+  if (!Number.isFinite(n)) return GLOBAL_PREROLL_FALLBACK_SEC;
+  return Math.max(0, Math.min(15, n));
 }
 
 export function EventBelt(props: {
@@ -281,12 +266,6 @@ export function EventBelt(props: {
 
   const rowY = (lane: 'home' | 'opponent') => (lane === 'home' ? 10 : 40);
 
-  /**
-   * Lane choice priority:
-   * 1) meta.beltLane (new baseball clips)
-   * 2) inference (old baseball clips)
-   * 3) actor fallback (everything else, including wrestling)
-   */
   const laneFor = (e: EventRow): 'home' | 'opponent' => {
     const beltLane = readBeltLaneMeta(e);
     if (beltLane === 'top') return 'home';
@@ -296,14 +275,11 @@ export function EventBelt(props: {
     if (inferred === 'top') return 'home';
     if (inferred === 'bottom') return 'opponent';
 
-    // fallback to actor (preserves other sports behavior)
     if ((e as any).actor === 'home') return 'home';
     if ((e as any).actor === 'opponent') return 'opponent';
-
     return 'opponent';
   };
 
-  // === Period detection
   const getPeriodLabel = (e: EventRow): string | null => {
     const meta = (e as any).meta ?? {};
     const label = String(meta?.label ?? '').trim();
@@ -348,26 +324,33 @@ export function EventBelt(props: {
       c: string;
       isPeriod: boolean;
       periodLabel?: string;
+      displayT: number;
     }> = [];
 
     for (const { e } of indexed) {
       const lane = laneFor(e);
 
-      const desiredX = e.t * PX_PER_SEC;
+      const periodLabel = getPeriodLabel(e);
+      const isPeriod = !!periodLabel;
+
+      const pre = isPeriod ? 0 : readPreRollSec(e);
+      const displayT = Math.max(0, (e.t ?? 0) - pre);
+
+      const desiredX = displayT * PX_PER_SEC;
       const desiredLeft = Math.max(desiredX - PILL_W / 2, BASE_LEFT);
+
       const prevLeft = lastLeft[lane];
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP, BASE_LEFT);
       lastLeft[lane] = placedLeft;
-
-      const periodLabel = getPeriodLabel(e);
 
       items.push({
         e,
         x: placedLeft + PILL_W / 2,
         y: rowY(lane),
         c: colorFor(e),
-        isPeriod: !!periodLabel,
+        isPeriod,
         periodLabel: periodLabel || undefined,
+        displayT,
       });
     }
 
@@ -378,7 +361,6 @@ export function EventBelt(props: {
 
   const scrollRef = useRef<ScrollView>(null);
 
-  // ✅ user interaction lock (covers BOTH dragging and clicking)
   const userInteracting = useRef(false);
   const unlockTimer = useRef<any>(null);
 
@@ -403,7 +385,7 @@ export function EventBelt(props: {
     if (!duration) return;
     if (userInteracting.current) return;
 
-    const playheadX = current * PX_PER_SEC;
+    const playheadX = (current || 0) * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
     const nowMs = Date.now();
 
@@ -455,11 +437,11 @@ export function EventBelt(props: {
           />
 
           {layout.items.map((it, i) => {
-            const isPassed = current >= it.e.t;
+            const isPassed = (current || 0) >= (it.e.t ?? 0);
 
             const handlePress = () => {
               lockUser(1200);
-              onSeek(it.e.t);
+              onSeek(it.e.t ?? 0); // ✅ seek to REAL event time
             };
 
             const handleLong = () => {
@@ -531,8 +513,9 @@ export function EventBelt(props: {
                   }`}
                 </Text>
 
+                {/* ✅ show the DISPLAY time (lead-up position) so belt matches what you see */}
                 <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>
-                  {fmt((it.e as any).t)}
+                  {fmt(it.displayT)}
                 </Text>
               </Pressable>
             );
