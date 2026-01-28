@@ -31,10 +31,11 @@ import { getCloudAthletes } from '../../src/hooks/athletes/cloudAthletes';
 // ✅ sync hook (small, isolated)
 import useAthleteSync from '../../src/hooks/athletes/useAthleteSync';
 
+// ✅ NEW: extracted UI component
+import AthleteCard, { type Athlete } from '../../src/components/AthleteCard';
+
 const ATHLETES_KEY = 'athletes:list';
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
-
-type Athlete = { id: string; name: string; photoUri?: string | null };
 
 const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
 
@@ -320,6 +321,15 @@ export default function HomeAthletes() {
     router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
 
+  // ✅ ROUTE: Athlete stats screen (app/athletes/[athlete]/stats.tsx)
+  const openStatsForAthlete = (name: string) => {
+    const clean = (name || '').trim() || 'Unassigned';
+    router.push({
+      pathname: '/athletes/[athlete]/stats',
+      params: { athlete: clean },
+    });
+  };
+
   // ---------- Premium + futuristic button styling (visual only) ----------
   const styles = useMemo(() => {
     const pillBase = {
@@ -368,182 +378,6 @@ export default function HomeAthletes() {
     return { syncPill, syncText, secondaryPill, secondaryText, primaryPill, primaryText };
   }, [syncing]);
 
-  const AthleteCard = ({ a }: { a: Athlete }) => {
-    const [editOpen, setEditOpen] = useState(false);
-    const [renameInput, setRenameInput] = useState(a.name);
-
-    const openMore = () => {
-      if (Platform.OS === 'ios') {
-        ActionSheetIOS.showActionSheetWithOptions(
-          {
-            options: ['Cancel', 'Delete'],
-            cancelButtonIndex: 0,
-            destructiveButtonIndex: 1,
-            userInterfaceStyle: 'dark',
-            title: a.name,
-          },
-          (idx) => {
-            if (idx === 1) deleteAthleteShell(a.id);
-          }
-        );
-      } else {
-        Alert.alert(a.name, undefined, [
-          { text: 'Delete', style: 'destructive', onPress: () => deleteAthleteShell(a.id) },
-          { text: 'Cancel', style: 'cancel' },
-        ]);
-      }
-    };
-
-    const ActionBtn = ({
-      label,
-      onPress,
-      kind = 'secondary',
-    }: {
-      label: string;
-      onPress: () => void;
-      kind?: 'primary' | 'secondary' | 'danger';
-    }) => {
-      const base = {
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 999,
-        marginRight: 8,
-        marginTop: 8,
-        borderWidth: 1 as const,
-      };
-      let style;
-      if (kind === 'primary') {
-        style = { ...base, backgroundColor: '#DC2626', borderColor: '#DC2626' };
-      } else if (kind === 'danger') {
-        style = { ...base, backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.35)' };
-      } else {
-        style = {
-          ...base,
-          backgroundColor: 'rgba(255,255,255,0.12)',
-          borderColor: 'rgba(255,255,255,0.35)',
-        };
-      }
-      return (
-        <TouchableOpacity onPress={onPress} style={style}>
-          <Text style={{ color: 'white', fontWeight: '800' }}>{label}</Text>
-        </TouchableOpacity>
-      );
-    };
-
-    return (
-      <View
-        style={{
-          padding: 12,
-          marginHorizontal: 16,
-          marginVertical: 8,
-          borderRadius: 16,
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.12)',
-          backgroundColor: 'rgba(255,255,255,0.05)',
-        }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {a.photoUri ? (
-            <Image
-              source={{ uri: a.photoUri }}
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: 28,
-                backgroundColor: 'rgba(255,255,255,0.1)',
-              }}
-            />
-          ) : (
-            <View
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: 28,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Text style={{ color: 'white', opacity: 0.7, fontSize: 22 }}>👤</Text>
-            </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }} numberOfLines={1}>
-              {a.name}
-            </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
-              Record or manage athlete
-            </Text>
-          </View>
-        </View>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-          <ActionBtn label="Record" kind="primary" onPress={() => recordWithAthlete(a.name)} />
-          <ActionBtn label={a.photoUri ? 'Change Photo' : 'Set Photo'} onPress={() => setPhotoForAthlete(a.id)} />
-          <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
-          {isWide ? (
-            <ActionBtn label="Delete" kind="danger" onPress={() => deleteAthleteShell(a.id)} />
-          ) : (
-            <ActionBtn label="More" onPress={openMore} />
-          )}
-        </View>
-
-        <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
-            <View
-              style={{
-                backgroundColor: '#121212',
-                borderRadius: 16,
-                padding: 16,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.15)',
-              }}
-            >
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Rename Athlete</Text>
-              <TextInput
-                value={renameInput}
-                onChangeText={setRenameInput}
-                placeholder="Name"
-                placeholderTextColor="rgba(255,255,255,0.4)"
-                style={{
-                  marginTop: 12,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.25)',
-                  color: 'white',
-                }}
-              />
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
-                <TouchableOpacity
-                  onPress={() => setEditOpen(false)}
-                  style={{
-                    paddingVertical: 10,
-                    paddingHorizontal: 14,
-                    borderRadius: 999,
-                    backgroundColor: 'rgba(255,255,255,0.12)',
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={async () => {
-                    await renameAthlete(a.id, renameInput);
-                    setEditOpen(false);
-                  }}
-                  style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'white' }}
-                >
-                  <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      </View>
-    );
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
       {/* Header (2 rows so buttons never go off-screen) */}
@@ -573,7 +407,17 @@ export default function HomeAthletes() {
       <FlatList
         data={athletes}
         keyExtractor={(a) => a.id}
-        renderItem={({ item }) => <AthleteCard a={item} />}
+        renderItem={({ item }) => (
+          <AthleteCard
+            a={item}
+            isWide={isWide}
+            onRecord={recordWithAthlete}
+            onStats={openStatsForAthlete}
+            onSetPhoto={setPhotoForAthlete}
+            onRename={renameAthlete}
+            onDelete={deleteAthleteShell}
+          />
+        )}
         refreshing={refreshing}
         onRefresh={onRefresh}
         contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}

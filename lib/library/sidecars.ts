@@ -17,7 +17,8 @@ export type SidecarEvent = {
 
 export type Sidecar = {
   athlete?: string;
-  sport?: string;
+  sport?: string; // can be "wrestling" OR "wrestling:freestyle" (legacy tolerated)
+  style?: string; // "folkstyle" | "freestyle" | "greco" | etc
   events?: SidecarEvent[];
   finalScore?: FinalScore;
   homeIsAthlete?: boolean;
@@ -40,15 +41,35 @@ export type OutcomeBits = {
   edgeColor: string | null;
 };
 
+/**
+ * Normalizes sport/style into a single sportKey your stats registry uses.
+ * Accepts both:
+ * - sport="wrestling", style="freestyle"
+ * - sport="wrestling:freestyle" (legacy)
+ */
+export function getSportKeyFromSidecar(sc: any): string {
+  const rawSport = String(sc?.sport ?? '').trim();
+  const rawStyle = String(sc?.style ?? '').trim();
+
+  if (rawSport.includes(':')) {
+    const [s, st] = rawSport
+      .split(':')
+      .map((x) => String(x ?? '').trim().toLowerCase());
+    if (s && st) return `${s}:${st}`;
+    if (s) return `${s}:default`;
+  }
+
+  const sport = rawSport.toLowerCase() || 'unknown';
+  const style = rawStyle.toLowerCase() || 'default';
+  return `${sport}:${style}`;
+}
+
 // Read the full sidecar JSON for a given video URI (for upload).
-export async function readSidecarForUpload(
-  videoUri: string,
-): Promise<any | null> {
+export async function readSidecarForUpload(videoUri: string): Promise<any | null> {
   try {
     const lastSlash = videoUri.lastIndexOf('/');
     const lastDot = videoUri.lastIndexOf('.');
-    const base =
-      lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
+    const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
     const guess = `${base}.json`;
 
     const tryRead = async (p: string): Promise<any | null> => {
@@ -58,17 +79,13 @@ export async function readSidecarForUpload(
       return txt ? JSON.parse(txt) : {};
     };
 
-    // 1) Try the obvious same-name sidecar first
     let sc: any | null = await tryRead(guess);
     if (sc) return sc;
 
-    // 2) Fallback: look in the same directory for a matching .json
     const dir = videoUri.slice(0, lastSlash + 1);
     try {
       // @ts-ignore
-      const files: string[] = await (FileSystem as any).readDirectoryAsync(
-        dir,
-      );
+      const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
       const baseName = base.slice(lastSlash + 1);
       const candidate = files.find(
         (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`,
@@ -86,7 +103,7 @@ export async function readSidecarForUpload(
   }
 }
 
-// Main outcome reader: now ALSO computes sport-specific edgeColor
+// Main outcome reader: computes sport-specific edgeColor
 export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
   try {
     const lastSlash = videoUri.lastIndexOf('/');
@@ -106,9 +123,7 @@ export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
       try {
         const dir = videoUri.slice(0, lastSlash + 1);
         // @ts-ignore
-        const files: string[] = await (FileSystem as any).readDirectoryAsync(
-          dir,
-        );
+        const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
         const baseName = base.slice(lastSlash + 1);
         const candidate = files.find(
           (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`,
@@ -117,7 +132,6 @@ export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
       } catch {}
     }
 
-    // Highlights clips have no match outcome; neutral everything
     if (!sc || sc.sport === 'highlights') {
       return {
         finalScore: null,
@@ -130,14 +144,14 @@ export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
       };
     }
 
-    const sportStr = String(sc.sport ?? '').toLowerCase();
-    const isWrestling = sportStr.startsWith('wrestling');
+    const sportKey = getSportKeyFromSidecar(sc);
+    const [sportStr] = sportKey.split(':');
+    const isWrestling = sportStr === 'wrestling';
 
-    // ---- 1) Compute score + basic W/L/T -----------------------------------
+    // 1) Score
     let finalScore: FinalScore | null = sc.finalScore ?? null;
     if (!finalScore) {
-      let h = 0,
-        o = 0;
+      let h = 0, o = 0;
       for (const e of sc.events ?? []) {
         const pts = typeof e.points === 'number' ? e.points : 0;
         if (pts > 0) {
@@ -149,21 +163,13 @@ export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
     }
 
     const homeIsAthlete = sc.homeIsAthlete !== false;
-    const myScore = finalScore
-      ? homeIsAthlete
-        ? finalScore.home
-        : finalScore.opponent
-      : null;
-    const oppScore = finalScore
-      ? homeIsAthlete
-        ? finalScore.opponent
-        : finalScore.home
-      : null;
+    const myScore = finalScore ? (homeIsAthlete ? finalScore.home : finalScore.opponent) : null;
+    const oppScore = finalScore ? (homeIsAthlete ? finalScore.opponent : finalScore.home) : null;
 
     let outcome: Outcome | null = sc.outcome ?? null;
     let highlightGold = false;
 
-    // ---- 2) Wrestling pin logic keeps gold, overrides W/L/T when needed ---
+    // 2) Wrestling pin logic
     if (isWrestling) {
       const ev = sc.events ?? [];
       const pinEv = ev.find((e: SidecarEvent) => {
@@ -188,20 +194,17 @@ export async function readOutcomeFor(videoUri: string): Promise<OutcomeBits> {
         highlightGold = !!athletePinned;
         outcome = athletePinned ? 'W' : 'L';
       } else if (!outcome && finalScore && myScore != null && oppScore != null) {
-        outcome =
-          myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+        outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
       }
     } else {
-      // Non-wrestling default W/L/T from score if outcome not provided
       if (!outcome && finalScore && myScore != null && oppScore != null) {
-        outcome =
-          myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
+        outcome = myScore > oppScore ? 'W' : myScore < oppScore ? 'L' : 'T';
       }
     }
 
-    // ---- 3) Sport-specific color + optional extra gold --------------------
+    // 3) Color (✅ do NOT add sportKey property to the object)
     const { edgeColor, highlightGold: finalGold } = computeSportColor(
-      sc,
+      sc as any,      // typed as SidecarLike in your project; keep it compatible
       outcome,
       highlightGold,
       finalScore,
