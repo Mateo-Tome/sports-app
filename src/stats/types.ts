@@ -41,4 +41,4 @@ export type AthleteStatsSummary = {
 
   // sportKey -> stats object (per sport reducer)
   bySport: Record<SportKey, any>;
-}; 
+};

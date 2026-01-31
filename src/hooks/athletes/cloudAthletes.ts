@@ -1,15 +1,30 @@
+// src/hooks/athletes/cloudAthletes.ts
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../../lib/firebase';
 
-export type Athlete = { id: string; name: string; photoUri?: string | null };
+/**
+ * Cloud-safe athlete model (Firestore)
+ * DO NOT store file:// local URIs.
+ */
+export type CloudAthlete = {
+  id: string;
+  name: string;
+  photoUrl?: string | null;
+};
 
-function sanitize(list: any): Athlete[] {
+function toStringOrNull(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
+function sanitize(list: any): CloudAthlete[] {
   if (!Array.isArray(list)) return [];
   return list
     .map((a) => ({
-      id: String(a?.id ?? ''),
+      id: String(a?.id ?? '').trim(),
       name: String(a?.name ?? '').trim(),
-      photoUri: a?.photoUri != null ? String(a.photoUri) : null,
+      photoUrl: toStringOrNull(a?.photoUrl),
     }))
     .filter((a) => a.id && a.name);
 }
@@ -18,14 +33,18 @@ export function getCurrentUid(): string | null {
   return auth.currentUser?.uid ?? null;
 }
 
-export async function getCloudAthletes(uid: string): Promise<Athlete[]> {
+export async function getCloudAthletes(uid: string): Promise<CloudAthlete[]> {
   const ref = doc(db, 'users', uid);
   const snap = await getDoc(ref);
   const data = snap.exists() ? snap.data() : {};
   return sanitize((data as any)?.athletes);
 }
 
-export async function setCloudAthletes(uid: string, athletes: Athlete[]): Promise<void> {
+export async function setCloudAthletes(uid: string, athletes: CloudAthlete[]): Promise<void> {
   const ref = doc(db, 'users', uid);
-  await setDoc(ref, { athletes }, { merge: true });
+
+  // ✅ always sanitize (defensive)
+  const cloudSafe = sanitize(athletes);
+
+  await setDoc(ref, { athletes: cloudSafe }, { merge: true });
 }

@@ -1,9 +1,7 @@
 // app/(tabs)/index.tsx
-// Athletes list with rock-solid ImagePicker flow that avoids the iOS first-open black camera.
-// Also routes Quick Record to the plain camera (sport=plain, style=none).
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -28,11 +26,12 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, ensureAnonymous } from '../../lib/firebase';
 import { getCloudAthletes } from '../../src/hooks/athletes/cloudAthletes';
 
-// ✅ sync hook (small, isolated)
+import AthleteCard from '../../src/components/AthleteCard';
 import useAthleteSync from '../../src/hooks/athletes/useAthleteSync';
+import type { Athlete } from '../../src/lib/athleteTypes';
 
-// ✅ NEW: extracted UI component
-import AthleteCard, { type Athlete } from '../../src/components/AthleteCard';
+import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
+import { uploadAthleteProfilePhotoToB2 } from '../../src/lib/athletePhotoUpload';
 
 const ATHLETES_KEY = 'athletes:list';
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
@@ -41,7 +40,7 @@ const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
 
 function imagesMediaTypesLegacy(): any {
   const MT = (ImagePicker as any).MediaType;
-  return MT?.Images ?? MT?.images ?? undefined; // fallback to picker default if missing
+  return MT?.Images ?? MT?.images ?? undefined;
 }
 
 async function ensurePickerPermissions(): Promise<boolean> {
@@ -75,20 +74,10 @@ async function ensurePickerPermissions(): Promise<boolean> {
   }
 }
 
-/**
- * Robust picker that avoids the iOS first-launch black camera by:
- * - clearing pending picker result,
- * - ensuring modals/sheets are closed,
- * - waiting for interactions/RAF,
- * - adding a tiny delay before native presentation.
- *
- * @param launchedFromModal set true if you call this right after closing a RN Modal
- */
 async function pickImageWithChoice(launchedFromModal: boolean): Promise<string | null> {
   const ok = await ensurePickerPermissions();
   if (!ok) return null;
 
-  // Clear any stale result (fixes stuck internal session edge-cases)
   try {
     const pending = await (ImagePicker as any).getPendingResultAsync?.();
     if (Array.isArray(pending) && pending.length) {
@@ -97,11 +86,9 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
   } catch {}
 
   if (launchedFromModal) {
-    // Give time for the modal dismissal animation to complete
     await wait(250);
   }
 
-  // Let all interactions/animations finish
   await new Promise<void>((resolve) => InteractionManager.runAfterInteractions(() => resolve()));
   await new Promise((r) => requestAnimationFrame(() => r(null)));
   await wait(140);
@@ -149,7 +136,6 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
     });
   }
 
-  // Android – use the double-RAF deferral trick via an Alert
   return new Promise((resolve) => {
     const defer = (fn: () => Promise<void>) => {
       requestAnimationFrame(() => {
@@ -195,6 +181,44 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
   });
 }
 
+function toStringOrNull(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
+// ✅ If the local file is missing, clear photoLocalUri so UI falls back to photoUrl
+async function scrubMissingLocalPhotos(list: Athlete[]): Promise<Athlete[]> {
+  const out: Athlete[] = [];
+  let changed = false;
+
+  for (const a of Array.isArray(list) ? list : []) {
+    const uri = toStringOrNull((a as any)?.photoLocalUri);
+
+    if (uri && uri.startsWith('file://')) {
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        if (!info.exists) {
+          out.push({ ...(a as any), photoLocalUri: null } as any);
+          changed = true;
+          continue;
+        }
+      } catch {
+        out.push({ ...(a as any), photoLocalUri: null } as any);
+        changed = true;
+        continue;
+      }
+    }
+
+    out.push(a);
+  }
+
+  if (changed) {
+    await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(out));
+  }
+  return out;
+}
+
 export default function HomeAthletes() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -204,20 +228,21 @@ export default function HomeAthletes() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [nameInput, setNameInput] = useState('');
-  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+  const [pendingPhotoTempUri, setPendingPhotoTempUri] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ✅ Sync hook (safe merge) — unchanged behavior
+  // ✅ FIX: new useAthleteSync does not take getLocal
   const { syncing, syncNow } = useAthleteSync({
-    getLocal: () => athletes,
     setLocal: (list) => setAthletes(list as any),
+    showAlerts: true,
   });
 
   const loadLocal = useCallback(async () => {
     try {
       const raw = await AsyncStorage.getItem(ATHLETES_KEY);
       const list = raw ? (JSON.parse(raw) as Athlete[]) : [];
-      setAthletes(list);
+      const cleaned = await scrubMissingLocalPhotos(Array.isArray(list) ? list : []);
+      setAthletes(cleaned as any);
     } catch (e) {
       console.log('athletes load error:', e);
     }
@@ -227,23 +252,115 @@ export default function HomeAthletes() {
     loadLocal();
   }, [loadLocal]);
 
-  // ✅ On app open (including Expo Web), if signed in, load cloud athletes once.
-  // Unchanged behavior — just keeps web in sync when account already has athletes.
+  // ✅ Initial cloud pull: merge WITHOUT importing any cloud "photoLocalUri"
   useEffect(() => {
+    const normalizeLocal = (list: Athlete[]): Athlete[] => {
+      const out: Athlete[] = [];
+      const seen = new Set<string>();
+
+      for (const a of Array.isArray(list) ? list : []) {
+        const id = String((a as any)?.id ?? '').trim();
+        const name = String((a as any)?.name ?? '').trim();
+        if (!id || !name) continue;
+
+        if (seen.has(id)) continue;
+        seen.add(id);
+
+        out.push({
+          id,
+          name,
+          photoLocalUri: toStringOrNull((a as any)?.photoLocalUri), // local only
+          photoUrl: toStringOrNull((a as any)?.photoUrl),
+          photoUri: toStringOrNull((a as any)?.photoUri), // legacy local
+        } as any);
+      }
+      return out;
+    };
+
+    const normalizeCloud = (list: Athlete[]): Athlete[] => {
+      const out: Athlete[] = [];
+      const seen = new Set<string>();
+
+      for (const a of Array.isArray(list) ? list : []) {
+        const id = String((a as any)?.id ?? '').trim();
+        const name = String((a as any)?.name ?? '').trim();
+        if (!id || !name) continue;
+
+        if (seen.has(id)) continue;
+        seen.add(id);
+
+        // ✅ only accept cloud-safe fields
+        out.push({
+          id,
+          name,
+          photoUrl: toStringOrNull((a as any)?.photoUrl),
+        } as any);
+      }
+      return out;
+    };
+
+    const merge = (local: Athlete[], cloud: Athlete[]): Athlete[] => {
+      const L = normalizeLocal(local);
+      const C = normalizeCloud(cloud);
+
+      const byId = new Map<string, Athlete>();
+      for (const a of L) byId.set(a.id, a);
+
+      for (const c of C) {
+        const l = byId.get(c.id);
+
+        byId.set(c.id, {
+          id: c.id,
+          name: c.name?.trim() ? c.name.trim() : (l as any)?.name ?? c.name,
+
+          // cloud truth
+          photoUrl: (c as any).photoUrl ?? (l as any)?.photoUrl ?? null,
+
+          // keep local-only fields from local
+          photoLocalUri: (l as any)?.photoLocalUri ?? null,
+          photoUri: (l as any)?.photoUri ?? null,
+        } as any);
+      }
+
+      const merged: Athlete[] = [];
+      const used = new Set<string>();
+
+      for (const a of C) {
+        const v = byId.get(a.id);
+        if (v && !used.has(v.id)) {
+          merged.push(v);
+          used.add(v.id);
+        }
+      }
+      for (const a of L) {
+        const v = byId.get(a.id);
+        if (v && !used.has(v.id)) {
+          merged.push(v);
+          used.add(v.id);
+        }
+      }
+
+      return merged;
+    };
+
     const unsub = onAuthStateChanged(auth, async (user) => {
       try {
         const u = user ?? (await ensureAnonymous());
         const cloud = await getCloudAthletes(u.uid);
 
-        // Only apply if cloud has something (don’t overwrite local with empty)
-        if (Array.isArray(cloud) && cloud.length) {
-          setAthletes(cloud as any);
-          await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(cloud));
-        }
+        const rawLocal = await AsyncStorage.getItem(ATHLETES_KEY);
+        const local = rawLocal ? (JSON.parse(rawLocal) as Athlete[]) : [];
+
+        const merged = merge(local, cloud);
+        const cleaned = await scrubMissingLocalPhotos(merged);
+
+        setAthletes(cleaned as any);
+        await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(cleaned));
       } catch (e) {
         console.log('[Athletes] initial cloud load failed:', e);
       }
     });
+
     return () => unsub();
   }, []);
 
@@ -264,26 +381,63 @@ export default function HomeAthletes() {
       Alert.alert('Name required', 'Please enter a name.');
       return;
     }
+
     const id = `${Date.now()}`;
-    const next: Athlete[] = [{ id, name: n, photoUri: pendingPhoto }, ...athletes];
+    let photoLocalUri: string | null = null;
+    let photoUrl: string | null = null;
+
+    if (pendingPhotoTempUri) {
+      try {
+        photoLocalUri = await persistAthleteProfilePhoto(pendingPhotoTempUri, id);
+        const up = await uploadAthleteProfilePhotoToB2({ athleteId: id, localFileUri: photoLocalUri });
+        photoUrl = up.photoUrl;
+      } catch (e: any) {
+        console.log('[addAthlete] photo upload failed:', e);
+        Alert.alert('Photo upload failed', 'Saved athlete without cloud photo. You can set it later.');
+      }
+    }
+
+    const next: Athlete[] = [{ id, name: n, photoLocalUri, photoUrl } as any, ...athletes];
     await saveAthletes(next);
+
     setNameInput('');
-    setPendingPhoto(null);
+    setPendingPhotoTempUri(null);
     setAddOpen(false);
+
+    try {
+      await syncNow();
+    } catch {}
   };
 
   const pickPendingPhoto = async () => {
     setAddOpen(false);
     const uri = await pickImageWithChoice(true);
-    if (uri) setPendingPhoto(uri);
+    if (uri) setPendingPhotoTempUri(uri);
     setAddOpen(true);
   };
 
   const setPhotoForAthlete = async (id: string) => {
-    const uri = await pickImageWithChoice(false);
-    if (!uri) return;
-    const next = athletes.map((a) => (a.id === id ? { ...a, photoUri: uri } : a));
-    await saveAthletes(next);
+    const tempUri = await pickImageWithChoice(false);
+    if (!tempUri) return;
+
+    try {
+      const localUri = await persistAthleteProfilePhoto(tempUri, id);
+      const { photoUrl } = await uploadAthleteProfilePhotoToB2({ athleteId: id, localFileUri: localUri });
+
+      const next = athletes.map((a) =>
+        a.id === id ? ({ ...a, photoLocalUri: localUri, photoUrl } as any) : a
+      );
+
+      await saveAthletes(next);
+
+      // Sync pushes cloud-safe fields only, and keeps local-only fields locally
+      await syncNow();
+
+      Alert.alert('Saved', 'Profile photo uploaded + synced.');
+    } catch (e: any) {
+      console.log('[setPhotoForAthlete] failed:', e);
+      Alert.alert('Failed', String(e?.message ?? e));
+    }
   };
 
   const renameAthlete = async (id: string, newName: string) => {
@@ -292,20 +446,26 @@ export default function HomeAthletes() {
       Alert.alert('Name required');
       return;
     }
-    const next = athletes.map((a) => (a.id === id ? { ...a, name } : a));
+    const next = athletes.map((a) => (a.id === id ? ({ ...a, name } as any) : a));
     await saveAthletes(next);
+    try {
+      await syncNow();
+    } catch {}
   };
 
   const deleteAthleteShell = async (id: string) => {
     const next = athletes.filter((a) => a.id !== id);
     await saveAthletes(next);
+
     const current = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
     if (current && !next.find((a) => a.name === current)) {
       await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
     }
+    try {
+      await syncNow();
+    } catch {}
   };
 
-  // ROUTE: Quick Record -> plain camera (no overlay)
   const recordNoAthlete = async () => {
     await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
     router.push({
@@ -314,14 +474,12 @@ export default function HomeAthletes() {
     });
   };
 
-  // ROUTE: Record with selected athlete -> open the Recording tab (sports picker)
   const recordWithAthlete = async (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
     await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
     router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
 
-  // ✅ ROUTE: Athlete stats screen (app/athletes/[athlete]/stats.tsx)
   const openStatsForAthlete = (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
     router.push({
@@ -330,15 +488,9 @@ export default function HomeAthletes() {
     });
   };
 
-  // ---------- Premium + futuristic button styling (visual only) ----------
   const styles = useMemo(() => {
-    const pillBase = {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: 999,
-    } as const;
+    const pillBase = { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 } as const;
 
-    // “Glass cyan” vibe on black: premium + futuristic (no neon lime)
     const syncPill = {
       ...pillBase,
       backgroundColor: syncing ? 'rgba(34,211,238,0.20)' : 'rgba(34,211,238,0.14)',
@@ -347,11 +499,7 @@ export default function HomeAthletes() {
       opacity: syncing ? 0.78 : 1,
     } as const;
 
-    const syncText = {
-      color: 'rgba(224,251,255,1)',
-      fontWeight: '900' as const,
-      letterSpacing: 0.2,
-    };
+    const syncText = { color: 'rgba(224,251,255,1)', fontWeight: '900' as const, letterSpacing: 0.2 };
 
     const secondaryPill = {
       ...pillBase,
@@ -360,29 +508,18 @@ export default function HomeAthletes() {
       backgroundColor: 'rgba(255,255,255,0.06)',
     } as const;
 
-    const secondaryText = {
-      color: 'white',
-      fontWeight: '900' as const,
-    };
+    const secondaryText = { color: 'white', fontWeight: '900' as const };
 
-    const primaryPill = {
-      ...pillBase,
-      backgroundColor: '#DC2626',
-    } as const;
+    const primaryPill = { ...pillBase, backgroundColor: '#DC2626' } as const;
 
-    const primaryText = {
-      color: 'white',
-      fontWeight: '900' as const,
-    };
+    const primaryText = { color: 'white', fontWeight: '900' as const };
 
     return { syncPill, syncText, secondaryPill, secondaryText, primaryPill, primaryText };
   }, [syncing]);
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
-      {/* Header (2 rows so buttons never go off-screen) */}
       <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
-        {/* Row 1: title + Sync */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }}>Athletes</Text>
 
@@ -391,7 +528,6 @@ export default function HomeAthletes() {
           </TouchableOpacity>
         </View>
 
-        {/* Row 2: actions (wrap-safe) */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           <TouchableOpacity onPress={recordNoAthlete} style={styles.primaryPill}>
             <Text style={styles.primaryText}>Quick Record</Text>
@@ -403,7 +539,6 @@ export default function HomeAthletes() {
         </View>
       </View>
 
-      {/* List */}
       <FlatList
         data={athletes}
         keyExtractor={(a) => a.id}
@@ -430,7 +565,6 @@ export default function HomeAthletes() {
         }
       />
 
-      {/* Add Athlete Modal */}
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
           <View
@@ -464,9 +598,9 @@ export default function HomeAthletes() {
             />
 
             <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              {pendingPhoto ? (
+              {pendingPhotoTempUri ? (
                 <Image
-                  source={{ uri: pendingPhoto }}
+                  source={{ uri: pendingPhotoTempUri }}
                   style={{
                     width: 56,
                     height: 56,
@@ -501,7 +635,7 @@ export default function HomeAthletes() {
                 }}
               >
                 <Text style={{ color: 'white', fontWeight: '800' }}>
-                  {pendingPhoto ? 'Change Photo' : 'Pick Photo'}
+                  {pendingPhotoTempUri ? 'Change Photo' : 'Pick Photo'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -510,7 +644,7 @@ export default function HomeAthletes() {
               <TouchableOpacity
                 onPress={() => {
                   setAddOpen(false);
-                  setPendingPhoto(null);
+                  setPendingPhotoTempUri(null);
                 }}
                 style={{
                   paddingVertical: 10,

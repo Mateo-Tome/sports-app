@@ -126,15 +126,130 @@ async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
   return { downloadUrl, downloadAuthToken, expiresInSec: safeExpires };
 }
 
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW HELPERS (ADDED): B2 upload URL helper */
+/* -------------------------------------------------------------------------- */
+
+async function getB2UploadUrl(apiUrl, authToken, bucketId) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_get_upload_url`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ bucketId }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_get_upload_url failed');
+    err.code = 'B2_GET_UPLOAD_URL_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  if (!j.uploadUrl || !j.authorizationToken) {
+    const err = new Error('b2_get_upload_url missing fields');
+    err.code = 'B2_GET_UPLOAD_URL_MISSING_FIELDS';
+    err.details = j;
+    throw err;
+  }
+
+  return { uploadUrl: j.uploadUrl, uploadAuthToken: j.authorizationToken };
+}
+
 /**
- * ✅ NEW: Keep shareIndex/{shareId} synced with videos/{videoId}
- * This fixes "Share not found" permanently.
+ * ✅ FIXED: returns tokened CDN photoUrl (NOT publicUrl)
  *
- * When a video doc has:
- *   shareId: "ABC123"
- * This will ensure:
- *   shareIndex/ABC123 { videoId, isPublic, ownerUid }
+ * App flow:
+ * 1) App calls this endpoint (authenticated) with athleteId
+ * 2) App uploads photo bytes to B2 using uploadUrl + uploadAuthToken
+ * 3) App stores photoUrl (tokened CDN) in Firestore athlete record
+ * 4) Other devices load from photoUrl (no 401)
  */
+exports.getAthletePhotoUploadUrl = onRequest(async (req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
+
+      // 1) Verify Firebase ID token
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const uid = decoded.uid;
+
+      // 2) athleteId required
+      const athleteId = (req.query.athleteId ?? '').toString().trim();
+      if (!athleteId) return res.status(400).json({ error: 'Missing athleteId' });
+
+      const B2_KEY_ID = clean(process.env.B2_KEY_ID);
+      const B2_APP_KEY = clean(process.env.B2_APP_KEY);
+      const B2_BUCKET_ID = clean(process.env.B2_BUCKET_ID);
+
+      if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID) {
+        return res.status(500).json({
+          error: 'Missing B2 env vars',
+          hasB2KeyId: !!B2_KEY_ID,
+          hasB2AppKey: !!B2_APP_KEY,
+          hasB2BucketId: !!B2_BUCKET_ID,
+        });
+      }
+
+      // 3) Authorize B2
+      const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString('base64');
+      const authRes = await fetch('https://api.backblazeb2.com/b2api/v1/b2_authorize_account', {
+        method: 'GET',
+        headers: { Authorization: `Basic ${basicAuth}` },
+      });
+
+      const authJson = await authRes.json().catch(() => ({}));
+      if (!authRes.ok) {
+        return res.status(500).json({ error: 'b2_authorize_account failed', details: authJson });
+      }
+
+      const apiUrl = authJson.apiUrl;
+      const authToken = authJson.authorizationToken;
+
+      if (!apiUrl || !authToken) {
+        return res.status(500).json({ error: 'B2 auth missing fields', details: authJson });
+      }
+
+      // 4) File key (keep under videos/ so prefix auth works)
+      const safeAthleteId = athleteId.replace(/[^a-zA-Z0-9_-]/g, '');
+      const ts = Date.now();
+      const fileName = `videos/${uid}/athletes/${safeAthleteId}/profile_${ts}.jpg`;
+
+      // 5) Get upload URL + token (phone uploads directly)
+      const { uploadUrl, uploadAuthToken } = await getB2UploadUrl(apiUrl, authToken, B2_BUCKET_ID);
+
+      // ✅ 6) Return tokened CDN URL so it loads everywhere (no 401)
+      const { downloadAuthToken, expiresInSec } = await getB2DownloadAuth('videos/', 60 * 60);
+      const photoUrl = buildCdnUrl(fileName, downloadAuthToken);
+
+      return res.json({
+        uploadUrl,
+        uploadAuthToken,
+        fileName,
+        photoUrl,
+        expiresInSec,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'getAthletePhotoUploadUrl failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ---------------------------- EXISTING FUNCTIONS --------------------------- */
+/* -------------------------------------------------------------------------- */
+
 exports.syncShareIndex = onDocumentWritten('videos/{videoId}', async (event) => {
   try {
     const after = event.data?.after;
@@ -160,9 +275,6 @@ exports.syncShareIndex = onDocumentWritten('videos/{videoId}', async (event) => 
   }
 });
 
-/**
- * ✅ returns Cloudflare CDN URLs for mp4 + json (public share flow)
- */
 exports.getPlaybackUrls = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
     try {
@@ -171,7 +283,6 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
       const shareId = (req.query.shareId ?? '').toString().trim();
       if (!shareId) return res.status(400).json({ error: 'Missing shareId' });
 
-      // ---- Read shareIndex/{shareId} ----
       const shareRef = admin.firestore().doc(`shareIndex/${shareId}`);
       const shareSnap = await shareRef.get();
       if (!shareSnap.exists) return res.status(404).json({ error: 'Share not found' });
@@ -182,7 +293,6 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
       const videoId = share.videoId;
       if (!videoId) return res.status(500).json({ error: 'shareIndex missing videoId' });
 
-      // ---- Read videos/{videoId} ----
       const vidRef = admin.firestore().doc(`videos/${videoId}`);
       const vidSnap = await vidRef.get();
       if (!vidSnap.exists) return res.status(404).json({ error: 'Video not found' });
@@ -198,10 +308,8 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
         return res.status(403).json({ error: 'shareId mismatch' });
       }
 
-      // Broad token (videos/) for public share viewing
       const { downloadAuthToken, expiresInSec } = await getB2DownloadAuth('videos/', 60 * 60);
 
-      // ✅ Return CDN URLs (not raw B2)
       const videoUrl = buildCdnUrl(b2VideoKey, downloadAuthToken);
       const sidecarUrl = buildCdnUrl(b2SidecarKey, downloadAuthToken);
 
@@ -224,9 +332,6 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
   });
 });
 
-/**
- * Proxy the sidecar JSON (public share flow) to avoid browser CORS issues.
- */
 exports.getSidecar = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
     try {
@@ -275,15 +380,11 @@ exports.getSidecar = onRequest(async (req, res) => {
   });
 });
 
-/**
- * Owner playback helper: return a short-lived B2 download auth token for ONE file path
- */
 exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
   corsHandler(req, res, async () => {
     try {
       if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
 
-      // 1) Verify Firebase ID token
       const authHeader = (req.headers.authorization || '').toString();
       const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
       if (!idToken) return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
@@ -291,11 +392,9 @@ exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
       const decoded = await admin.auth().verifyIdToken(idToken);
       const uid = decoded.uid;
 
-      // 2) Validate requested path
       const path = (req.query.path ?? '').toString().trim();
       if (!path.startsWith('videos/')) return res.status(400).json({ error: 'Invalid path' });
 
-      // 3) Owner-only: videos/<uid>/...
       const parts = path.split('/');
       const uidInPath = parts[1];
       if (!uidInPath || uidInPath !== uid) return res.status(403).json({ error: 'Forbidden' });
@@ -303,7 +402,6 @@ exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
       const B2_BUCKET_NAME = clean(process.env.B2_BUCKET_NAME);
       if (!B2_BUCKET_NAME) return res.status(500).json({ error: 'Missing B2_BUCKET_NAME env var' });
 
-      // Token scoped to THIS file path (mp4/json/etc)
       const expiresInSec = 60 * 30;
       const { downloadUrl, downloadAuthToken } = await getB2DownloadAuth(path, expiresInSec);
 

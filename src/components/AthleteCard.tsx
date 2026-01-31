@@ -1,19 +1,18 @@
-// src/components/AthleteCard.tsx
-
 import { useMemo, useState } from 'react';
 import {
-    ActionSheetIOS,
-    Alert,
-    Image,
-    Modal,
-    Platform,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActionSheetIOS,
+  Alert,
+  Image,
+  Modal,
+  Platform,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
-export type Athlete = { id: string; name: string; photoUri?: string | null };
+import type { Athlete } from '../lib/athleteTypes';
+export type { Athlete };
 
 type Props = {
   a: Athlete;
@@ -27,6 +26,12 @@ type Props = {
   onDelete: (athleteId: string) => void;
 };
 
+function safeStr(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
 export default function AthleteCard({
   a,
   isWide,
@@ -38,6 +43,9 @@ export default function AthleteCard({
 }: Props) {
   const [editOpen, setEditOpen] = useState(false);
   const [renameInput, setRenameInput] = useState(a.name);
+
+  // ✅ If local file fails, fall back to photoUrl automatically
+  const [forceRemote, setForceRemote] = useState(false);
 
   const styles = useMemo(() => {
     const base = {
@@ -116,6 +124,15 @@ export default function AthleteCard({
     );
   };
 
+  const photoLocalUri = safeStr((a as any).photoLocalUri);
+  const photoUrl = safeStr((a as any).photoUrl);
+  const photoUriLegacy = safeStr((a as any).photoUri);
+
+  // ✅ prefer local unless we detected it’s broken
+  const displayUri = forceRemote
+    ? (photoUrl || photoUriLegacy || photoLocalUri || null)
+    : (photoLocalUri || photoUrl || photoUriLegacy || null);
+
   return (
     <View
       style={{
@@ -129,9 +146,23 @@ export default function AthleteCard({
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        {a.photoUri ? (
+        {displayUri ? (
           <Image
-            source={{ uri: a.photoUri }}
+            source={{ uri: displayUri }}
+            onError={(e) => {
+              const native = (e as any)?.nativeEvent;
+              console.log('[AthleteCard] image load failed:', {
+                id: a.id,
+                name: a.name,
+                uri: displayUri,
+                nativeEvent: native,
+              });
+
+              // ✅ if local fails (ENOENT etc), force remote fallback
+              if (!forceRemote && photoLocalUri && displayUri === photoLocalUri) {
+                setForceRemote(true);
+              }
+            }}
             style={{
               width: 56,
               height: 56,
@@ -167,10 +198,7 @@ export default function AthleteCard({
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
         <ActionBtn label="Record" kind="primary" onPress={() => onRecord(a.name)} />
         <ActionBtn label="Stats" kind="stats" onPress={() => onStats(a.name)} />
-        <ActionBtn
-          label={a.photoUri ? 'Change Photo' : 'Set Photo'}
-          onPress={() => onSetPhoto(a.id)}
-        />
+        <ActionBtn label={displayUri ? 'Change Photo' : 'Set Photo'} onPress={() => onSetPhoto(a.id)} />
         <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
         {isWide ? (
           <ActionBtn label="Delete" kind="danger" onPress={() => onDelete(a.id)} />

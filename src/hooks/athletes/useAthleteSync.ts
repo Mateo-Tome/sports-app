@@ -1,14 +1,23 @@
+// src/hooks/athletes/useAthleteSync.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { ensureAnonymous } from '../../../lib/firebase';
-import type { Athlete } from './cloudAthletes';
+import type { Athlete } from '../../lib/athleteTypes';
 import { getCloudAthletes, setCloudAthletes } from './cloudAthletes';
 
 const ATHLETES_KEY = 'athletes:list';
 
-function normalize(list: Athlete[]): Athlete[] {
+function toStringOrNull(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
+type CloudAthlete = { id: string; name: string; photoUrl?: string | null };
+
+function normalizeLocal(list: Athlete[]): Athlete[] {
   const out: Athlete[] = [];
   const seen = new Set<string>();
 
@@ -23,39 +32,79 @@ function normalize(list: Athlete[]): Athlete[] {
     out.push({
       id,
       name,
-      photoUri: (a as any)?.photoUri != null ? String((a as any).photoUri) : null,
-    });
+      photoLocalUri: toStringOrNull((a as any)?.photoLocalUri),
+      photoUri: toStringOrNull((a as any)?.photoUri),
+      photoUrl: toStringOrNull((a as any)?.photoUrl),
+    } as any);
   }
+
   return out;
 }
 
-// Prefer CLOUD names/photos if same id exists on both sides.
-// If ids differ but names match, we still keep both (simple + safe).
-function mergeAthletes(local: Athlete[], cloud: Athlete[]): Athlete[] {
-  const L = normalize(local);
-  const C = normalize(cloud);
+function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
+  const out: CloudAthlete[] = [];
+  const seen = new Set<string>();
+
+  for (const a of Array.isArray(list) ? list : []) {
+    const id = String((a as any)?.id ?? '').trim();
+    const name = String((a as any)?.name ?? '').trim();
+    if (!id || !name) continue;
+
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    out.push({
+      id,
+      name,
+      photoUrl: toStringOrNull((a as any)?.photoUrl),
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Merge rules:
+ * - cloud "name" wins if present
+ * - cloud "photoUrl" wins if present
+ * - local-only fields (photoLocalUri, photoUri) NEVER come from cloud
+ */
+function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
+  const L = normalizeLocal(local);
+  const C = normalizeCloud(cloud);
 
   const byId = new Map<string, Athlete>();
-
-  // Start with local
   for (const a of L) byId.set(a.id, a);
 
-  // Cloud overrides local if same id
-  for (const a of C) byId.set(a.id, a);
+  for (const c of C) {
+    const l = byId.get(c.id);
 
-  // Most recent-ish order: cloud first (usually “source of truth”), then locals that weren’t in cloud
+    byId.set(c.id, {
+      id: c.id,
+      name: c.name?.trim() ? c.name.trim() : (l?.name ?? c.name),
+
+      // cloud truth (cross-device)
+      photoUrl: c.photoUrl ?? l?.photoUrl ?? null,
+
+      // device-only fields stay device-only
+      photoLocalUri: l?.photoLocalUri ?? null,
+      photoUri: l?.photoUri ?? null,
+    } as any);
+  }
+
+  // keep ordering: cloud first, then local-only
   const merged: Athlete[] = [];
   const used = new Set<string>();
 
-  for (const a of C) {
-    const v = byId.get(a.id);
+  for (const c of C) {
+    const v = byId.get(c.id);
     if (v && !used.has(v.id)) {
       merged.push(v);
       used.add(v.id);
     }
   }
-  for (const a of L) {
-    const v = byId.get(a.id);
+  for (const l of L) {
+    const v = byId.get(l.id);
     if (v && !used.has(v.id)) {
       merged.push(v);
       used.add(v.id);
@@ -65,11 +114,30 @@ function mergeAthletes(local: Athlete[], cloud: Athlete[]): Athlete[] {
   return merged;
 }
 
-export function useAthleteSync(params: {
-  getLocal: () => Athlete[];
+async function readLocalFromStorage(): Promise<Athlete[]> {
+  try {
+    const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+    const list = raw ? (JSON.parse(raw) as Athlete[]) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function toCloudPayload(list: Athlete[]): CloudAthlete[] {
+  // only cloud-safe fields
+  return (Array.isArray(list) ? list : []).map((a: any) => ({
+    id: String(a?.id ?? '').trim(),
+    name: String(a?.name ?? '').trim(),
+    photoUrl: toStringOrNull(a?.photoUrl),
+  }));
+}
+
+export default function useAthleteSync(params: {
   setLocal: (list: Athlete[]) => void;
+  showAlerts?: boolean;
 }) {
-  const { getLocal, setLocal } = params;
+  const { setLocal, showAlerts = true } = params;
   const [syncing, setSyncing] = useState(false);
 
   const syncNow = useCallback(async () => {
@@ -77,35 +145,31 @@ export function useAthleteSync(params: {
     setSyncing(true);
 
     try {
-      // Ensure we have a uid (anonymous is fine)
       const user = await ensureAnonymous();
       const uid = user.uid;
 
-      // ✅ SAFE ORDER:
-      // 1) Pull cloud first
+      // ✅ Always read from AsyncStorage (source of truth), avoids stale React state
+      const localList = await readLocalFromStorage();
+
       const cloudList = await getCloudAthletes(uid);
 
-      // 2) Merge with local
-      const localList = getLocal();
       const merged = mergeAthletes(localList, cloudList);
 
-      // 3) Push merged back to cloud (prevents wiping)
-      await setCloudAthletes(uid, merged);
+      // ✅ Push ONLY cloud-safe fields
+      await setCloudAthletes(uid, toCloudPayload(merged));
 
-      // 4) Save locally + update UI
+      // ✅ Save merged locally (preserves photoLocalUri)
       await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(merged));
       setLocal(merged);
 
-      Alert.alert('Synced', `Synced ${merged.length} athlete(s).`);
+      if (showAlerts) Alert.alert('Synced', `Synced ${merged.length} athlete(s).`);
     } catch (e: any) {
       console.log('[useAthleteSync] sync failed:', e);
-      Alert.alert('Sync failed', String(e?.message ?? e));
+      if (showAlerts) Alert.alert('Sync failed', String(e?.message ?? e));
     } finally {
       setSyncing(false);
     }
-  }, [getLocal, setLocal, syncing]);
+  }, [setLocal, showAlerts, syncing]);
 
   return { syncing, syncNow };
 }
-
-export default useAthleteSync;
