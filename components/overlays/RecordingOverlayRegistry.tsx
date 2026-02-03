@@ -1,28 +1,40 @@
+// components/overlays/RecordingOverlayRegistry.tsx
 import React from 'react';
 import type { OverlayProps } from './types';
 
 import BaseballHittingOverlay from './BaseballHittingOverlay';
+
+// IMPORTANT: match your existing actual path (misspelled)
 import VolleyballOverlay from './vollyball/VollyballOverlay';
+
+// IMPORTANT: match your existing actual filenames (lowercase)
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
 import WrestlingFreestyleOverlay from './wrestlingFreestyleOverlay';
 import WrestlingGrecoOverlay from './wrestlingGrecoOverlay';
 
 export function normalizeKey(sport?: string, style?: string) {
-  const s = String(sport ?? '').trim().toLowerCase();
-  const st = String(style ?? 'default').trim().toLowerCase();
+  let s = String(sport ?? '').trim().toLowerCase();
+  let st = String(style ?? 'default').trim().toLowerCase();
+
+  // sport aliases (optional)
+  if (s === 'vb' || s === 'volley') s = 'volleyball';
+  if (s === 'wrestle') s = 'wrestling';
+  if (s === 'base') s = 'baseball';
+
+  // style aliases
+  if (s === 'wrestling') {
+    if (st === 'folk' || st === 'fs') st = 'folkstyle';
+  }
+
+  if (!st) st = 'default';
   return `${s}:${st}`;
 }
 
 type RecordingOverlayEntry = {
   Overlay: React.ComponentType<OverlayProps>;
-  // How early pills/highlights should show relative to tap time
   preRollSec: number;
 };
 
-/**
- * ✅ Change this ONE number later to tune everything at once.
- * For now: 3 seconds for all sports.
- */
 export const DEFAULT_PREROLL_SEC = 3;
 
 const Registry: Record<string, RecordingOverlayEntry> = {

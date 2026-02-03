@@ -140,78 +140,6 @@ function normalizeBeltToken(raw: any): string {
   return k;
 }
 
-function extractBeltKey(e: EventRow): string {
-  const meta: any = (e as any)?.meta ?? {};
-  const inner: any = meta?.meta ?? {};
-
-  const raw =
-    (e as any)?.key ??
-    (e as any)?.kind ??
-    meta?.key ??
-    meta?.kind ??
-    meta?.label ??
-    inner?.key ??
-    inner?.kind ??
-    inner?.label ??
-    '';
-
-  return normalizeBeltToken(raw);
-}
-
-function inferBeltLaneFromEvent(e: EventRow): 'top' | 'bottom' | null {
-  const k = extractBeltKey(e);
-  if (!k) return null;
-
-  const isBaseballish =
-    k.includes('ball') ||
-    k.includes('strike') ||
-    k.includes('foul') ||
-    k.includes('walk') ||
-    k.includes('hit') ||
-    k.includes('single') ||
-    k.includes('double') ||
-    k.includes('triple') ||
-    k.includes('bunt') ||
-    k.includes('homerun') ||
-    k.includes('out') ||
-    k.includes('strikeout') ||
-    k.startsWith('k ') ||
-    k === 'k' ||
-    k.includes('k swinging') ||
-    k.includes('k looking');
-
-  if (!isBaseballish) return null;
-
-  if (
-    k === 'ball' ||
-    k.startsWith('ball ') ||
-    k === 'hit' ||
-    k.includes('single') ||
-    k.includes('double') ||
-    k.includes('triple') ||
-    k.includes('bunt') ||
-    k === 'walk' ||
-    k.includes('walk') ||
-    k === 'homerun'
-  ) return 'top';
-
-  if (
-    k === 'strike' ||
-    k.startsWith('strike ') ||
-    k.includes('foul') ||
-    k === 'strikeout' ||
-    k.includes('strikeout') ||
-    k === 'out' ||
-    k.includes('out') ||
-    k === 'k' ||
-    k.startsWith('k ') ||
-    k.includes('k swinging') ||
-    k.includes('k looking')
-  ) return 'bottom';
-
-  return null;
-}
-
 function readBeltLaneMeta(e: EventRow): 'top' | 'bottom' | null {
   const meta: any = (e as any)?.meta ?? {};
   const inner: any = meta?.meta ?? {};
@@ -219,6 +147,61 @@ function readBeltLaneMeta(e: EventRow): 'top' | 'bottom' | null {
   const v = normalizeBeltToken(raw);
   if (v === 'top') return 'top';
   if (v === 'bottom') return 'bottom';
+  return null;
+}
+
+/**
+ * Merge meta + meta.meta so neutral “chooser” events can resolve side consistently.
+ */
+function getMetaFlat(e: EventRow): Record<string, any> {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+  // Prefer top-level meta keys when overlapping
+  return { ...inner, ...meta };
+}
+
+function toSide(v: any): 'home' | 'opponent' | null {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+
+  // strict primary
+  if (s === 'home') return 'home';
+  if (s === 'opponent') return 'opponent';
+
+  // common aliases you may emit in modules / legacy data
+  if (s === 'opp' || s === 'away' || s === 'visitor' || s === 'right') return 'opponent';
+  if (s === 'h' || s === 'left') return 'home';
+
+  return null;
+}
+
+/**
+ * Resolve a side for events that are actor:'neutral' but clearly target someone.
+ * Supports: meta.for, meta.offender, meta.awardedTo, meta.benefit, meta.side, meta.beltSide.
+ */
+function resolveNeutralSide(e: EventRow): 'home' | 'opponent' | null {
+  const m = getMetaFlat(e);
+
+  // If you ever choose to adopt this later, it becomes the cleanest standard:
+  // meta.beltSide: 'home' | 'opponent'
+  const direct =
+    toSide(m.beltSide) ??
+    toSide(m.side) ??
+    toSide(m.for) ??
+    toSide(m.offender) ??
+    toSide(m.awardedTo) ??
+    toSide(m.benefit) ??
+    toSide(m.scorer) ??
+    toSide(m.to);
+
+  if (direct) return direct;
+
+  // Some apps store offender/for nested
+  if (m?.target && typeof m.target === 'object') {
+    const t = m.target;
+    return toSide(t.beltSide) ?? toSide(t.side) ?? toSide(t.for) ?? toSide(t.offender) ?? null;
+  }
+
   return null;
 }
 
@@ -266,17 +249,32 @@ export function EventBelt(props: {
 
   const rowY = (lane: 'home' | 'opponent') => (lane === 'home' ? 10 : 40);
 
+  /**
+   * Lane priority (safe + future-proof):
+   * 1) Explicit baseball lane in meta (beltLane)
+   * 2) Explicit actor home/opponent
+   * 3) Neutral events that target a side via meta (for/offender/etc)
+   * 4) Fallback: opponent (preserves legacy behavior for unknowns)
+   *
+   * ✅ IMPORTANT: We DO NOT use global keyword inference (like kind includes "out"),
+   * because that causes cross-sport collisions (wrestling "out" vs baseball "out").
+   */
   const laneFor = (e: EventRow): 'home' | 'opponent' => {
+    // 1) explicit belt lane override (baseball)
     const beltLane = readBeltLaneMeta(e);
     if (beltLane === 'top') return 'home';
     if (beltLane === 'bottom') return 'opponent';
 
-    const inferred = inferBeltLaneFromEvent(e);
-    if (inferred === 'top') return 'home';
-    if (inferred === 'bottom') return 'opponent';
+    // 2) explicit actor
+    const a = (e as any).actor;
+    if (a === 'home') return 'home';
+    if (a === 'opponent') return 'opponent';
 
-    if ((e as any).actor === 'home') return 'home';
-    if ((e as any).actor === 'opponent') return 'opponent';
+    // 3) neutral-but-targeted events
+    const resolved = resolveNeutralSide(e);
+    if (resolved) return resolved;
+
+    // 4) fallback
     return 'opponent';
   };
 
@@ -450,7 +448,8 @@ export function EventBelt(props: {
             };
 
             if (it.isPeriod) {
-              const numLabel = (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
+              const numLabel =
+                (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
 
               return (
                 <Pressable
@@ -505,7 +504,10 @@ export function EventBelt(props: {
                   opacity: isPassed ? 0.45 : 1,
                 }}
               >
-                <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
+                <Text
+                  style={{ color: 'white', fontSize: 11, fontWeight: '800' }}
+                  numberOfLines={1}
+                >
                   {`${abbrKind(pillKind)}${
                     typeof (it.e as any).points === 'number' && (it.e as any).points > 0
                       ? `+${(it.e as any).points}`
@@ -559,7 +561,15 @@ export function QuickEditSheet(props: {
         zIndex: 60,
       }}
     >
-      <Text style={{ color: '#fff', fontWeight: '900', marginBottom: 6, fontSize: 14, textAlign: 'center' }}>
+      <Text
+        style={{
+          color: '#fff',
+          fontWeight: '900',
+          marginBottom: 6,
+          fontSize: 14,
+          textAlign: 'center',
+        }}
+      >
         Edit {abbrKind(displayKindForPill(event))}
         {(event as any).points ? `+${(event as any).points}` : ''} @ {fmt((event as any).t)}
       </Text>
@@ -569,14 +579,18 @@ export function QuickEditSheet(props: {
           onPress={onReplace}
           style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Replace…</Text>
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+            Replace…
+          </Text>
         </Pressable>
 
         <Pressable
           onPress={onDelete}
           style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Delete</Text>
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+            Delete
+          </Text>
         </Pressable>
 
         <Pressable
@@ -590,7 +604,9 @@ export function QuickEditSheet(props: {
             borderColor: 'rgba(255,255,255,0.22)',
           }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>Cancel</Text>
+          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+            Cancel
+          </Text>
         </Pressable>
       </View>
     </View>

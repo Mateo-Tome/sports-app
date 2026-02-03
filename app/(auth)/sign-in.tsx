@@ -2,13 +2,16 @@
 import { auth } from '@/lib/firebase';
 import { router } from 'expo-router';
 import {
+  EmailAuthProvider,
   createUserWithEmailAndPassword,
+  linkWithCredential,
   signInAnonymously,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -30,11 +33,44 @@ export default function SignInScreen() {
 
   const goToApp = () => router.replace('/(tabs)');
 
+  const isAnon = !!auth.currentUser?.isAnonymous;
+
+  // Optional: if they arrive here while already signed in, just go in.
+  useEffect(() => {
+    if (auth.currentUser && !busy) {
+      // Let anon users stay here (so they can upgrade), but signed-in users can go in.
+      if (!auth.currentUser.isAnonymous) goToApp();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const title = useMemo(() => {
+    if (isAnon) return 'Upgrade your guest account';
+    return mode === 'signin' ? 'Welcome back' : 'Create your account';
+  }, [isAnon, mode]);
+
+  const subtitle = useMemo(() => {
+    if (isAnon) {
+      return 'Keep the same account (and the same videos). Add an email so your matches sync everywhere.';
+    }
+    return mode === 'signin'
+      ? 'Sign in to sync your matches across every device.'
+      : 'Create a QuickClip account so your matches follow you everywhere.';
+  }, [isAnon, mode]);
+
+  const primaryCta = useMemo(() => {
+    if (isAnon) return 'Upgrade account';
+    return mode === 'signin' ? 'Sign in' : 'Sign up';
+  }, [isAnon, mode]);
+
   const onContinueGuest = async () => {
     setErr(null);
     setBusy(true);
     try {
-      await signInAnonymously(auth);
+      // If they already have a user (anon or not), don’t create a new one.
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to continue as guest.');
@@ -42,6 +78,30 @@ export default function SignInScreen() {
       setBusy(false);
     }
   };
+
+  async function upgradeAnonWithEmailPassword(trimmedEmail: string, password: string) {
+    const u = auth.currentUser;
+    if (!u || !u.isAnonymous) return false;
+
+    const cred = EmailAuthProvider.credential(trimmedEmail, password);
+
+    try {
+      // ✅ This preserves UID and keeps ownership of uploaded content.
+      await linkWithCredential(u, cred);
+      return true;
+    } catch (e: any) {
+      // Common case: email already belongs to an account.
+      // In that case, you must sign in to that account, but that will change UID.
+      if (String(e?.code) === 'auth/email-already-in-use') {
+        Alert.alert(
+          'Email already in use',
+          'That email already has a QuickClip account. Signing into it would switch accounts (your guest data would not automatically merge yet). For now, use a different email to upgrade this guest account.'
+        );
+        return false;
+      }
+      throw e;
+    }
+  }
 
   const onSubmit = async () => {
     setErr(null);
@@ -51,13 +111,21 @@ export default function SignInScreen() {
       setErr('Please enter an email and password.');
       return;
     }
-    if (mode === 'signup' && pass.length < 6) {
+    if (pass.length < 6) {
       setErr('Password must be at least 6 characters.');
       return;
     }
 
     setBusy(true);
     try {
+      // ✅ If anon user exists, ALWAYS upgrade via linking (no UID change).
+      if (auth.currentUser?.isAnonymous) {
+        const ok = await upgradeAnonWithEmailPassword(trimmedEmail, pass);
+        if (ok) goToApp();
+        return;
+      }
+
+      // Normal flows when not anon
       if (mode === 'signin') {
         await signInWithEmailAndPassword(auth, trimmedEmail, pass);
       } else {
@@ -71,19 +139,8 @@ export default function SignInScreen() {
     }
   };
 
-  const title =
-    mode === 'signin' ? 'Welcome back' : 'Create your account';
-  const primaryCta =
-    mode === 'signin' ? 'Sign in' : 'Sign up';
-
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: 'black',
-      }}
-    >
-      {/* Top header / branding - safe from the notch */}
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }}>
       <View
         style={{
           paddingHorizontal: 24,
@@ -107,29 +164,13 @@ export default function SignInScreen() {
         >
           QuickClip
         </Text>
-        <Text
-          style={{
-            color: 'rgba(255,255,255,0.6)',
-            fontSize: 12,
-            marginTop: 2,
-          }}
-        >
+        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }}>
           Record. Review. Win.
         </Text>
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View
-          style={{
-            flex: 1,
-            paddingHorizontal: 24,
-            justifyContent: 'center',
-          }}
-        >
-          {/* Card container */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center' }}>
           <View
             style={{
               backgroundColor: '#111111',
@@ -144,7 +185,7 @@ export default function SignInScreen() {
               elevation: 8,
             }}
           >
-            {/* Mode toggle */}
+            {/* Mode toggle (disabled while anon, because anon should “upgrade”, not create a new UID) */}
             <View
               style={{
                 flexDirection: 'row',
@@ -154,6 +195,7 @@ export default function SignInScreen() {
                 overflow: 'hidden',
                 marginBottom: 20,
                 backgroundColor: '#090909',
+                opacity: isAnon ? 0.45 : 1,
               }}
             >
               <TouchableOpacity
@@ -162,18 +204,11 @@ export default function SignInScreen() {
                   flex: 1,
                   paddingVertical: 10,
                   alignItems: 'center',
-                  backgroundColor:
-                    mode === 'signin' ? accentRed : 'transparent',
+                  backgroundColor: mode === 'signin' ? accentRed : 'transparent',
                 }}
-                disabled={busy}
+                disabled={busy || isAnon}
               >
-                <Text
-                  style={{
-                    color: mode === 'signin' ? 'white' : 'rgba(255,255,255,0.7)',
-                    fontWeight: '800',
-                    fontSize: 14,
-                  }}
-                >
+                <Text style={{ color: mode === 'signin' ? 'white' : 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 14 }}>
                   Sign in
                 </Text>
               </TouchableOpacity>
@@ -183,54 +218,24 @@ export default function SignInScreen() {
                   flex: 1,
                   paddingVertical: 10,
                   alignItems: 'center',
-                  backgroundColor:
-                    mode === 'signup' ? accentRed : 'transparent',
+                  backgroundColor: mode === 'signup' ? accentRed : 'transparent',
                 }}
-                disabled={busy}
+                disabled={busy || isAnon}
               >
-                <Text
-                  style={{
-                    color: mode === 'signup' ? 'white' : 'rgba(255,255,255,0.7)',
-                    fontWeight: '800',
-                    fontSize: 14,
-                  }}
-                >
+                <Text style={{ color: mode === 'signup' ? 'white' : 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 14 }}>
                   Sign up
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Screen title */}
-            <Text
-              style={{
-                color: 'white',
-                fontSize: 22,
-                fontWeight: '800',
-                marginBottom: 4,
-              }}
-            >
+            <Text style={{ color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 }}>
               {title}
             </Text>
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.6)',
-                fontSize: 12,
-                marginBottom: 16,
-              }}
-            >
-              {mode === 'signin'
-                ? 'Sign in to sync your matches across every device.'
-                : 'Create a QuickClip account so your matches follow you everywhere.'}
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginBottom: 16 }}>
+              {subtitle}
             </Text>
 
-            {/* Inputs */}
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 12,
-                marginBottom: 4,
-              }}
-            >
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 4 }}>
               Email
             </Text>
             <TextInput
@@ -254,14 +259,7 @@ export default function SignInScreen() {
               editable={!busy}
             />
 
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 12,
-                marginBottom: 4,
-                marginTop: 4,
-              }}
-            >
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 4, marginTop: 4 }}>
               Password
             </Text>
             <TextInput
@@ -284,35 +282,12 @@ export default function SignInScreen() {
               editable={!busy}
             />
 
-            {/* Small hint */}
-            {mode === 'signup' && (
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.6)',
-                  fontSize: 11,
-                  marginBottom: 8,
-                }}
-              >
-                Use an email you’ll remember — your cloud videos will be tied to
-                this account.
-              </Text>
-            )}
-
-            {/* Error */}
             {!!err && (
-              <Text
-                style={{
-                  color: accentRed,
-                  marginBottom: 10,
-                  fontSize: 13,
-                }}
-                numberOfLines={3}
-              >
+              <Text style={{ color: accentRed, marginBottom: 10, fontSize: 13 }} numberOfLines={3}>
                 {err}
               </Text>
             )}
 
-            {/* Primary button */}
             <TouchableOpacity
               onPress={onSubmit}
               disabled={busy}
@@ -325,145 +300,23 @@ export default function SignInScreen() {
                 opacity: busy ? 0.85 : 1,
               }}
             >
-              {busy ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '800',
-                    fontSize: 15,
-                  }}
-                >
-                  {primaryCta}
-                </Text>
-              )}
+              {busy ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '800', fontSize: 15 }}>{primaryCta}</Text>}
             </TouchableOpacity>
 
-            {/* Tiny text link to flip mode */}
-            <TouchableOpacity
-              disabled={busy}
-              onPress={() =>
-                setMode(mode === 'signin' ? 'signup' : 'signin')
-              }
-              style={{ marginBottom: 14 }}
-            >
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.7)',
-                  fontSize: 13,
-                  textAlign: 'center',
-                }}
-              >
-                {mode === 'signin'
-                  ? "Don't have an account yet? Sign up"
-                  : 'Already have an account? Sign in'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Divider for social logins */}
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginVertical: 10,
-              }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  height: 1,
-                  backgroundColor: 'rgba(255,255,255,0.15)',
-                }}
-              />
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.6)',
-                  fontSize: 11,
-                  marginHorizontal: 8,
-                }}
-              >
-                or continue with
-              </Text>
-              <View
-                style={{
-                  flex: 1,
-                  height: 1,
-                  backgroundColor: 'rgba(255,255,255,0.15)',
-                }}
-              />
-            </View>
-
-            {/* Social buttons - UI only for now */}
-            <View style={{ gap: 8, marginBottom: 6 }}>
+            {!isAnon && (
               <TouchableOpacity
-                disabled
-                style={{
-                  borderRadius: 999,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#000',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.35)',
-                  opacity: 0.7,
-                }}
+                disabled={busy}
+                onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+                style={{ marginBottom: 14 }}
               >
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '700',
-                    fontSize: 14,
-                  }}
-                >
-                  Continue with Apple
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }}>
+                  {mode === 'signin' ? "Don't have an account yet? Sign up" : 'Already have an account? Sign in'}
                 </Text>
               </TouchableOpacity>
+            )}
 
-              <TouchableOpacity
-                disabled
-                style={{
-                  borderRadius: 999,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#050505',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.25)',
-                  opacity: 0.7,
-                }}
-              >
-                <Text
-                  style={{
-                    color: 'rgba(255,255,255,0.95)',
-                    fontWeight: '700',
-                    fontSize: 14,
-                  }}
-                >
-                  Continue with Google
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Continue as guest */}
-            <View
-              style={{
-                borderTopWidth: 1,
-                borderTopColor: 'rgba(255,255,255,0.12)',
-                paddingTop: 10,
-                marginTop: 6,
-              }}
-            >
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.6)',
-                  fontSize: 11,
-                  marginBottom: 8,
-                  textAlign: 'center',
-                }}
-              >
+            <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)', paddingTop: 10, marginTop: 6 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginBottom: 8, textAlign: 'center' }}>
                 Just want to try it out?
               </Text>
 
@@ -480,28 +333,14 @@ export default function SignInScreen() {
                   opacity: busy ? 0.7 : 1,
                 }}
               >
-                <Text
-                  style={{
-                    color: 'white',
-                    fontWeight: '700',
-                    fontSize: 13,
-                  }}
-                >
+                <Text style={{ color: 'white', fontWeight: '700', fontSize: 13 }}>
                   Continue as Guest
                 </Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Tiny footer hint */}
-          <Text
-            style={{
-              color: 'rgba(255,255,255,0.4)',
-              fontSize: 11,
-              textAlign: 'center',
-              marginTop: 16,
-            }}
-          >
+          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, textAlign: 'center', marginTop: 16 }}>
             Your videos stay on your device until you choose to upload them.
           </Text>
         </View>

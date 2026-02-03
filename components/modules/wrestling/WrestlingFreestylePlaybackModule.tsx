@@ -26,10 +26,10 @@ function getMeta(e: any) {
 
 /**
  * Minimal + safe:
- * - hooks always run (no hook order crash)
- * - NOT editing: shows Result pill + score pills (same look/placement as Folkstyle)
- * - EDIT mode: minimal 2x3 grids (TD2/EX2/OB1 + BIG/PASS/PEN)
- * - colors & actor mapping derived from prior events when possible (so editing matches flips)
+ * - hooks always run
+ * - NOT editing: shows Result pill + score pills
+ * - EDIT mode: 2x3 grids (TD2/EX2/OB1 + BIG/PASS/PEN)
+ * - COLORS derived from history, but EDIT UI side mapping is locked to homeIsAthlete
  * - every edit event writes pillColor + athleteColor/opponentColor + athleteActor
  */
 export default function WrestlingFreestylePlaybackModule({
@@ -44,7 +44,6 @@ export default function WrestlingFreestylePlaybackModule({
   athleteName,
   events,
 }: PlaybackModuleProps) {
-  // ✅ hooks must always run; never return before hooks
   const dims = useWindowDimensions();
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
@@ -52,48 +51,36 @@ export default function WrestlingFreestylePlaybackModule({
   const athleteLabel = (athleteName ?? '').trim() || 'Athlete';
   const opponentLabel = 'Opponent';
 
-  // ---------- derive colors + (optionally) actor mapping from prior events ----------
+  // ---------- derive colors from prior events ----------
   const derived = useMemo(() => {
     let athleteColor = BASE_RED;
     let opponentColor = BASE_BLUE;
-    let athleteActorFromMeta: 'home' | 'opponent' | undefined = undefined;
 
     const list: any[] = Array.isArray(events) ? events : [];
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
       const meta = getMeta(e);
 
-      if (meta.athleteActor === 'home' || meta.athleteActor === 'opponent') {
-        athleteActorFromMeta = meta.athleteActor;
-      }
-
       if (isHexColor(meta.athleteColor)) athleteColor = meta.athleteColor;
       if (isHexColor(meta.opponentColor)) opponentColor = meta.opponentColor;
 
       const mk = pickColorName(meta.myKidColor);
       const ok = pickColorName(meta.opponentColor);
+
       if (mk) athleteColor = mk === 'red' ? BASE_RED : BASE_BLUE;
       if (ok) opponentColor = ok === 'red' ? BASE_RED : BASE_BLUE;
 
-      if (
-        athleteActorFromMeta ||
-        isHexColor(meta.athleteColor) ||
-        isHexColor(meta.opponentColor) ||
-        mk ||
-        ok
-      ) {
-        break;
-      }
+      if (isHexColor(meta.athleteColor) || isHexColor(meta.opponentColor) || mk || ok) break;
     }
 
-    return { athleteColor, opponentColor, athleteActorFromMeta };
+    return { athleteColor, opponentColor };
   }, [events]);
 
   const athleteColor = derived.athleteColor;
   const opponentColor = derived.opponentColor;
 
-  const athleteActor: 'home' | 'opponent' =
-    derived.athleteActorFromMeta ?? (homeIsAthlete ? 'home' : 'opponent');
+  // ✅ CRITICAL: lock UI mapping so "Athlete buttons" ALWAYS award athlete
+  const athleteActor: 'home' | 'opponent' = homeIsAthlete ? 'home' : 'opponent';
   const opponentActor: 'home' | 'opponent' = athleteActor === 'home' ? 'opponent' : 'home';
 
   // ---------- scoreboard numbers ----------
@@ -103,24 +90,19 @@ export default function WrestlingFreestylePlaybackModule({
   const athleteLiveScore = athleteActor === 'home' ? homeScore : oppScore;
   const opponentLiveScore = athleteActor === 'home' ? oppScore : homeScore;
 
-  // ---------- result pill (match Folkstyle behavior + look) ----------
+  // ---------- result pill ----------
   const result = useMemo(() => {
     if (!finalScore) return null;
     const a = athleteActor === 'home' ? finalScore.home : finalScore.opponent;
     const b = athleteActor === 'home' ? finalScore.opponent : finalScore.home;
 
     const out: 'W' | 'L' | 'T' = a > b ? 'W' : a < b ? 'L' : 'T';
-    const c =
-      out === 'W'
-        ? athleteColor
-        : out === 'L'
-        ? opponentColor
-        : 'rgba(148,163,184,0.95)';
+    const c = out === 'W' ? athleteColor : out === 'L' ? opponentColor : 'rgba(148,163,184,0.95)';
 
     return { text: `${out} ${a}–${b}`, color: c };
   }, [finalScore, athleteActor, athleteColor, opponentColor]);
 
-  // ---------- safe emit helper ----------
+  // ---------- emit helper ----------
   const fire = (
     actor: 'home' | 'opponent' | 'neutral',
     key: string,
@@ -143,7 +125,7 @@ export default function WrestlingFreestylePlaybackModule({
         buttonColor: color,
         chipColor: color,
 
-        // persist mapping so edit stays accurate
+        // persist for belt/score coloring
         athleteColor,
         opponentColor,
         athleteActor,
@@ -153,69 +135,14 @@ export default function WrestlingFreestylePlaybackModule({
     } as any);
   };
 
-  // ---------- layout helpers ----------
-  const { width: screenW, height: screenH } = dims;
-  const isPortrait = screenH >= screenW;
-
-  const EDGE_L = insets.left + 10;
-  const EDGE_R = insets.right + 10;
-  const TOP = insets.top + 52;
-  const BOTTOM = insets.bottom + 92;
-
-  const availableHeight = Math.max(0, screenH - TOP - BOTTOM);
-  const ROWS = 3;
-  const GAP = 10;
-  const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
-  const SIZE = Math.max(36, Math.min(60, maxSize));
-  const COLS = 2;
-  const COL_W = COLS * SIZE + (COLS - 1) * GAP;
-
-  const Circle = ({
-    label,
-    onPress,
-    bg,
-  }: {
-    label: string;
-    onPress: () => void;
-    bg: string;
-  }) => (
-    <Pressable
-      onPress={onPress}
-      style={{
-        width: SIZE,
-        height: SIZE,
-        borderRadius: SIZE / 2,
-        backgroundColor: bg,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3,
-        elevation: 2,
-      }}
-    >
-      <Text style={{ color: 'white', fontSize: 13, fontWeight: '800' }}>{label}</Text>
-    </Pressable>
-  );
-
-  // ✅ safe to return now
   if (!overlayOn) return null;
 
   // =========================
-  // BRANCH 1: NOT EDITING — result pill + score pills (match Folkstyle)
+  // NOT EDITING — show score/name pills
   // =========================
   if (!showPalette) {
     return (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: insets.top + 36,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 36 }}>
         {result ? (
           <View style={{ alignItems: 'center', marginBottom: 4 }}>
             <View
@@ -228,9 +155,7 @@ export default function WrestlingFreestylePlaybackModule({
                 borderColor: result.color,
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>
-                {result.text}
-              </Text>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{result.text}</Text>
             </View>
           </View>
         ) : null}
@@ -277,8 +202,45 @@ export default function WrestlingFreestylePlaybackModule({
   }
 
   // =========================
-  // BRANCH 2: EDIT MODE — minimal buttons like recording overlay
+  // EDIT MODE — minimal buttons
   // =========================
+  const { width: screenW, height: screenH } = dims;
+  const isPortrait = screenH >= screenW;
+
+  const EDGE_L = insets.left + 10;
+  const EDGE_R = insets.right + 10;
+  const TOP = insets.top + 52;
+  const BOTTOM = insets.bottom + 92;
+
+  const availableHeight = Math.max(0, screenH - TOP - BOTTOM);
+  const ROWS = 3;
+  const GAP = 10;
+  const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
+  const SIZE = Math.max(36, Math.min(60, maxSize));
+  const COLS = 2;
+  const COL_W = COLS * SIZE + (COLS - 1) * GAP;
+
+  const Circle = ({ label, onPress, bg }: { label: string; onPress: () => void; bg: string }) => (
+    <Pressable
+      onPress={onPress}
+      style={{
+        width: SIZE,
+        height: SIZE,
+        borderRadius: SIZE / 2,
+        backgroundColor: bg,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 3,
+        elevation: 2,
+      }}
+    >
+      <Text style={{ color: 'white', fontSize: 13, fontWeight: '800' }}>{label}</Text>
+    </Pressable>
+  );
+
   const athleteButtons = [
     () => fire(athleteActor, 'takedown', 'TD2', 2, athleteColor),
     () => fire(athleteActor, 'exposure', 'EX2', 2, athleteColor),
@@ -298,28 +260,9 @@ export default function WrestlingFreestylePlaybackModule({
   ];
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: TOP,
-        bottom: BOTTOM,
-      }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
       {/* Left grid (athlete) */}
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          left: EDGE_L,
-          top: 0,
-          bottom: 0,
-          alignItems: 'flex-start',
-          width: COL_W,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, width: COL_W }}>
         <Text
           style={{
             color: 'white',
@@ -343,22 +286,10 @@ export default function WrestlingFreestylePlaybackModule({
           <Circle label="PASS" bg={athleteColor} onPress={athleteButtons[4]} />
           <Circle label="PEN" bg={athleteColor} onPress={athleteButtons[5]} />
         </View>
-
-        <View style={{ flex: 1 }} />
       </View>
 
       {/* Right grid (opponent) */}
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          right: EDGE_R,
-          top: 0,
-          bottom: 0,
-          alignItems: 'flex-start',
-          width: COL_W,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, width: COL_W }}>
         <Text
           style={{
             color: 'white',
@@ -369,6 +300,7 @@ export default function WrestlingFreestylePlaybackModule({
             paddingVertical: 4,
             borderRadius: 999,
             overflow: 'hidden',
+            alignSelf: 'flex-end',
           }}
         >
           {opponentLabel}
@@ -382,20 +314,12 @@ export default function WrestlingFreestylePlaybackModule({
           <Circle label="PASS" bg={opponentColor} onPress={opponentButtons[4]} />
           <Circle label="PEN" bg={opponentColor} onPress={opponentButtons[5]} />
         </View>
-
-        <View style={{ flex: 1 }} />
       </View>
 
-      {/* tiny hint spacer (kept invisible) */}
+      {/* invisible spacer */}
       <View
         pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: isPortrait ? 6 : 0,
-          left: EDGE_L,
-          right: EDGE_R,
-          alignItems: 'center',
-        }}
+        style={{ position: 'absolute', top: isPortrait ? 6 : 0, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}
       >
         <Text style={{ color: 'rgba(255,255,255,0.0)', fontWeight: '800' }}>{' '}</Text>
       </View>

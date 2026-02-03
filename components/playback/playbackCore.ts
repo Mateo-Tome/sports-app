@@ -77,48 +77,96 @@ export function toActor(a: any): Actor {
   return a === 'home' || a === 'opponent' || a === 'neutral' ? a : 'neutral';
 }
 
+/** Merge meta + meta.meta so modules can safely store nested chooser info. */
+function getMetaFlat(e: EventRow): Record<string, any> {
+  const m: any = e?.meta ?? {};
+  const inner: any = m?.meta ?? {};
+  // Prefer top-level keys on collision
+  return { ...inner, ...m };
+}
+
+function normSide(v: any, homeIsAthlete: boolean): 'home' | 'opponent' | null {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+
+  if (s === 'home' || s === 'h') return 'home';
+  if (s === 'opponent' || s === 'opp' || s === 'o') return 'opponent';
+
+  // convenience tokens
+  if (['athlete', 'me', 'us', 'our', 'mykid', 'my kid'].includes(s)) return homeIsAthlete ? 'home' : 'opponent';
+  if (['them', 'their', 'away', 'visitor', 'opponentteam', 'opponent team'].includes(s))
+    return homeIsAthlete ? 'opponent' : 'home';
+
+  return null;
+}
+
+/**
+ * Resolve a target side for "chooser / neutral" events.
+ * Examples:
+ * - meta.for: 'home'|'opponent'  (awarded to)
+ * - meta.offender / meta.penalized / meta.calledOn: 'home'|'opponent' (called on)
+ */
+function resolveTargetSideFromMeta(e: EventRow, homeIsAthlete: boolean): 'home' | 'opponent' | null {
+  const m = getMetaFlat(e);
+
+  // awarded TO
+  const to =
+    normSide(m.for, homeIsAthlete) ??
+    normSide(m.to, homeIsAthlete) ??
+    normSide(m.toSide, homeIsAthlete) ??
+    normSide(m.scorer, homeIsAthlete) ??
+    normSide(m.awardedTo, homeIsAthlete) ??
+    normSide(m.pointTo, homeIsAthlete) ??
+    normSide(m.benefit, homeIsAthlete) ??
+    null;
+  if (to) return to;
+
+  // called ON (offender/penalized)
+  const on =
+    normSide(m.offender, homeIsAthlete) ??
+    normSide(m.penalized, homeIsAthlete) ??
+    normSide(m.calledOn, homeIsAthlete) ??
+    normSide(m.against, homeIsAthlete) ??
+    normSide(m.on, homeIsAthlete) ??
+    normSide(m.who, homeIsAthlete) ??
+    normSide(m.side, homeIsAthlete) ??
+    null;
+  if (on) return on;
+
+  // nested target object support (optional)
+  if (m?.target && typeof m.target === 'object') {
+    const t = m.target;
+    const tTo =
+      normSide(t.for, homeIsAthlete) ??
+      normSide(t.to, homeIsAthlete) ??
+      normSide(t.awardedTo, homeIsAthlete) ??
+      null;
+    if (tTo) return tTo;
+
+    const tOn =
+      normSide(t.offender, homeIsAthlete) ??
+      normSide(t.penalized, homeIsAthlete) ??
+      normSide(t.calledOn, homeIsAthlete) ??
+      null;
+    if (tOn) return tOn;
+  }
+
+  return null;
+}
+
 function inferActorInternal(e: EventRow, homeIsAthlete: boolean): Actor {
   if (e.actor === 'home' || e.actor === 'opponent' || e.actor === 'neutral') return e.actor;
 
   const kind = String(e.kind || '').toLowerCase();
   const penaltyish = PENALTYISH.has(kind);
-  const m = e.meta ?? {};
 
-  const norm = (v: any): 'home' | 'opponent' | null => {
-    const s = String(v ?? '').trim().toLowerCase();
-    if (!s) return null;
-    if (['home', 'h'].includes(s)) return 'home';
-    if (['opponent', 'opp', 'o'].includes(s)) return 'opponent';
-    if (['athlete', 'me', 'us', 'our'].includes(s)) return homeIsAthlete ? 'home' : 'opponent';
-    if (['them', 'their', 'away', 'visitor'].includes(s)) return homeIsAthlete ? 'opponent' : 'home';
-    return null;
-  };
+  // ✅ First: if meta indicates a target, respect it.
+  const target = resolveTargetSideFromMeta(e, homeIsAthlete);
+  if (target) return target;
 
-  const to =
-    norm(m.to) ??
-    norm(m.toSide) ??
-    norm(m.scorer) ??
-    norm(m.awardedTo) ??
-    norm(m.pointTo) ??
-    norm(m.benefit) ??
-    null;
-  if (to) return to;
-
-  const against =
-    norm(m.against) ??
-    norm(m.on) ??
-    norm(m.calledOn) ??
-    norm(m.penalized) ??
-    norm(m.who) ??
-    norm(m.side) ??
-    null;
-  if (against === 'home') return 'opponent';
-  if (against === 'opponent') return 'home';
-
-  if (penaltyish && typeof e.points === 'number' && e.points > 0) {
-    return homeIsAthlete ? 'home' : 'opponent';
-  }
-  if (penaltyish) return homeIsAthlete ? 'home' : 'opponent';
+  // ✅ If penalty-ish but we still can't resolve, keep it neutral.
+  // This prevents "PASS/PEN always go to one side" across styles/sports.
+  if (penaltyish) return 'neutral';
 
   return 'neutral';
 }
@@ -150,6 +198,12 @@ export function deriveOutcome(
     if (pts > 0) {
       if (e.actor === 'home') h += pts;
       else if (e.actor === 'opponent') o += pts;
+      else {
+        // ✅ If someone ever emitted points on a neutral event, use meta target if present.
+        const target = resolveTargetSideFromMeta(e, hiA);
+        if (target === 'home') h += pts;
+        else if (target === 'opponent') o += pts;
+      }
     }
   }
 
@@ -157,8 +211,9 @@ export function deriveOutcome(
 
   const pinEv = ordered.find(e => {
     const k = String(e.kind || '').toLowerCase();
-    const winBy = String(e?.meta?.winBy || '').toLowerCase();
-    const lbl = String(e?.meta?.label || '').toLowerCase();
+    const m: any = e?.meta ?? {};
+    const winBy = String(m?.winBy || '').toLowerCase();
+    const lbl = String(m?.label || '').toLowerCase();
     return k === 'pin' || k === 'fall' || winBy === 'pin' || lbl.includes('pin') || lbl.includes('fall');
   });
 

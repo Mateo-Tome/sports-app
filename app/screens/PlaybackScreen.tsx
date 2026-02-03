@@ -377,7 +377,7 @@ export default function PlaybackScreen() {
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
       const inner = (meta.meta ?? {}) as any;
-
+  
       // 1) explicit tint wins (works for all sports)
       const explicit =
         meta.pillColor ??
@@ -390,72 +390,107 @@ export default function PlaybackScreen() {
         inner.buttonColor ??
         meta.chipColor ??
         inner.chipColor;
-
+  
       if (typeof explicit === 'string' && explicit.trim().length > 0) return explicit;
-
-      // Merge meta defensively
+  
+      // Merge meta defensively (prefer top-level)
       const m = { ...inner, ...meta };
-
-      // 2) Prefer stored athleteActor mapping (correct even if you flipped during recording)
-      const athleteActor: 'home' | 'opponent' | null =
-        m.athleteActor === 'home' || m.athleteActor === 'opponent' ? m.athleteActor : null;
-
-      const isAthleteActor =
-        athleteActor
-          ? e.actor === athleteActor
-          : (e.actor === 'home' && effectiveHomeIsAthlete) || (e.actor === 'opponent' && !effectiveHomeIsAthlete);
-
-      // 3) If modules store explicit hex colors, use them
-      if (isHex(m.athleteColor) || isHex(m.opponentColor)) {
-        const aHex = isHex(m.athleteColor) ? m.athleteColor : null;
-        const oHex = isHex(m.opponentColor) ? m.opponentColor : null;
-
-        if (isAthleteActor && aHex) return aHex;
-        if (!isAthleteActor && oHex) return oHex;
-
-        // If only one exists, just use it for both (safe fallback)
-        if (aHex) return aHex;
-        if (oHex) return oHex;
-      }
-
-      // 4) Named colors (modules should set these per sport)
-      const mkName = normalizeNamed(m.myKidColor);
-      const okName = normalizeNamed(m.opponentColor);
-
-      // Map named tokens to actual render colors.
-      // This is STILL NOT sport-specific because the module chooses the tokens.
-      // (If a module wants blue, it writes "blue". If it wants green, it writes "green".)
+  
+      const isHex = (v: any) => typeof v === 'string' && /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim());
+  
+      const normalizeNamed = (raw: any): 'red' | 'blue' | 'green' | null => {
+        if (!raw) return null;
+        const v = String(raw).trim().toLowerCase();
+        if (v === 'red') return 'red';
+        if (v === 'blue') return 'blue';
+        if (v === 'green') return 'green';
+        return null;
+      };
+  
       const mapNamedToHex = (name: 'red' | 'blue' | 'green') => {
         if (name === 'green') return GREEN;
         if (name === 'red') return RED;
-        // blue: a sane default
         return '#3b82f6';
       };
-
-      if (mkName || okName) {
-        if (isAthleteActor && mkName) return mapNamedToHex(mkName);
-        if (!isAthleteActor && okName) return mapNamedToHex(okName);
-
-        // If only one exists, mirror it so pills still get a consistent color.
-        if (mkName) return mapNamedToHex(mkName);
-        if (okName) return mapNamedToHex(okName);
-      }
-
-      // 5) Legacy fallback (keeps your existing sports working)
+  
+      // Legacy athlete/opponent colors (safe fallback)
       const colorIsGreen = effectiveHomeColorIsGreen !== false;
-      const athleteColor = colorIsGreen ? GREEN : RED;
-      const opponentColor = colorIsGreen ? RED : GREEN;
-
+      const athleteColorLegacy = colorIsGreen ? GREEN : RED;
+      const opponentColorLegacy = colorIsGreen ? RED : GREEN;
+  
+      // 2) Determine who "athlete" is for this clip (prefer stored mapping if present)
+      const athleteActor: 'home' | 'opponent' | null =
+        m.athleteActor === 'home' || m.athleteActor === 'opponent' ? m.athleteActor : null;
+  
+      const myActor = effectiveHomeIsAthlete ? 'home' : 'opponent';
+      const isAthleteActor =
+        athleteActor ? e.actor === athleteActor : e.actor === myActor;
+  
+      // 3) If modules stored explicit hex colors, use them
+      if (isHex(m.athleteColor) || isHex(m.opponentColor)) {
+        const aHex = isHex(m.athleteColor) ? m.athleteColor : null;
+        const oHex = isHex(m.opponentColor) ? m.opponentColor : null;
+  
+        if (isAthleteActor && aHex) return aHex;
+        if (!isAthleteActor && oHex) return oHex;
+  
+        if (aHex) return aHex;
+        if (oHex) return oHex;
+      }
+  
+      // 4) Named colors chosen by module (red/blue/green)
+      const mkName = normalizeNamed(m.myKidColor);
+      const okName = normalizeNamed(m.opponentColor);
+  
+      if (mkName || okName) {
+        const athleteColor = mkName ? mapNamedToHex(mkName) : athleteColorLegacy;
+        const opponentColor = okName ? mapNamedToHex(okName) : opponentColorLegacy;
+        return isAthleteActor ? athleteColor : opponentColor;
+      }
+  
+      // 5) Chooser/neutral targeting: color from meta.for/offender/etc
+      const metaSide = (v: any): 'home' | 'opponent' | null => {
+        const s = String(v ?? '').trim().toLowerCase();
+        if (!s) return null;
+        if (s === 'home' || s === 'h') return 'home';
+        if (s === 'opponent' || s === 'opp' || s === 'o') return 'opponent';
+        return null;
+      };
+  
+      const targeted =
+        metaSide(m.for) ??
+        metaSide(m.awardedTo) ??
+        metaSide(m.scorer) ??
+        metaSide(m.to) ??
+        metaSide(m.offender) ??
+        metaSide(m.penalized) ??
+        metaSide(m.calledOn) ??
+        null;
+  
       const kind = String(e.kind || '').toLowerCase();
       const pts = typeof e.points === 'number' ? e.points : 0;
-
-      if (pts > 0) return isAthleteActor ? athleteColor : opponentColor;
-      if (PENALTYISH.has(kind)) return opponentColor;
-
+  
+      if (targeted) {
+        const isTargetAthlete = targeted === myActor;
+        const athleteColor = athleteColorLegacy;
+        const opponentColor = opponentColorLegacy;
+        // If points > 0, make sure it uses the target side color
+        if (pts > 0) return isTargetAthlete ? athleteColor : opponentColor;
+        // If penalty-ish/chooser, still show target side color
+        if (PENALTYISH.has(kind)) return isTargetAthlete ? athleteColor : opponentColor;
+      }
+  
+      // 6) Legacy fallback (keeps other sports working)
+      if (pts > 0) return isAthleteActor ? athleteColorLegacy : opponentColorLegacy;
+  
+      // IMPORTANT: don't force penaltyish to opponent; that's what broke freestyle/greco
+      if (PENALTYISH.has(kind)) return 'rgba(148,163,184,0.9)';
+  
       return 'rgba(148,163,184,0.9)';
     },
     [effectiveHomeIsAthlete, effectiveHomeColorIsGreen],
   );
+  
 
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 

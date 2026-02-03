@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { Pressable, Text, useWindowDimensions, View } from 'react-native';
 import type { PlaybackModuleProps } from '../types';
 
-// Greco uses red/blue in your recording overlay
+// Greco uses red/blue
 const BASE_RED = '#ef4444';
 const BASE_BLUE = '#3b82f6';
 
@@ -20,16 +20,10 @@ function pickColorName(v: any): 'red' | 'blue' | undefined {
 
 function getMeta(e: any) {
   const m = e?.meta ?? {};
-  const inner = m?.meta ?? {}; // support meta-in-meta
+  const inner = m?.meta ?? {};
   return { ...inner, ...m };
 }
 
-/**
- * Greco Playback:
- * - NOT editing: shows Result pill + Name/Score pills (like Folkstyle/Freestyle)
- * - EDIT mode: minimal 2x3 circles (TD2/EX2/OB1 + BIG/PASS/PEN)
- * - Colors derived from recorded events (myKidColor/opponentColor), with safe fallbacks
- */
 export default function WrestlingGrecoPlaybackModule({
   overlayOn,
   insets,
@@ -42,7 +36,6 @@ export default function WrestlingGrecoPlaybackModule({
   athleteName,
   events,
 }: PlaybackModuleProps) {
-  // ✅ hooks first — never early-return before hooks
   const dims = useWindowDimensions();
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
@@ -50,52 +43,36 @@ export default function WrestlingGrecoPlaybackModule({
   const athleteLabel = (athleteName ?? '').trim() || 'Athlete';
   const opponentLabel = 'Opponent';
 
-  // ---- derive athlete/opponent colors from prior events (myKidColor/opponentColor) ----
+  // ---- derive colors from prior events ----
   const derived = useMemo(() => {
     let athleteColor = BASE_RED;
     let opponentColor = BASE_BLUE;
-    let athleteActorFromMeta: 'home' | 'opponent' | undefined = undefined;
 
     const list: any[] = Array.isArray(events) ? events : [];
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
       const meta = getMeta(e);
 
-      if (meta.athleteActor === 'home' || meta.athleteActor === 'opponent') {
-        athleteActorFromMeta = meta.athleteActor;
-      }
-
-      // optional: if any module ever writes explicit hex
       if (isHexColor(meta.athleteColor)) athleteColor = meta.athleteColor;
       if (isHexColor(meta.opponentColor)) opponentColor = meta.opponentColor;
 
-      // primary: your recording overlay writes these
       const mk = pickColorName(meta.myKidColor);
       const ok = pickColorName(meta.opponentColor);
 
       if (mk) athleteColor = mk === 'red' ? BASE_RED : BASE_BLUE;
       if (ok) opponentColor = ok === 'red' ? BASE_RED : BASE_BLUE;
 
-      if (
-        athleteActorFromMeta ||
-        mk ||
-        ok ||
-        isHexColor(meta.athleteColor) ||
-        isHexColor(meta.opponentColor)
-      ) {
-        break;
-      }
+      if (isHexColor(meta.athleteColor) || isHexColor(meta.opponentColor) || mk || ok) break;
     }
 
-    return { athleteColor, opponentColor, athleteActorFromMeta };
+    return { athleteColor, opponentColor };
   }, [events]);
 
   const athleteColor = derived.athleteColor;
   const opponentColor = derived.opponentColor;
 
-  // If you ever store athleteActor in meta, honor it; otherwise use homeIsAthlete
-  const athleteActor: 'home' | 'opponent' =
-    derived.athleteActorFromMeta ?? (homeIsAthlete ? 'home' : 'opponent');
+  // ✅ CRITICAL: lock UI mapping so "Athlete buttons" ALWAYS award athlete
+  const athleteActor: 'home' | 'opponent' = homeIsAthlete ? 'home' : 'opponent';
   const opponentActor: 'home' | 'opponent' = athleteActor === 'home' ? 'opponent' : 'home';
 
   // ---- scoreboard values ----
@@ -105,7 +82,7 @@ export default function WrestlingGrecoPlaybackModule({
   const athleteLiveScore = athleteActor === 'home' ? homeScore : oppScore;
   const opponentLiveScore = athleteActor === 'home' ? oppScore : homeScore;
 
-  // ---- result pill (W/L/T like others) ----
+  // ---- result pill ----
   const result = useMemo(() => {
     if (!finalScore) return null;
     const a = athleteActor === 'home' ? finalScore.home : finalScore.opponent;
@@ -117,7 +94,7 @@ export default function WrestlingGrecoPlaybackModule({
     return { text: `${out} ${a}–${b}`, color: c };
   }, [finalScore, athleteActor, athleteColor, opponentColor]);
 
-  // ---- emit helper for edit-mode events ----
+  // ---- emit helper ----
   const fire = (
     actor: 'home' | 'opponent' | 'neutral',
     key: string,
@@ -139,7 +116,6 @@ export default function WrestlingGrecoPlaybackModule({
         buttonColor: color,
         chipColor: color,
 
-        // persist mapping so PlaybackScreen can color belts safely too
         athleteColor,
         opponentColor,
         athleteActor,
@@ -149,23 +125,12 @@ export default function WrestlingGrecoPlaybackModule({
     } as any);
   };
 
-  // ✅ safe to return now
   if (!overlayOn) return null;
 
-  // =========================
-  // BRANCH 1: NOT EDITING — show score/name pills
-  // =========================
+  // NOT EDITING — show score/name pills
   if (!showPalette) {
     return (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: insets.top + 36,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 36 }}>
         {result ? (
           <View style={{ alignItems: 'center', marginBottom: 4 }}>
             <View
@@ -224,9 +189,7 @@ export default function WrestlingGrecoPlaybackModule({
     );
   }
 
-  // =========================
-  // BRANCH 2: EDIT MODE — minimal Greco buttons
-  // =========================
+  // EDIT MODE — minimal buttons
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
 
@@ -268,8 +231,6 @@ export default function WrestlingGrecoPlaybackModule({
     () => fire(athleteActor, 'takedown', 'TD2', 2, athleteColor),
     () => fire(athleteActor, 'exposure', 'EX2', 2, athleteColor),
     () => fire(athleteActor, 'out', 'OB1', 1, athleteColor),
-
-    // placeholder emitters (you can swap to chooser UI later)
     () => fire('neutral', 'big', 'BIG', 0, athleteColor, { for: athleteActor }),
     () => fire('neutral', 'passivity', 'PASS', 0, athleteColor, { for: athleteActor }),
     () => fire('neutral', 'penalty', 'PEN', 0, athleteColor, { for: athleteActor }),
@@ -279,35 +240,15 @@ export default function WrestlingGrecoPlaybackModule({
     () => fire(opponentActor, 'takedown', 'TD2', 2, opponentColor),
     () => fire(opponentActor, 'exposure', 'EX2', 2, opponentColor),
     () => fire(opponentActor, 'out', 'OB1', 1, opponentColor),
-
     () => fire('neutral', 'big', 'BIG', 0, opponentColor, { for: opponentActor }),
     () => fire('neutral', 'passivity', 'PASS', 0, opponentColor, { for: opponentActor }),
     () => fire('neutral', 'penalty', 'PEN', 0, opponentColor, { for: opponentActor }),
   ];
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: TOP,
-        bottom: BOTTOM,
-      }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
       {/* Left (athlete) */}
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          left: EDGE_L,
-          top: 0,
-          bottom: 0,
-          alignItems: 'flex-start',
-          width: COL_W,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, width: COL_W }}>
         <Text
           style={{
             color: 'white',
@@ -331,22 +272,10 @@ export default function WrestlingGrecoPlaybackModule({
           <Circle label="PASS" bg={athleteColor} onPress={athleteButtons[4]} />
           <Circle label="PEN" bg={athleteColor} onPress={athleteButtons[5]} />
         </View>
-
-        <View style={{ flex: 1 }} />
       </View>
 
       {/* Right (opponent) */}
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          right: EDGE_R,
-          top: 0,
-          bottom: 0,
-          alignItems: 'flex-start',
-          width: COL_W,
-        }}
-      >
+      <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, width: COL_W }}>
         <Text
           style={{
             color: 'white',
@@ -357,20 +286,13 @@ export default function WrestlingGrecoPlaybackModule({
             paddingVertical: 4,
             borderRadius: 999,
             overflow: 'hidden',
+            alignSelf: 'flex-end',
           }}
         >
           {opponentLabel}
         </Text>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            width: COL_W,
-            gap: GAP,
-            justifyContent: 'flex-end',
-          }}
-        >
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
           <Circle label="TD2" bg={opponentColor} onPress={opponentButtons[0]} />
           <Circle label="EX2" bg={opponentColor} onPress={opponentButtons[1]} />
           <Circle label="OB1" bg={opponentColor} onPress={opponentButtons[2]} />
@@ -378,20 +300,12 @@ export default function WrestlingGrecoPlaybackModule({
           <Circle label="PASS" bg={opponentColor} onPress={opponentButtons[4]} />
           <Circle label="PEN" bg={opponentColor} onPress={opponentButtons[5]} />
         </View>
-
-        <View style={{ flex: 1 }} />
       </View>
 
-      {/* tiny invisible spacer */}
+      {/* invisible spacer */}
       <View
         pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: isPortrait ? 6 : 0,
-          left: EDGE_L,
-          right: EDGE_R,
-          alignItems: 'center',
-        }}
+        style={{ position: 'absolute', top: isPortrait ? 6 : 0, left: EDGE_L, right: EDGE_R, alignItems: 'center' }}
       >
         <Text style={{ color: 'rgba(255,255,255,0.0)', fontWeight: '800' }}>{' '}</Text>
       </View>
