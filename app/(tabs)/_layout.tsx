@@ -32,6 +32,7 @@ export default function TabLayout() {
           ),
         }}
       />
+
       <Tabs.Screen
         name="library"
         options={{
@@ -41,6 +42,7 @@ export default function TabLayout() {
           ),
         }}
       />
+
       <Tabs.Screen
         name="recordingScreen"
         options={{
@@ -48,16 +50,17 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="video.fill" color={color} />
           ),
-          // hide this tab button on web (optional)
           ...(Platform.OS === 'web' ? { tabBarButton: () => null } : {}),
         }}
       />
+
+      {/* ✅ Account tab route must match app/(tabs)/account.tsx */}
       <Tabs.Screen
-        name="settings"
+        name="account"
         options={{
-          title: 'Settings',
+          title: 'Account',
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="gearshape.fill" color={color} />
+            <IconSymbol size={28} name="person.crop.circle.fill" color={color} />
           ),
         }}
       />

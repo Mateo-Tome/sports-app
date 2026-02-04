@@ -5,15 +5,17 @@ import {
   EmailAuthProvider,
   createUserWithEmailAndPassword,
   linkWithCredential,
+  sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
@@ -28,52 +30,77 @@ export default function SignInScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const accentRed = '#ef4444';
-  const darkRed = '#7f1d1d';
+  const isAnon = !!auth.currentUser?.isAnonymous;
 
   const goToApp = () => router.replace('/(tabs)');
 
-  const isAnon = !!auth.currentUser?.isAnonymous;
-
-  // Optional: if they arrive here while already signed in, just go in.
-  useEffect(() => {
-    if (auth.currentUser && !busy) {
-      // Let anon users stay here (so they can upgrade), but signed-in users can go in.
-      if (!auth.currentUser.isAnonymous) goToApp();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const colors = {
+    bg: '#050507',
+    card: 'rgba(18,18,22,0.85)',
+    stroke: 'rgba(255,255,255,0.10)',
+    strokeSoft: 'rgba(255,255,255,0.06)',
+    text: '#FFFFFF',
+    sub: 'rgba(255,255,255,0.65)',
+    dim: 'rgba(255,255,255,0.45)',
+    accent: '#ef4444',
+    accentDark: '#7f1d1d',
+    inputBg: 'rgba(0,0,0,0.35)',
+  };
 
   const title = useMemo(() => {
-    if (isAnon) return 'Upgrade your guest account';
-    return mode === 'signin' ? 'Welcome back' : 'Create your account';
+    if (isAnon) return 'Upgrade your guest';
+    return mode === 'signin' ? 'Welcome back' : 'Create account';
   }, [isAnon, mode]);
 
   const subtitle = useMemo(() => {
-    if (isAnon) {
-      return 'Keep the same account (and the same videos). Add an email so your matches sync everywhere.';
-    }
+    if (isAnon) return 'Add an email so your clips sync across devices.';
     return mode === 'signin'
       ? 'Sign in to sync your matches across every device.'
-      : 'Create a QuickClip account so your matches follow you everywhere.';
+      : 'Create an account so your matches follow you everywhere.';
   }, [isAnon, mode]);
 
   const primaryCta = useMemo(() => {
-    if (isAnon) return 'Upgrade account';
+    if (isAnon) return 'Upgrade guest account';
     return mode === 'signin' ? 'Sign in' : 'Sign up';
   }, [isAnon, mode]);
+
+  const validate = () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) return 'Enter your email.';
+    if (!pass && (mode === 'signin' || mode === 'signup' || isAnon)) return 'Enter your password.';
+    if ((mode === 'signup' || isAnon) && pass.length < 6) return 'Password must be at least 6 characters.';
+    return null;
+  };
 
   const onContinueGuest = async () => {
     setErr(null);
     setBusy(true);
     try {
-      // If they already have a user (anon or not), don’t create a new one.
       if (!auth.currentUser) {
         await signInAnonymously(auth);
       }
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to continue as guest.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onForgotPassword = async () => {
+    setErr(null);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setErr('Enter your email first, then tap “Forgot password?”.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      Alert.alert('Password reset sent', 'Check your email for a reset link.');
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not send reset email.');
     } finally {
       setBusy(false);
     }
@@ -86,16 +113,13 @@ export default function SignInScreen() {
     const cred = EmailAuthProvider.credential(trimmedEmail, password);
 
     try {
-      // ✅ This preserves UID and keeps ownership of uploaded content.
       await linkWithCredential(u, cred);
       return true;
     } catch (e: any) {
-      // Common case: email already belongs to an account.
-      // In that case, you must sign in to that account, but that will change UID.
       if (String(e?.code) === 'auth/email-already-in-use') {
-        Alert.alert(
-          'Email already in use',
-          'That email already has a QuickClip account. Signing into it would switch accounts (your guest data would not automatically merge yet). For now, use a different email to upgrade this guest account.'
+        // This is expected: you can't link to an email that already exists.
+        setErr(
+          'That email already has a QuickClip account. If you want to use it, tap “Sign into existing account instead”.'
         );
         return false;
       }
@@ -103,29 +127,26 @@ export default function SignInScreen() {
     }
   }
 
-  const onSubmit = async () => {
+  const onSubmitPrimary = async () => {
     setErr(null);
 
+    const msg = validate();
+    if (msg) {
+      setErr(msg);
+      return;
+    }
+
     const trimmedEmail = email.trim();
-    if (!trimmedEmail || !pass) {
-      setErr('Please enter an email and password.');
-      return;
-    }
-    if (pass.length < 6) {
-      setErr('Password must be at least 6 characters.');
-      return;
-    }
 
     setBusy(true);
     try {
-      // ✅ If anon user exists, ALWAYS upgrade via linking (no UID change).
-      if (auth.currentUser?.isAnonymous) {
+      if (isAnon) {
+        // ✅ Primary button upgrades guest (keeps same UID)
         const ok = await upgradeAnonWithEmailPassword(trimmedEmail, pass);
         if (ok) goToApp();
         return;
       }
 
-      // Normal flows when not anon
       if (mode === 'signin') {
         await signInWithEmailAndPassword(auth, trimmedEmail, pass);
       } else {
@@ -139,184 +160,238 @@ export default function SignInScreen() {
     }
   };
 
+  const onSignIntoExistingInstead = async () => {
+    // This switches accounts (new UID). That's okay — but user should understand it.
+    setErr(null);
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !pass) {
+      setErr('Enter an email and password to sign into an existing account.');
+      return;
+    }
+
+    Alert.alert(
+      'Switch accounts?',
+      'This will sign into your existing account. Any guest-only data that hasn’t been uploaded/synced may not show here.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign in',
+          style: 'default',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await signInWithEmailAndPassword(auth, trimmedEmail, pass);
+              goToApp();
+            } catch (e: any) {
+              setErr(e?.message ?? 'Sign-in failed.');
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }}>
-      <View
-        style={{
-          paddingHorizontal: 24,
-          paddingBottom: 12,
-          paddingTop: 4,
-          backgroundColor: '#0b0b0b',
-          borderBottomWidth: 1,
-          borderBottomColor: 'rgba(255,255,255,0.06)',
-        }}
-      >
-        <Text
-          style={{
-            color: 'white',
-            fontSize: 28,
-            fontWeight: '900',
-            letterSpacing: 1,
-            textShadowColor: 'rgba(239,68,68,0.45)',
-            textShadowOffset: { width: 0, height: 0 },
-            textShadowRadius: 16,
-          }}
-        >
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* Futuristic header */}
+      <View style={{ paddingHorizontal: 22, paddingTop: 10, paddingBottom: 14 }}>
+        <Text style={{ color: colors.text, fontSize: 30, fontWeight: '900', letterSpacing: 0.8 }}>
           QuickClip
         </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }}>
+        <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
           Record. Review. Win.
         </Text>
+
+        {/* Guest badge */}
+        {isAnon && (
+          <View
+            style={{
+              marginTop: 10,
+              alignSelf: 'flex-start',
+              borderRadius: 999,
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              backgroundColor: 'rgba(239,68,68,0.16)',
+              borderWidth: 1,
+              borderColor: 'rgba(239,68,68,0.35)',
+            }}
+          >
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '800', fontSize: 12 }}>
+              Guest session active
+            </Text>
+          </View>
+        )}
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center' }}>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
+          {/* Card */}
           <View
             style={{
-              backgroundColor: '#111111',
-              borderRadius: 20,
-              padding: 20,
+              borderRadius: 22,
+              padding: 18,
+              backgroundColor: colors.card,
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.08)',
+              borderColor: colors.stroke,
               shadowColor: '#000',
               shadowOpacity: 0.35,
-              shadowRadius: 20,
-              shadowOffset: { width: 0, height: 10 },
+              shadowRadius: 24,
+              shadowOffset: { width: 0, height: 12 },
               elevation: 8,
             }}
           >
-            {/* Mode toggle (disabled while anon, because anon should “upgrade”, not create a new UID) */}
-            <View
-              style={{
-                flexDirection: 'row',
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
-                overflow: 'hidden',
-                marginBottom: 20,
-                backgroundColor: '#090909',
-                opacity: isAnon ? 0.45 : 1,
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setMode('signin')}
+            {/* Mode toggle (hidden for guest upgrade mode) */}
+            {!isAnon && (
+              <View
                 style={{
-                  flex: 1,
-                  paddingVertical: 10,
-                  alignItems: 'center',
-                  backgroundColor: mode === 'signin' ? accentRed : 'transparent',
+                  flexDirection: 'row',
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  overflow: 'hidden',
+                  marginBottom: 18,
+                  backgroundColor: 'rgba(0,0,0,0.25)',
                 }}
-                disabled={busy || isAnon}
               >
-                <Text style={{ color: mode === 'signin' ? 'white' : 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 14 }}>
-                  Sign in
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setMode('signup')}
-                style={{
-                  flex: 1,
-                  paddingVertical: 10,
-                  alignItems: 'center',
-                  backgroundColor: mode === 'signup' ? accentRed : 'transparent',
-                }}
-                disabled={busy || isAnon}
-              >
-                <Text style={{ color: mode === 'signup' ? 'white' : 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 14 }}>
-                  Sign up
-                </Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  onPress={() => setMode('signin')}
+                  disabled={busy}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    alignItems: 'center',
+                    backgroundColor: mode === 'signin' ? colors.accent : 'transparent',
+                  }}
+                >
+                  <Text style={{ color: mode === 'signin' ? '#fff' : colors.sub, fontWeight: '900', fontSize: 13 }}>
+                    Sign in
+                  </Text>
+                </TouchableOpacity>
 
-            <Text style={{ color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 }}>
-              {title}
-            </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginBottom: 16 }}>
+                <TouchableOpacity
+                  onPress={() => setMode('signup')}
+                  disabled={busy}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    alignItems: 'center',
+                    backgroundColor: mode === 'signup' ? colors.accent : 'transparent',
+                  }}
+                >
+                  <Text style={{ color: mode === 'signup' ? '#fff' : colors.sub, fontWeight: '900', fontSize: 13 }}>
+                    Sign up
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }}>{title}</Text>
+            <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
               {subtitle}
             </Text>
 
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 4 }}>
-              Email
-            </Text>
+            {/* Inputs */}
+            <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Email</Text>
             <TextInput
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="email-address"
               placeholder="you@example.com"
-              placeholderTextColor="rgba(255,255,255,0.4)"
-              style={{
-                color: 'white',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                marginBottom: 10,
-                fontSize: 14,
-                backgroundColor: '#050505',
-              }}
+              placeholderTextColor="rgba(255,255,255,0.35)"
               editable={!busy}
+              style={{
+                color: colors.text,
+                backgroundColor: colors.inputBg,
+                borderWidth: 1,
+                borderColor: colors.strokeSoft,
+                borderRadius: 14,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 14,
+                marginBottom: 12,
+              }}
             />
 
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 4, marginTop: 4 }}>
-              Password
-            </Text>
+            <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Password</Text>
             <TextInput
               value={pass}
               onChangeText={setPass}
               secureTextEntry
               placeholder="••••••••"
-              placeholderTextColor="rgba(255,255,255,0.4)"
-              style={{
-                color: 'white',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                marginBottom: 8,
-                fontSize: 14,
-                backgroundColor: '#050505',
-              }}
+              placeholderTextColor="rgba(255,255,255,0.35)"
               editable={!busy}
+              style={{
+                color: colors.text,
+                backgroundColor: colors.inputBg,
+                borderWidth: 1,
+                borderColor: colors.strokeSoft,
+                borderRadius: 14,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 14,
+                marginBottom: 10,
+              }}
             />
 
+            {/* Forgot password (only when not upgrading guest) */}
+            {!isAnon && mode === 'signin' && (
+              <Pressable onPress={onForgotPassword} disabled={busy} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
+                  Forgot password?
+                </Text>
+              </Pressable>
+            )}
+
             {!!err && (
-              <Text style={{ color: accentRed, marginBottom: 10, fontSize: 13 }} numberOfLines={3}>
+              <Text style={{ color: colors.accent, marginBottom: 12, fontSize: 13 }} numberOfLines={4}>
                 {err}
               </Text>
             )}
 
+            {/* Primary CTA */}
             <TouchableOpacity
-              onPress={onSubmit}
+              onPress={onSubmitPrimary}
               disabled={busy}
               style={{
-                backgroundColor: busy ? darkRed : accentRed,
                 borderRadius: 999,
                 paddingVertical: 12,
                 alignItems: 'center',
-                marginBottom: 10,
-                opacity: busy ? 0.85 : 1,
+                backgroundColor: busy ? colors.accentDark : colors.accent,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.10)',
               }}
             >
-              {busy ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '800', fontSize: 15 }}>{primaryCta}</Text>}
+              {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{primaryCta}</Text>}
             </TouchableOpacity>
 
-            {!isAnon && (
+            {/* Guest-only secondary option: sign into existing account */}
+            {isAnon && (
               <TouchableOpacity
+                onPress={onSignIntoExistingInstead}
                 disabled={busy}
-                onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-                style={{ marginBottom: 14 }}
+                style={{
+                  marginTop: 10,
+                  borderRadius: 999,
+                  paddingVertical: 11,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                }}
               >
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }}>
-                  {mode === 'signin' ? "Don't have an account yet? Sign up" : 'Already have an account? Sign in'}
+                <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>
+                  Sign into existing account instead
                 </Text>
               </TouchableOpacity>
             )}
 
-            <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)', paddingTop: 10, marginTop: 6 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginBottom: 8, textAlign: 'center' }}>
+            {/* Continue as guest */}
+            <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
+              <Text style={{ color: colors.sub, fontSize: 11, textAlign: 'center', marginBottom: 10 }}>
                 Just want to try it out?
               </Text>
 
@@ -324,24 +399,24 @@ export default function SignInScreen() {
                 onPress={onContinueGuest}
                 disabled={busy}
                 style={{
-                  backgroundColor: '#050505',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.4)',
                   borderRadius: 999,
-                  paddingVertical: 10,
+                  paddingVertical: 11,
                   alignItems: 'center',
+                  backgroundColor: 'rgba(0,0,0,0.35)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
                   opacity: busy ? 0.7 : 1,
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '700', fontSize: 13 }}>
+                <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
                   Continue as Guest
                 </Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, textAlign: 'center', marginTop: 16 }}>
-            Your videos stay on your device until you choose to upload them.
+          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 14 }}>
+            Stay signed in — you’ll only see this screen if you sign out.
           </Text>
         </View>
       </KeyboardAvoidingView>
