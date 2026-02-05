@@ -5,16 +5,15 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Pressable,
   ScrollView,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 
+import { auth } from '@/lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { auth } from '../../lib/firebase';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function maskEmail(email?: string | null) {
   if (!email) return '';
@@ -28,99 +27,113 @@ function shortUid(uid?: string | null) {
   return `${uid.slice(0, 6)}…`;
 }
 
-function Pill({ label }: { label: string }) {
+function Card({ children }: { children: React.ReactNode }) {
   return (
     <View
       style={{
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        borderRadius: 999,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 20,
+        overflow: 'hidden',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.10)',
+        borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: 'rgba(255,255,255,0.04)',
       }}
     >
-      <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '800', fontSize: 12 }}>
+      <View style={{ padding: 20 }}>{children}</View>
+    </View>
+  );
+}
+
+function PrimaryButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.88}
+      style={{
+        flex: 1,
+        borderRadius: 18,
+        paddingVertical: 16,
+        alignItems: 'center',
+        backgroundColor: disabled ? 'rgba(239,68,68,0.45)' : '#ef4444',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        shadowColor: '#000',
+        shadowOpacity: disabled ? 0 : 0.35,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 10 },
+        elevation: disabled ? 0 : 8,
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
         {label}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={{ marginTop: 16 }}>
-      <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '900', marginBottom: 10 }}>
-        {title}
-      </Text>
-      <View
-        style={{
-          borderRadius: 18,
-          backgroundColor: 'rgba(255,255,255,0.06)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.10)',
-          overflow: 'hidden',
-        }}
-      >
-        {children}
-      </View>
-    </View>
-  );
-}
-
-function Row({
-  title,
-  subtitle,
+function GhostButton({
+  label,
   onPress,
-  danger,
+  disabled,
 }: {
-  title: string;
-  subtitle?: string;
-  onPress?: () => void;
-  danger?: boolean;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
 }) {
-  const content = (
-    <View
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.88}
       style={{
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        flexDirection: 'row',
+        flex: 1,
+        borderRadius: 18,
+        paddingVertical: 16,
         alignItems: 'center',
-        gap: 12,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.14)',
+        opacity: disabled ? 0.5 : 1,
       }}
     >
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: danger ? '#ff6b6b' : 'white', fontWeight: '900', fontSize: 14 }}>
-          {title}
-        </Text>
-        {!!subtitle && (
-          <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 2, fontSize: 12 }}>
-            {subtitle}
-          </Text>
-        )}
-      </View>
-      {!!onPress && <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '900' }}>›</Text>}
-    </View>
+      <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '800', fontSize: 16 }}>
+        {label}
+      </Text>
+    </TouchableOpacity>
   );
+}
 
-  if (!onPress) return content;
-
+function IconCheck() {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.7 : 1,
-      })}
+    <View
+      style={{
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: 'rgba(34,197,94,0.16)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(34,197,94,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
-      {content}
-    </Pressable>
+      <Text style={{ color: '#22c55e', fontWeight: '900', fontSize: 12, lineHeight: 12 }}>✓</Text>
+    </View>
   );
 }
 
 export default function AccountScreen() {
-  const [busy, setBusy] = useState(false);
+  const insets = useSafeAreaInsets();
 
-  // updates immediately when auth changes
+  const [busy, setBusy] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
 
   useEffect(() => {
@@ -128,40 +141,49 @@ export default function AccountScreen() {
     return unsub;
   }, []);
 
-  const goToSignIn = () => router.push('/(auth)/sign-in');
-  const goToPaywall = () => router.push('/paywall');
-
   const identity = useMemo(() => {
     if (!user) {
       return {
         badge: 'SIGNED OUT',
-        headline: 'Signed out',
-        // bring back the “specific identifier line” style
-        detail: '',
-        sub: 'Sign in to sync across devices.',
+        badgeColor: 'rgba(239,68,68,0.12)',
+        badgeBorder: 'rgba(239,68,68,0.30)',
+        badgeText: '#ef4444',
+        headline: "You're not signed in",
+        detail: 'Sign in to sync your clips across all devices and unlock Pro features.',
+        line1: '',
+        line2: '',
       };
     }
-    if (user.isAnonymous) {
-      return {
-        badge: 'GUEST',
-        headline: 'Guest mode',
-        detail: `ID: ${shortUid(user.uid)}`,
-        sub: 'Clips stay on this device unless you create an account.',
-      };
-    }
-    return {
-      badge: 'ACCOUNT',
-      headline: 'Signed in',
-      detail: maskEmail(user.email) || `ID: ${shortUid(user.uid)}`,
-      sub: 'Your account is connected and can sync.',
-    };
-  }, [user?.uid, user?.email, user?.isAnonymous]);
 
-  const primaryCta = useMemo(() => {
-    if (!user) return { label: 'Sign in', onPress: goToSignIn };
-    if (user.isAnonymous) return { label: 'Create account', onPress: goToSignIn };
-    return { label: 'Upgrade', onPress: goToPaywall };
-  }, [user]);
+    if (user.isAnonymous) {
+      const id = shortUid(user.uid);
+      return {
+        badge: 'GUEST SESSION',
+        badgeColor: 'rgba(245,194,77,0.12)',
+        badgeBorder: 'rgba(245,194,77,0.30)',
+        badgeText: '#f5c24d',
+        headline: 'Guest mode active',
+        detail: 'Create an account to preserve your data and sync across devices.',
+        line1: id ? `Guest ID: ${id}` : '',
+        line2: '⚠️ Data not backed up',
+      };
+    }
+
+    const emailLine = maskEmail(user.email);
+    return {
+      badge: 'SIGNED IN',
+      badgeColor: 'rgba(34,197,94,0.12)',
+      badgeBorder: 'rgba(34,197,94,0.30)',
+      badgeText: '#22c55e',
+      headline: 'Account active',
+      detail: 'Your clips are synced and backed up across all devices.',
+      line1: emailLine || (user.uid ? `User ID: ${shortUid(user.uid)}` : ''),
+      line2: user.emailVerified ? '✓ Email verified' : 'Email not verified',
+    };
+  }, [user?.uid, user?.email, user?.isAnonymous, user?.emailVerified]);
+
+  const goToSignIn = () => router.push('/(auth)/sign-in');
+  const goToPaywall = () => router.push('/(auth)/paywall');
 
   const handleSignOut = async () => {
     Alert.alert('Sign out?', 'You can sign back in anytime.', [
@@ -181,133 +203,204 @@ export default function AccountScreen() {
     ]);
   };
 
+  const actionRow = () => {
+    if (!user) {
+      return (
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+          <PrimaryButton label="Sign In" onPress={goToSignIn} disabled={busy} />
+          <GhostButton label="Close" onPress={() => router.back()} disabled={busy} />
+        </View>
+      );
+    }
+
+    if (user.isAnonymous) {
+      return (
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+          <PrimaryButton label="Create Account" onPress={goToSignIn} disabled={busy} />
+          <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
+        </View>
+      );
+    }
+
+    return (
+      <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+        <PrimaryButton label="Upgrade to Pro" onPress={goToPaywall} disabled={busy} />
+        <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right']}>
       <ScrollView
-        style={{ flex: 1, backgroundColor: 'black' }}
-        contentContainerStyle={{ padding: 18, paddingBottom: 32 }}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingBottom: Math.max(28, insets.bottom + 20),
+          paddingTop: Math.max(16, insets.top + 12), // notch-safe
+        }}
+        showsVerticalScrollIndicator={false}
       >
         {/* Header */}
-        <View style={{ marginTop: 6 }}>
-          <Text style={{ color: 'white', fontSize: 28, fontWeight: '900', letterSpacing: 0.5 }}>
+        <View style={{ marginTop: 4, marginBottom: 24 }}>
+          <View
+            style={{
+              backgroundColor: identity.badgeColor,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 20,
+              alignSelf: 'flex-start',
+              borderWidth: 1,
+              borderColor: identity.badgeBorder,
+            }}
+          >
+            <Text style={{ color: identity.badgeText, fontSize: 13, fontWeight: '900' }}>
+              {identity.badge}
+            </Text>
+          </View>
+
+          <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
             Account
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 4, fontSize: 12 }}>
-            Sign in, create an account, or upgrade.
+
+          <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 10, fontSize: 16, lineHeight: 24 }}>
+            Manage your QuickClip account and subscription
           </Text>
         </View>
 
-        {/* Identity card */}
-        <View
-          style={{
-            marginTop: 14,
-            borderRadius: 22,
-            padding: 16,
-            backgroundColor: 'rgba(255,255,255,0.06)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.10)',
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Pill label={identity.badge} />
-            <View style={{ flex: 1 }} />
-            {busy && <ActivityIndicator color="#fff" />}
-          </View>
+        {/* Status */}
+        <View style={{ marginBottom: 16 }}>
+          <Card>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Status
+              </Text>
 
-          <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginTop: 10 }}>
-            {identity.headline}
-          </Text>
+              {busy && <ActivityIndicator color="#ef4444" size="small" />}
+            </View>
 
-          {!!identity.detail && (
-            <Text style={{ color: 'rgba(255,255,255,0.75)', marginTop: 4, fontSize: 12, fontWeight: '800' }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 22, marginBottom: 8 }}>
+              {identity.headline}
+            </Text>
+
+            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 14, lineHeight: 20 }}>
               {identity.detail}
             </Text>
-          )}
 
-          <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 6, fontSize: 12 }}>
-            {identity.sub}
-          </Text>
-
-          {/* Primary actions */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <TouchableOpacity
-              onPress={primaryCta.onPress}
-              disabled={busy}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 999,
-                backgroundColor: '#ef4444',
-                alignItems: 'center',
-                opacity: busy ? 0.7 : 1,
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: '900' }}>{primaryCta.label}</Text>
-            </TouchableOpacity>
-
-            {!!user && (
-              <TouchableOpacity
-                onPress={handleSignOut}
-                disabled={busy}
+            {(!!identity.line1 || !!identity.line2) && (
+              <View
                 style={{
+                  marginTop: 16,
+                  borderRadius: 14,
                   paddingVertical: 12,
                   paddingHorizontal: 14,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  backgroundColor: 'rgba(0,0,0,0.35)',
                   borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.18)',
-                  alignItems: 'center',
-                  opacity: busy ? 0.7 : 1,
+                  borderColor: 'rgba(255,255,255,0.10)',
                 }}
               >
-                <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '900' }}>Sign out</Text>
-              </TouchableOpacity>
+                {!!identity.line1 && (
+                  <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '800', fontSize: 13 }}>
+                    {identity.line1}
+                  </Text>
+                )}
+                {!!identity.line2 && (
+                  <Text
+                    style={{
+                      color: identity.line2.includes('✓')
+                        ? '#22c55e'
+                        : identity.line2.includes('⚠️')
+                        ? '#f5c24d'
+                        : 'rgba(255,255,255,0.55)',
+                      fontWeight: '700',
+                      fontSize: 12,
+                      marginTop: identity.line1 ? 6 : 0,
+                    }}
+                  >
+                    {identity.line2}
+                  </Text>
+                )}
+              </View>
             )}
-          </View>
 
-          {/* Guest clarity */}
-          {!!user?.isAnonymous && (
-            <View
-              style={{
-                marginTop: 12,
-                borderRadius: 14,
-                padding: 12,
-                backgroundColor: 'rgba(255,255,255,0.06)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.10)',
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>Tip</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 4 }}>
-                Create an account to keep the same ID and sync clips across devices.
-              </Text>
-            </View>
-          )}
+            {actionRow()}
+          </Card>
         </View>
 
-        {/* Launch essentials */}
-        <Section title="Launch essentials">
-          <Row title="Upgrade to Pro" subtitle="Unlock all sports." onPress={goToPaywall} />
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-          <Row
-            title="Restore purchases"
-            subtitle="If Apple says you already paid."
-            onPress={() =>
-              Alert.alert('Restore purchases', 'Next: wire to RevenueCat restorePurchases().')
-            }
-          />
-        </Section>
+        {/* Pro benefits */}
+        <View style={{ marginBottom: 16 }}>
+          <Card>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <View>
+                <Text style={{ color: 'white', fontWeight: '900', fontSize: 20 }}>
+                  QuickClip Pro
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.60)', fontWeight: '700', fontSize: 13, marginTop: 2 }}>
+                  Everything unlocked
+                </Text>
+              </View>
 
-        {/* Easy V2/V3 expansion (no fake functionality now) */}
-        <Section title="Coming soon">
-          <Row title="Devices" subtitle="See which devices are signed in (v2)." />
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-          <Row title="Storage" subtitle="See how much video you’ve uploaded (v3)." />
-        </Section>
+              <View
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  borderRadius: 20,
+                  backgroundColor: 'rgba(245,194,77,0.14)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(245,194,77,0.3)',
+                }}
+              >
+                <Text style={{ color: '#f5c24d', fontWeight: '900', fontSize: 14 }}>
+                  $10.99/mo
+                </Text>
+              </View>
+            </View>
 
-        <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 16 }}>
-          QuickClip • {Platform.OS.toUpperCase()}
-        </Text>
+            <View style={{ gap: 12 }}>
+              {[
+                'All sports unlocked',
+                'Extended cloud storage',
+                'Sync up to 5 devices',
+                'Priority upload processing',
+                'Advanced stats & analytics',
+              ].map((t) => (
+                <View key={t} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <IconCheck />
+                  <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '700', fontSize: 14, flex: 1 }}>
+                    {t}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              onPress={goToPaywall}
+              activeOpacity={0.88}
+              style={{
+                marginTop: 18,
+                borderRadius: 18,
+                paddingVertical: 15,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.14)',
+              }}
+            >
+              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
+                View plan options
+              </Text>
+            </TouchableOpacity>
+          </Card>
+        </View>
+
+        {/* App info */}
+        <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.40)', fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
+            QuickClip
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.30)', fontSize: 11, fontWeight: '600' }}>
+            {Platform.OS === 'ios' ? 'iOS' : 'Android'} • Version 1.0.0
+          </Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

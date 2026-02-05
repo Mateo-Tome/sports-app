@@ -1,6 +1,7 @@
 // app/(tabs)/recordingScreen.tsx
 import { subscribeAccess, type AccessState } from '@/lib/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -14,7 +15,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Volleyball', 'BJJ'] as const;
 
@@ -60,6 +64,8 @@ function sportKeyToNiceLabel(key: string) {
 
 export default function RecordingScreen() {
   const params = useLocalSearchParams<{ athlete?: string | string[] }>();
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = useBottomTabBarHeight();
 
   const initialAthlete = useMemo(
     () => paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned',
@@ -462,13 +468,24 @@ export default function RecordingScreen() {
     </View>
   );
 
+  // This is the key fix: ensure scroll content clears the bottom tab bar + gesture inset
+  const bottomPad = Math.max(24, insets.bottom + 12) + tabBarHeight;
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: 'black' }}
+      // keep bottom insets handled by the ScrollView padding, not SafeAreaView
+      edges={['top', 'left', 'right']}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator
         scrollEnabled={!pickerOpen}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 32 }}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 6,
+          paddingBottom: bottomPad,
+        }}
       >
         <AthleteCard />
 
@@ -548,7 +565,14 @@ export default function RecordingScreen() {
                 <Text style={{ fontSize: 22, color: titleColor, fontWeight: '800' }}>{sport}</Text>
 
                 {locked && (
-                  <Text style={{ marginTop: 6, fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '800' }}>
+                  <Text
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      color: 'rgba(0,0,0,0.55)',
+                      fontWeight: '800',
+                    }}
+                  >
                     Upgrade to unlock
                   </Text>
                 )}

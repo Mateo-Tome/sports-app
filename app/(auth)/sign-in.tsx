@@ -10,7 +10,7 @@ import {
   signInAnonymously,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -26,6 +26,135 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Screen = 'start' | 'signin' | 'signup';
 
+const colors = {
+  bg: '#050507',
+  card: 'rgba(18,18,22,0.86)',
+  stroke: 'rgba(255,255,255,0.10)',
+  strokeSoft: 'rgba(255,255,255,0.06)',
+  text: '#FFFFFF',
+  sub: 'rgba(255,255,255,0.65)',
+  dim: 'rgba(255,255,255,0.45)',
+  accent: '#ef4444',
+  accentDark: '#7f1d1d',
+  inputBg: 'rgba(0,0,0,0.35)',
+  ghostBg: 'rgba(255,255,255,0.06)',
+  ghostStroke: 'rgba(255,255,255,0.18)',
+};
+
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <View
+      style={{
+        borderRadius: 22,
+        padding: 18,
+        backgroundColor: colors.card,
+        borderWidth: 1,
+        borderColor: colors.stroke,
+        shadowColor: '#000',
+        shadowOpacity: 0.35,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 12 },
+        elevation: 8,
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+function PrimaryButton({
+  label,
+  onPress,
+  disabled,
+  busy,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled || busy}
+      style={{
+        borderRadius: 999,
+        paddingVertical: 12,
+        alignItems: 'center',
+        backgroundColor: busy || disabled ? colors.accentDark : colors.accent,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+      }}
+    >
+      {busy ? (
+        <ActivityIndicator color="#fff" />
+      ) : (
+        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{label}</Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function GhostButton({
+  label,
+  onPress,
+  disabled,
+  busy,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled || busy}
+      style={{
+        marginTop: 10,
+        borderRadius: 999,
+        paddingVertical: 11,
+        alignItems: 'center',
+        backgroundColor: colors.ghostBg,
+        borderWidth: 1,
+        borderColor: colors.ghostStroke,
+        opacity: busy ? 0.7 : 1,
+      }}
+    >
+      <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function BackLink({
+  label,
+  onBack,
+}: {
+  label: string;
+  onBack: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onBack}
+      hitSlop={12}
+      style={({ pressed }) => ({
+        opacity: pressed ? 0.7 : 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+      })}
+    >
+      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>← Back</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '900', fontSize: 12 }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 export default function SignInScreen() {
   const [screen, setScreen] = useState<Screen>('start');
 
@@ -38,21 +167,6 @@ export default function SignInScreen() {
   const isAnon = !!auth.currentUser?.isAnonymous;
 
   const goToApp = () => router.replace('/(tabs)');
-
-  const colors = {
-    bg: '#050507',
-    card: 'rgba(18,18,22,0.86)',
-    stroke: 'rgba(255,255,255,0.10)',
-    strokeSoft: 'rgba(255,255,255,0.06)',
-    text: '#FFFFFF',
-    sub: 'rgba(255,255,255,0.65)',
-    dim: 'rgba(255,255,255,0.45)',
-    accent: '#ef4444',
-    accentDark: '#7f1d1d',
-    inputBg: 'rgba(0,0,0,0.35)',
-    ghostBg: 'rgba(255,255,255,0.06)',
-    ghostStroke: 'rgba(255,255,255,0.18)',
-  };
 
   const headerTitle = useMemo(() => {
     if (screen === 'start') return 'QuickClip';
@@ -80,7 +194,6 @@ export default function SignInScreen() {
     return null;
   };
 
-  // Guest button (only creates anon user if none exists)
   const onContinueGuest = async () => {
     setErr(null);
     setBusy(true);
@@ -126,11 +239,13 @@ export default function SignInScreen() {
 
     try {
       await linkWithCredential(u, cred);
-      await ensureUserDoc(u.uid); // keeps same UID
+      await ensureUserDoc(u.uid);
       return true;
     } catch (e: any) {
       if (String(e?.code) === 'auth/email-already-in-use') {
-        setErr('That email already has an account. Tap “Sign in” instead to use your existing account.');
+        setErr(
+          'That email already has an account. Tap “Sign in” instead to use your existing account.'
+        );
         return false;
       }
       throw e;
@@ -141,14 +256,8 @@ export default function SignInScreen() {
     setErr(null);
 
     const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setErr('Enter your email.');
-      return;
-    }
-    if (!pass) {
-      setErr('Enter your password.');
-      return;
-    }
+    if (!trimmedEmail) return setErr('Enter your email.');
+    if (!pass) return setErr('Enter your password.');
 
     setBusy(true);
     try {
@@ -166,16 +275,12 @@ export default function SignInScreen() {
     setErr(null);
 
     const msg = validateEmailPass(6);
-    if (msg) {
-      setErr(msg);
-      return;
-    }
+    if (msg) return setErr(msg);
 
     const trimmedEmail = email.trim();
 
     setBusy(true);
     try {
-      // If currently guest, convert it (keeps UID). Otherwise create a new account.
       if (isAnon) {
         const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
         if (ok) goToApp();
@@ -191,90 +296,6 @@ export default function SignInScreen() {
       setBusy(false);
     }
   };
-
-  const Card = ({ children }: { children: React.ReactNode }) => (
-    <View
-      style={{
-        borderRadius: 22,
-        padding: 18,
-        backgroundColor: colors.card,
-        borderWidth: 1,
-        borderColor: colors.stroke,
-        shadowColor: '#000',
-        shadowOpacity: 0.35,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 8,
-      }}
-    >
-      {children}
-    </View>
-  );
-
-  const PrimaryButton = ({
-    label,
-    onPress,
-    disabled,
-  }: {
-    label: string;
-    onPress: () => void;
-    disabled?: boolean;
-  }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled || busy}
-      style={{
-        borderRadius: 999,
-        paddingVertical: 12,
-        alignItems: 'center',
-        backgroundColor: busy || disabled ? colors.accentDark : colors.accent,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.10)',
-      }}
-    >
-      {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{label}</Text>}
-    </TouchableOpacity>
-  );
-
-  const GhostButton = ({ label, onPress }: { label: string; onPress: () => void }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={busy}
-      style={{
-        marginTop: 10,
-        borderRadius: 999,
-        paddingVertical: 11,
-        alignItems: 'center',
-        backgroundColor: colors.ghostBg,
-        borderWidth: 1,
-        borderColor: colors.ghostStroke,
-        opacity: busy ? 0.7 : 1,
-      }}
-    >
-      <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>{label}</Text>
-    </TouchableOpacity>
-  );
-
-  const BackLink = ({ label }: { label: string }) => (
-    <Pressable
-      onPress={() => {
-        setErr(null);
-        setBusy(false);
-        setScreen('start');
-      }}
-      hitSlop={12}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.7 : 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-      })}
-    >
-      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>← Back</Text>
-      <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '900', fontSize: 12 }}>{label}</Text>
-    </Pressable>
-  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -319,6 +340,7 @@ export default function SignInScreen() {
                   setErr(null);
                   setScreen('signup');
                 }}
+                busy={busy}
               />
 
               <GhostButton
@@ -327,6 +349,7 @@ export default function SignInScreen() {
                   setErr(null);
                   setScreen('signin');
                 }}
+                busy={busy}
               />
 
               <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
@@ -347,7 +370,9 @@ export default function SignInScreen() {
                     opacity: busy ? 0.7 : 1,
                   }}
                 >
-                  <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>Continue as Guest</Text>
+                  <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
+                    Continue as Guest
+                  </Text>
                 </TouchableOpacity>
               </View>
 
@@ -361,7 +386,14 @@ export default function SignInScreen() {
 
           {(screen === 'signin' || screen === 'signup') && (
             <Card>
-              <BackLink label={screen === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'} />
+              <BackLink
+                label={screen === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'}
+                onBack={() => {
+                  setErr(null);
+                  setBusy(false);
+                  setScreen('start');
+                }}
+              />
 
               <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900', marginTop: 6 }}>
                 {screen === 'signin' ? 'Sign in' : 'Create account'}
@@ -434,6 +466,7 @@ export default function SignInScreen() {
               <PrimaryButton
                 label={screen === 'signin' ? 'Sign in' : 'Create account'}
                 onPress={screen === 'signin' ? onSubmitSignIn : onSubmitSignUp}
+                busy={busy}
               />
 
               {screen === 'signup' && !isAnon && (
@@ -443,6 +476,7 @@ export default function SignInScreen() {
                     setErr(null);
                     setScreen('signin');
                   }}
+                  busy={busy}
                 />
               )}
 
@@ -453,6 +487,7 @@ export default function SignInScreen() {
                     setErr(null);
                     setScreen('signup');
                   }}
+                  busy={busy}
                 />
               )}
             </Card>
