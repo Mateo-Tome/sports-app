@@ -1,5 +1,6 @@
 // app/(auth)/sign-in.tsx
 import { auth } from '@/lib/firebase';
+import { ensureUserDoc } from '@/lib/userProfile';
 import { router } from 'expo-router';
 import {
   EmailAuthProvider,
@@ -114,6 +115,10 @@ export default function SignInScreen() {
 
     try {
       await linkWithCredential(u, cred);
+
+      // ✅ NEW: ensure Firestore user profile exists
+      await ensureUserDoc(u.uid);
+
       return true;
     } catch (e: any) {
       if (String(e?.code) === 'auth/email-already-in-use') {
@@ -149,9 +154,12 @@ export default function SignInScreen() {
 
       if (mode === 'signin') {
         await signInWithEmailAndPassword(auth, trimmedEmail, pass);
+        if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
       } else {
         await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
+        if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
       }
+
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Auth error');
@@ -182,6 +190,7 @@ export default function SignInScreen() {
             setBusy(true);
             try {
               await signInWithEmailAndPassword(auth, trimmedEmail, pass);
+              if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
               goToApp();
             } catch (e: any) {
               setErr(e?.message ?? 'Sign-in failed.');
@@ -365,7 +374,11 @@ export default function SignInScreen() {
                 borderColor: 'rgba(255,255,255,0.10)',
               }}
             >
-              {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{primaryCta}</Text>}
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{primaryCta}</Text>
+              )}
             </TouchableOpacity>
 
             {/* Guest-only secondary option: sign into existing account */}
