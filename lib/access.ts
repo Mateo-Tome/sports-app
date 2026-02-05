@@ -7,7 +7,6 @@ export function subscribeAccess(setAccess: (v: any) => void) {
   let unsubDoc: null | (() => void) = null;
 
   const unsubAuth = onAuthStateChanged(auth, (user) => {
-    // stop any prior doc listener
     if (unsubDoc) {
       unsubDoc();
       unsubDoc = null;
@@ -20,11 +19,12 @@ export function subscribeAccess(setAccess: (v: any) => void) {
         isAnonymous: false,
         allowedSport: null,
         isPro: false,
+        isTester: false,
       });
       return;
     }
 
-    // now safe to read Firestore as this user
+    // optimistic auth state
     setAccess((prev: any) => ({
       ...prev,
       uid: user.uid,
@@ -38,23 +38,28 @@ export function subscribeAccess(setAccess: (v: any) => void) {
       ref,
       (snap) => {
         const data = snap.data() || {};
+
+        const isTester = !!data.isTester;
+        const isPro = !!data.isPro || isTester; // ✅ tester bypass
+
         setAccess({
           uid: user.uid,
           isSignedIn: true,
           isAnonymous: !!user.isAnonymous,
           allowedSport: (data.freeSport ?? null),
-          isPro: !!data.isPro,
+          isPro,
+          isTester,
         });
       },
       (err) => {
         console.log('[subscribeAccess] snapshot error:', err);
-        // keep auth state but no access data
         setAccess({
           uid: user.uid,
           isSignedIn: true,
           isAnonymous: !!user.isAnonymous,
           allowedSport: null,
           isPro: false,
+          isTester: false,
         });
       }
     );

@@ -125,17 +125,33 @@ export default function RecordingScreen() {
       params: { sport: sportKey, style: styleKey, athlete },
     });
 
+  // If you want locked sports to be totally unclickable, set this to false.
+  const ALLOW_TAP_LOCKED_TO_UPSELL = true;
+
+  const isLockedSport = (sport: (typeof SPORTS)[number]) => {
+    // Not signed in? We'll route to sign-in when they tap.
+    if (!access.isSignedIn) return false;
+
+    // Pro has everything unlocked.
+    if (access.isPro) return false;
+
+    // If they haven't chosen a sport yet, nothing is "locked"; tapping should go to choose-sport.
+    if (!access.allowedSport) return false;
+
+    // Otherwise, only the chosen sport is unlocked.
+    return access.allowedSport !== sportLabelToKey(sport);
+  };
+
   const go = (sport: (typeof SPORTS)[number]) => {
     const key = sportLabelToKey(sport);
 
     // Must have a session (guest or signed-in)
-    // IMPORTANT: your sign-in screen is inside (auth)
     if (!access.isSignedIn) {
       router.push('/(auth)/sign-in');
       return;
     }
 
-    // Pro bypass (later)
+    // Pro bypass
     if (!access.isPro) {
       // Must pick sport first
       if (!access.allowedSport) {
@@ -145,6 +161,12 @@ export default function RecordingScreen() {
 
       // Locked to one sport
       if (access.allowedSport !== key) {
+        // If we allow tap-to-upsell, send them to account/paywall area.
+        if (ALLOW_TAP_LOCKED_TO_UPSELL) {
+          router.push('/account');
+          return;
+        }
+
         Alert.alert(
           'Sport locked',
           `Your free account is locked to ${sportKeyToNiceLabel(access.allowedSport)}.\n\nUpgrade to unlock all sports.`,
@@ -425,11 +447,42 @@ export default function RecordingScreen() {
     );
   };
 
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: 'black' }}
-      edges={['top', 'left', 'right', 'bottom']}
+  const LockedHint = () => (
+    <View
+      style={{
+        marginTop: 10,
+        borderRadius: 14,
+        padding: 12,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+      }}
     >
+      <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
+        Free plan: 1 sport unlocked
+      </Text>
+      <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 4 }}>
+        Upgrade to record all sports.
+      </Text>
+
+      <TouchableOpacity
+        onPress={() => router.push('/account')}
+        style={{
+          marginTop: 10,
+          alignSelf: 'flex-start',
+          paddingVertical: 8,
+          paddingHorizontal: 12,
+          borderRadius: 999,
+          backgroundColor: 'white',
+        }}
+      >
+        <Text style={{ color: 'black', fontWeight: '900' }}>Upgrade</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right', 'bottom']}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator
@@ -461,36 +514,74 @@ export default function RecordingScreen() {
           }}
         >
           <Text style={{ fontSize: 18, color: 'black', fontWeight: '900' }}>Plain Camera</Text>
-          <Text style={{ fontSize: 12, color: 'black', opacity: 0.6, marginTop: 2 }}>
-            No overlay
-          </Text>
+          <Text style={{ fontSize: 12, color: 'black', opacity: 0.6, marginTop: 2 }}>No overlay</Text>
         </TouchableOpacity>
 
         <Text style={{ color: 'white', opacity: 0.8, marginBottom: 10, fontWeight: '800' }}>
-          Or choose a sport
+          Choose a sport
         </Text>
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-          {SPORTS.map((sport) => (
-            <TouchableOpacity
-              key={sport}
-              onPress={() => go(sport)}
-              style={{
-                width: '49%',
-                paddingVertical: 34,
-                marginBottom: 16,
-                borderWidth: 2,
-                borderColor: '#fff',
-                borderRadius: 12,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'white',
-              }}
-            >
-              <Text style={{ fontSize: 22, color: 'black', fontWeight: '800' }}>{sport}</Text>
-            </TouchableOpacity>
-          ))}
+          {SPORTS.map((sport) => {
+            const locked = isLockedSport(sport);
+
+            const bg = locked ? 'rgba(255,255,255,0.18)' : 'white';
+            const border = locked ? 'rgba(255,255,255,0.35)' : '#fff';
+            const titleColor = locked ? 'rgba(0,0,0,0.55)' : 'black';
+
+            return (
+              <TouchableOpacity
+                key={sport}
+                onPress={() => go(sport)}
+                activeOpacity={0.85}
+                style={{
+                  width: '49%',
+                  paddingVertical: 34,
+                  marginBottom: 16,
+                  borderWidth: 2,
+                  borderColor: border,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: bg,
+                  position: 'relative',
+                }}
+              >
+                {/* lock badge */}
+                {locked && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      paddingVertical: 4,
+                      paddingHorizontal: 8,
+                      borderRadius: 999,
+                      backgroundColor: 'rgba(0,0,0,0.25)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(0,0,0,0.18)',
+                    }}
+                  >
+                    <Text style={{ color: 'rgba(0,0,0,0.65)', fontWeight: '900', fontSize: 11 }}>
+                      LOCKED
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={{ fontSize: 22, color: titleColor, fontWeight: '800' }}>{sport}</Text>
+
+                {locked && (
+                  <Text style={{ marginTop: 6, fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '800' }}>
+                    Upgrade to unlock
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </View>
+
+        {/* show hint only when signed-in free and locked */}
+        {access.isSignedIn && !access.isPro && !!access.allowedSport && <LockedHint />}
       </ScrollView>
 
       <AthletePickerOverlay />
