@@ -73,6 +73,7 @@ export default function SignInScreen() {
     return null;
   };
 
+  // ✅ FIX: guest now creates Firestore user doc immediately
   const onContinueGuest = async () => {
     setErr(null);
     setBusy(true);
@@ -80,6 +81,11 @@ export default function SignInScreen() {
       if (!auth.currentUser) {
         await signInAnonymously(auth);
       }
+
+      if (auth.currentUser) {
+        await ensureUserDoc(auth.currentUser.uid);
+      }
+
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to continue as guest.');
@@ -116,13 +122,12 @@ export default function SignInScreen() {
     try {
       await linkWithCredential(u, cred);
 
-      // ✅ NEW: ensure Firestore user profile exists
+      // ✅ ensure Firestore user profile exists (keeps same UID)
       await ensureUserDoc(u.uid);
 
       return true;
     } catch (e: any) {
       if (String(e?.code) === 'auth/email-already-in-use') {
-        // This is expected: you can't link to an email that already exists.
         setErr(
           'That email already has a QuickClip account. If you want to use it, tap “Sign into existing account instead”.'
         );
@@ -146,7 +151,6 @@ export default function SignInScreen() {
     setBusy(true);
     try {
       if (isAnon) {
-        // ✅ Primary button upgrades guest (keeps same UID)
         const ok = await upgradeAnonWithEmailPassword(trimmedEmail, pass);
         if (ok) goToApp();
         return;
@@ -169,7 +173,6 @@ export default function SignInScreen() {
   };
 
   const onSignIntoExistingInstead = async () => {
-    // This switches accounts (new UID). That's okay — but user should understand it.
     setErr(null);
 
     const trimmedEmail = email.trim();
@@ -205,7 +208,6 @@ export default function SignInScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      {/* Futuristic header */}
       <View style={{ paddingHorizontal: 22, paddingTop: 10, paddingBottom: 14 }}>
         <Text style={{ color: colors.text, fontSize: 30, fontWeight: '900', letterSpacing: 0.8 }}>
           QuickClip
@@ -214,7 +216,6 @@ export default function SignInScreen() {
           Record. Review. Win.
         </Text>
 
-        {/* Guest badge */}
         {isAnon && (
           <View
             style={{
@@ -237,7 +238,6 @@ export default function SignInScreen() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
-          {/* Card */}
           <View
             style={{
               borderRadius: 22,
@@ -252,7 +252,6 @@ export default function SignInScreen() {
               elevation: 8,
             }}
           >
-            {/* Mode toggle (hidden for guest upgrade mode) */}
             {!isAnon && (
               <View
                 style={{
@@ -302,7 +301,6 @@ export default function SignInScreen() {
               {subtitle}
             </Text>
 
-            {/* Inputs */}
             <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Email</Text>
             <TextInput
               value={email}
@@ -346,7 +344,6 @@ export default function SignInScreen() {
               }}
             />
 
-            {/* Forgot password (only when not upgrading guest) */}
             {!isAnon && mode === 'signin' && (
               <Pressable onPress={onForgotPassword} disabled={busy} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
@@ -361,7 +358,6 @@ export default function SignInScreen() {
               </Text>
             )}
 
-            {/* Primary CTA */}
             <TouchableOpacity
               onPress={onSubmitPrimary}
               disabled={busy}
@@ -381,7 +377,6 @@ export default function SignInScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Guest-only secondary option: sign into existing account */}
             {isAnon && (
               <TouchableOpacity
                 onPress={onSignIntoExistingInstead}
@@ -402,7 +397,6 @@ export default function SignInScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Continue as guest */}
             <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
               <Text style={{ color: colors.sub, fontSize: 11, textAlign: 'center', marginBottom: 10 }}>
                 Just want to try it out?
