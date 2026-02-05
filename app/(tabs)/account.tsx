@@ -13,15 +13,8 @@ import {
 } from 'react-native';
 
 import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../../lib/firebase';
-
-// ===============================
-// 🔧 DEV TOOLS TOGGLE
-// Turn ON only while you’re building/testing.
-const SHOW_DEV_TOOLS = false;
-// ===============================
-
-type PlanKey = 'guest' | 'free' | 'pro' | 'elite';
 
 function maskEmail(email?: string | null) {
   if (!email) return '';
@@ -30,16 +23,9 @@ function maskEmail(email?: string | null) {
   return `${u.slice(0, 2)}•••@${d}`;
 }
 
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+function shortUid(uid?: string | null) {
+  if (!uid) return '';
+  return `${uid.slice(0, 6)}…`;
 }
 
 function Pill({ label }: { label: string }) {
@@ -61,13 +47,7 @@ function Pill({ label }: { label: string }) {
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={{ marginTop: 16 }}>
       <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '900', marginBottom: 10 }}>
@@ -91,13 +71,11 @@ function Section({
 function Row({
   title,
   subtitle,
-  right,
   onPress,
   danger,
 }: {
   title: string;
   subtitle?: string;
-  right?: React.ReactNode;
   onPress?: () => void;
   danger?: boolean;
 }) {
@@ -121,7 +99,7 @@ function Row({
           </Text>
         )}
       </View>
-      {right ?? <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '900' }}>›</Text>}
+      {!!onPress && <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '900' }}>›</Text>}
     </View>
   );
 
@@ -142,7 +120,7 @@ function Row({
 export default function AccountScreen() {
   const [busy, setBusy] = useState(false);
 
-  // ✅ This makes the screen update immediately when auth changes
+  // updates immediately when auth changes
   const [user, setUser] = useState(auth.currentUser);
 
   useEffect(() => {
@@ -150,56 +128,40 @@ export default function AccountScreen() {
     return unsub;
   }, []);
 
-  // ⚠️ For now these are placeholders.
-  // Later: load from Firestore users/{uid} or RevenueCat customerInfo
-  const [plan, setPlan] = useState<PlanKey>('guest');
-
-  // storage usage placeholders (wire later)
-  const [usageBytes, setUsageBytes] = useState(0);
-  const [limitBytes, setLimitBytes] = useState(1 * 1024 * 1024 * 1024); // 1GB default
+  const goToSignIn = () => router.push('/(auth)/sign-in');
+  const goToPaywall = () => router.push('/paywall');
 
   const identity = useMemo(() => {
     if (!user) {
       return {
-        headline: 'Not signed in',
-        sub: 'Sign in, or continue as a guest.',
         badge: 'SIGNED OUT',
+        headline: 'Signed out',
+        // bring back the “specific identifier line” style
+        detail: '',
+        sub: 'Sign in to sync across devices.',
       };
     }
     if (user.isAnonymous) {
       return {
-        headline: 'Guest',
-        sub: `ID: ${user.uid.slice(0, 6)}…`,
         badge: 'GUEST',
+        headline: 'Guest mode',
+        detail: `ID: ${shortUid(user.uid)}`,
+        sub: 'Clips stay on this device unless you create an account.',
       };
     }
     return {
-      headline: 'Signed in',
-      sub: maskEmail(user.email) || `ID: ${user.uid.slice(0, 6)}…`,
       badge: 'ACCOUNT',
+      headline: 'Signed in',
+      detail: maskEmail(user.email) || `ID: ${shortUid(user.uid)}`,
+      sub: 'Your account is connected and can sync.',
     };
   }, [user?.uid, user?.email, user?.isAnonymous]);
 
-  useEffect(() => {
-    // ✅ Simple default plan logic for now:
-    // - no user or anonymous => guest
-    // - signed in => free until billing wired
-    if (!user) {
-      setPlan('guest');
-      setLimitBytes(1 * 1024 * 1024 * 1024);
-      return;
-    }
-
-    if (user.isAnonymous) {
-      setPlan('guest');
-      setLimitBytes(1 * 1024 * 1024 * 1024);
-    } else {
-      setPlan('free');
-      setLimitBytes(1 * 1024 * 1024 * 1024);
-    }
-  }, [user?.uid, user?.isAnonymous]);
-
-  const goToSignIn = () => router.push('/sign-in');
+  const primaryCta = useMemo(() => {
+    if (!user) return { label: 'Sign in', onPress: goToSignIn };
+    if (user.isAnonymous) return { label: 'Create account', onPress: goToSignIn };
+    return { label: 'Upgrade', onPress: goToPaywall };
+  }, [user]);
 
   const handleSignOut = async () => {
     Alert.alert('Sign out?', 'You can sign back in anytime.', [
@@ -219,292 +181,134 @@ export default function AccountScreen() {
     ]);
   };
 
-  const planLabel = useMemo(() => {
-    switch (plan) {
-      case 'guest':
-        return 'Guest';
-      case 'free':
-        return 'Free';
-      case 'pro':
-        return 'Pro';
-      case 'elite':
-        return 'Elite';
-      default:
-        return 'Free';
-    }
-  }, [plan]);
-
-  const planSubtitle = useMemo(() => {
-    if (plan === 'guest') return 'Try the app. Upgrade anytime to sync across devices.';
-    if (plan === 'free') return 'One sport unlocked • Limited devices/storage';
-    if (plan === 'pro') return 'All sports • Up to 5 devices';
-    if (plan === 'elite') return 'All sports • Up to 10 devices';
-    return '';
-  }, [plan]);
-
-  const usedPct = useMemo(() => {
-    if (!limitBytes) return 0;
-    return Math.min(1, Math.max(0, usageBytes / limitBytes));
-  }, [usageBytes, limitBytes]);
-
-  const primaryButton = () => {
-    if (!user) {
-      return (
-        <TouchableOpacity
-          onPress={goToSignIn}
-          style={{
-            flex: 1,
-            paddingVertical: 12,
-            borderRadius: 999,
-            backgroundColor: '#ef4444',
-            alignItems: 'center',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '900' }}>Sign in</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    if (user.isAnonymous) {
-      return (
-        <TouchableOpacity
-          onPress={goToSignIn}
-          style={{
-            flex: 1,
-            paddingVertical: 12,
-            borderRadius: 999,
-            backgroundColor: '#ef4444',
-            alignItems: 'center',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '900' }}>Upgrade guest</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    return (
-      <TouchableOpacity
-        onPress={() => {
-          // Later: open paywall / manage subscription
-          Alert.alert('Manage plan', 'Next: wire this to your paywall / RevenueCat.');
-        }}
-        style={{
-          flex: 1,
-          paddingVertical: 12,
-          borderRadius: 999,
-          backgroundColor: '#ef4444',
-          alignItems: 'center',
-        }}
-      >
-        <Text style={{ color: 'white', fontWeight: '900' }}>Manage plan</Text>
-      </TouchableOpacity>
-    );
-  };
-
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: 'black' }}
-      contentContainerStyle={{ padding: 18, paddingBottom: 32 }}
-    >
-      {/* Header */}
-      <View style={{ marginTop: 6 }}>
-        <Text style={{ color: 'white', fontSize: 28, fontWeight: '900', letterSpacing: 0.5 }}>
-          Account
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 4, fontSize: 12 }}>
-          Manage your plan, sync, and devices.
-        </Text>
-      </View>
-
-      {/* Identity card */}
-      <View
-        style={{
-          marginTop: 14,
-          borderRadius: 22,
-          padding: 16,
-          backgroundColor: 'rgba(255,255,255,0.06)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.10)',
-        }}
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right']}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: 'black' }}
+        contentContainerStyle={{ padding: 18, paddingBottom: 32 }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <Pill label={identity.badge} />
-          <View style={{ flex: 1 }} />
-          {(busy || user === undefined) && <ActivityIndicator color="#fff" />}
-        </View>
-
-        <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginTop: 10 }}>
-          {identity.headline}
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4, fontSize: 12 }}>
-          {identity.sub}
-        </Text>
-
-        {/* Primary actions */}
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-          {primaryButton()}
-
-          {!!user && (
-            <TouchableOpacity
-              onPress={handleSignOut}
-              style={{
-                paddingVertical: 12,
-                paddingHorizontal: 14,
-                borderRadius: 999,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.18)',
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '900' }}>
-                Sign out
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Plan & limits */}
-      <Section title="Plan & limits">
-        <Row
-          title={`Current plan: ${planLabel}`}
-          subtitle={planSubtitle}
-          onPress={() => {
-            Alert.alert(
-              'Plan',
-              'Next: wire this to RevenueCat + a Firestore user profile document.'
-            );
-          }}
-        />
-
-        <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-
-        <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
-          <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Storage</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2 }}>
-            {formatBytes(usageBytes)} used of {formatBytes(limitBytes)}
+        {/* Header */}
+        <View style={{ marginTop: 6 }}>
+          <Text style={{ color: 'white', fontSize: 28, fontWeight: '900', letterSpacing: 0.5 }}>
+            Account
           </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 4, fontSize: 12 }}>
+            Sign in, create an account, or upgrade.
+          </Text>
+        </View>
 
-          <View
-            style={{
-              marginTop: 10,
-              height: 10,
-              borderRadius: 999,
-              backgroundColor: 'rgba(255,255,255,0.12)',
-              overflow: 'hidden',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.10)',
-            }}
-          >
-            <View style={{ height: '100%', width: `${usedPct * 100}%`, backgroundColor: 'white' }} />
+        {/* Identity card */}
+        <View
+          style={{
+            marginTop: 14,
+            borderRadius: 22,
+            padding: 16,
+            backgroundColor: 'rgba(255,255,255,0.06)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.10)',
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Pill label={identity.badge} />
+            <View style={{ flex: 1 }} />
+            {busy && <ActivityIndicator color="#fff" />}
           </View>
 
-          {SHOW_DEV_TOOLS && (
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <TouchableOpacity
-                onPress={() => setUsageBytes((b) => Math.min(limitBytes, b + 250 * 1024 * 1024))}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.12)',
-                }}
-              >
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>+250MB</Text>
-              </TouchableOpacity>
+          <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginTop: 10 }}>
+            {identity.headline}
+          </Text>
 
+          {!!identity.detail && (
+            <Text style={{ color: 'rgba(255,255,255,0.75)', marginTop: 4, fontSize: 12, fontWeight: '800' }}>
+              {identity.detail}
+            </Text>
+          )}
+
+          <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 6, fontSize: 12 }}>
+            {identity.sub}
+          </Text>
+
+          {/* Primary actions */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+            <TouchableOpacity
+              onPress={primaryCta.onPress}
+              disabled={busy}
+              style={{
+                flex: 1,
+                paddingVertical: 12,
+                borderRadius: 999,
+                backgroundColor: '#ef4444',
+                alignItems: 'center',
+                opacity: busy ? 0.7 : 1,
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900' }}>{primaryCta.label}</Text>
+            </TouchableOpacity>
+
+            {!!user && (
               <TouchableOpacity
-                onPress={() => setUsageBytes(0)}
+                onPress={handleSignOut}
+                disabled={busy}
                 style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
                   borderRadius: 999,
                   backgroundColor: 'rgba(255,255,255,0.08)',
                   borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.12)',
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  alignItems: 'center',
+                  opacity: busy ? 0.7 : 1,
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>Reset</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '900' }}>Sign out</Text>
               </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Guest clarity */}
+          {!!user?.isAnonymous && (
+            <View
+              style={{
+                marginTop: 12,
+                borderRadius: 14,
+                padding: 12,
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.10)',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>Tip</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 4 }}>
+                Create an account to keep the same ID and sync clips across devices.
+              </Text>
             </View>
           )}
         </View>
-      </Section>
 
-      {/* Devices */}
-      <Section title="Devices">
-        <Row
-          title="Manage devices"
-          subtitle="See which devices are signed in and remove old ones."
-          onPress={() =>
-            Alert.alert(
-              'Devices',
-              'Next: wire to users/{uid}/devices and enforce limits server-side.'
-            )
-          }
-        />
-      </Section>
-
-      {/* Support */}
-      <Section title="Help & support">
-        <Row
-          title="Contact support"
-          subtitle="Questions, bugs, feature requests."
-          onPress={() => Alert.alert('Support', 'Next: open email composer or support form.')}
-        />
-        <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-        <Row
-          title="Privacy policy"
-          subtitle="Required for App Store."
-          onPress={() => Alert.alert('Privacy', 'Next: open your privacy policy URL.')}
-        />
-        <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-        <Row
-          title="Terms of service"
-          subtitle="Required for subscriptions."
-          onPress={() => Alert.alert('Terms', 'Next: open your terms URL.')}
-        />
-      </Section>
-
-      {/* Developer tools (hidden) */}
-      {SHOW_DEV_TOOLS && (
-        <Section title="Developer tools">
-          <Row
-            title="Open sign-in screen"
-            subtitle="Jump to auth screen."
-            onPress={() => router.push('/sign-in')}
-          />
+        {/* Launch essentials */}
+        <Section title="Launch essentials">
+          <Row title="Upgrade to Pro" subtitle="Unlock all sports." onPress={goToPaywall} />
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
           <Row
-            title="Print auth state"
-            subtitle="Logs uid / isAnonymous / email."
-            onPress={() => {
-              const cu = auth.currentUser;
-              console.log('[Account] auth state', {
-                uid: cu?.uid,
-                isAnonymous: cu?.isAnonymous,
-                email: cu?.email,
-                platform: Platform.OS,
-              });
-              Alert.alert('Logged', 'Auth state logged to console.');
-            }}
+            title="Restore purchases"
+            subtitle="If Apple says you already paid."
+            onPress={() =>
+              Alert.alert('Restore purchases', 'Next: wire to RevenueCat restorePurchases().')
+            }
           />
         </Section>
-      )}
 
-      <Text
-        style={{
-          color: 'rgba(255,255,255,0.35)',
-          fontSize: 11,
-          textAlign: 'center',
-          marginTop: 16,
-        }}
-      >
-        QuickClip • {Platform.OS.toUpperCase()}
-      </Text>
-    </ScrollView>
+        {/* Easy V2/V3 expansion (no fake functionality now) */}
+        <Section title="Coming soon">
+          <Row title="Devices" subtitle="See which devices are signed in (v2)." />
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+          <Row title="Storage" subtitle="See how much video you’ve uploaded (v3)." />
+        </Section>
+
+        <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 16 }}>
+          QuickClip • {Platform.OS.toUpperCase()}
+        </Text>
+      </ScrollView>
+    </SafeAreaView>
   );
 }

@@ -1,6 +1,5 @@
 // app/(tabs)/recordingScreen.tsx
-import { subscribeAccess } from '@/lib/access';
-import type { SportKey } from '@/lib/userProfile';
+import { subscribeAccess, type AccessState } from '@/lib/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -25,7 +24,9 @@ const ATHLETES_KEY = 'athletes:list';
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
 
-function sportLabelToKey(sport: (typeof SPORTS)[number]): SportKey {
+type SportLabel = (typeof SPORTS)[number];
+
+function sportLabelToKey(sport: SportLabel) {
   switch (sport) {
     case 'Wrestling':
       return 'wrestling';
@@ -40,7 +41,7 @@ function sportLabelToKey(sport: (typeof SPORTS)[number]): SportKey {
   }
 }
 
-function sportKeyToNiceLabel(key: SportKey) {
+function sportKeyToNiceLabel(key: string) {
   switch (key) {
     case 'wrestling':
       return 'Wrestling';
@@ -52,6 +53,8 @@ function sportKeyToNiceLabel(key: SportKey) {
       return 'Volleyball';
     case 'bjj':
       return 'BJJ';
+    default:
+      return 'your selected sport';
   }
 }
 
@@ -70,12 +73,13 @@ export default function RecordingScreen() {
   const [newName, setNewName] = useState('');
   const [controlledByParam, setControlledByParam] = useState(true);
 
-  // ✅ Access state (free sport lock lives in Firestore users/{uid}.freeSport)
-  const [access, setAccess] = useState({
-    uid: null as string | null,
+  const [access, setAccess] = useState<AccessState>({
+    loading: true,
+    uid: null,
     isSignedIn: false,
     isAnonymous: false,
-    allowedSport: null as SportKey | null,
+    allowedSport: null,
+    isTester: false,
     isPro: false,
   });
 
@@ -125,52 +129,44 @@ export default function RecordingScreen() {
       params: { sport: sportKey, style: styleKey, athlete },
     });
 
-  // If you want locked sports to be totally unclickable, set this to false.
+  // Tap locked sport → go to paywall (recommended)
   const ALLOW_TAP_LOCKED_TO_UPSELL = true;
 
-  const isLockedSport = (sport: (typeof SPORTS)[number]) => {
-    // Not signed in? We'll route to sign-in when they tap.
+  const goToPaywall = () => router.push('/(auth)/paywall');
+
+  const isLockedSport = (sport: SportLabel) => {
+    if (access.loading) return false;
     if (!access.isSignedIn) return false;
-
-    // Pro has everything unlocked.
     if (access.isPro) return false;
-
-    // If they haven't chosen a sport yet, nothing is "locked"; tapping should go to choose-sport.
     if (!access.allowedSport) return false;
-
-    // Otherwise, only the chosen sport is unlocked.
     return access.allowedSport !== sportLabelToKey(sport);
   };
 
-  const go = (sport: (typeof SPORTS)[number]) => {
+  const go = (sport: SportLabel) => {
     const key = sportLabelToKey(sport);
 
-    // Must have a session (guest or signed-in)
+    // Must have a session
     if (!access.isSignedIn) {
       router.push('/(auth)/sign-in');
       return;
     }
 
-    // Pro bypass
     if (!access.isPro) {
-      // Must pick sport first
       if (!access.allowedSport) {
         router.push('/(auth)/choose-sport');
         return;
       }
 
-      // Locked to one sport
       if (access.allowedSport !== key) {
-        // If we allow tap-to-upsell, send them to account/paywall area.
         if (ALLOW_TAP_LOCKED_TO_UPSELL) {
-          router.push('/account');
+          goToPaywall();
           return;
         }
 
         Alert.alert(
           'Sport locked',
           `Your free account is locked to ${sportKeyToNiceLabel(access.allowedSport)}.\n\nUpgrade to unlock all sports.`,
-          [{ text: 'OK' }, { text: 'Upgrade', onPress: () => router.push('/account') }]
+          [{ text: 'OK' }, { text: 'Upgrade', onPress: goToPaywall }]
         );
         return;
       }
@@ -268,9 +264,7 @@ export default function RecordingScreen() {
           <TouchableOpacity
             onPress={() => setPickerOpen(true)}
             onLongPress={() =>
-              applyAthlete(
-                athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned'
-              )
+              applyAthlete(athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned')
             }
             style={{
               paddingVertical: 8,
@@ -377,13 +371,7 @@ export default function RecordingScreen() {
             </Pressable>
           ))}
 
-          <View
-            style={{
-              height: 1,
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              marginVertical: 12,
-            }}
-          />
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 12 }} />
 
           <Text style={{ color: 'white', opacity: 0.8, marginBottom: 6 }}>New athlete</Text>
           <TextInput
@@ -400,14 +388,7 @@ export default function RecordingScreen() {
               paddingVertical: 8,
             }}
           />
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'flex-end',
-              gap: 10,
-              marginTop: 10,
-            }}
-          >
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
             <TouchableOpacity
               onPress={() => setPickerOpen(false)}
               style={{
@@ -466,7 +447,7 @@ export default function RecordingScreen() {
       </Text>
 
       <TouchableOpacity
-        onPress={() => router.push('/account')}
+        onPress={goToPaywall}
         style={{
           marginTop: 10,
           alignSelf: 'flex-start',
@@ -487,11 +468,7 @@ export default function RecordingScreen() {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator
         scrollEnabled={!pickerOpen}
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 6,
-          paddingBottom: 32,
-        }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 32 }}
       >
         <AthleteCard />
 
@@ -514,7 +491,9 @@ export default function RecordingScreen() {
           }}
         >
           <Text style={{ fontSize: 18, color: 'black', fontWeight: '900' }}>Plain Camera</Text>
-          <Text style={{ fontSize: 12, color: 'black', opacity: 0.6, marginTop: 2 }}>No overlay</Text>
+          <Text style={{ fontSize: 12, color: 'black', opacity: 0.6, marginTop: 2 }}>
+            No overlay
+          </Text>
         </TouchableOpacity>
 
         <Text style={{ color: 'white', opacity: 0.8, marginBottom: 10, fontWeight: '800' }}>
@@ -524,7 +503,6 @@ export default function RecordingScreen() {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
           {SPORTS.map((sport) => {
             const locked = isLockedSport(sport);
-
             const bg = locked ? 'rgba(255,255,255,0.18)' : 'white';
             const border = locked ? 'rgba(255,255,255,0.35)' : '#fff';
             const titleColor = locked ? 'rgba(0,0,0,0.55)' : 'black';
@@ -547,7 +525,6 @@ export default function RecordingScreen() {
                   position: 'relative',
                 }}
               >
-                {/* lock badge */}
                 {locked && (
                   <View
                     style={{
@@ -580,7 +557,6 @@ export default function RecordingScreen() {
           })}
         </View>
 
-        {/* show hint only when signed-in free and locked */}
         {access.isSignedIn && !access.isPro && !!access.allowedSport && <LockedHint />}
       </ScrollView>
 

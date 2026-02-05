@@ -24,10 +24,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+type Screen = 'start' | 'signin' | 'signup';
+
 export default function SignInScreen() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [screen, setScreen] = useState<Screen>('start');
+
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -37,7 +41,7 @@ export default function SignInScreen() {
 
   const colors = {
     bg: '#050507',
-    card: 'rgba(18,18,22,0.85)',
+    card: 'rgba(18,18,22,0.86)',
     stroke: 'rgba(255,255,255,0.10)',
     strokeSoft: 'rgba(255,255,255,0.06)',
     text: '#FFFFFF',
@@ -46,34 +50,37 @@ export default function SignInScreen() {
     accent: '#ef4444',
     accentDark: '#7f1d1d',
     inputBg: 'rgba(0,0,0,0.35)',
+    ghostBg: 'rgba(255,255,255,0.06)',
+    ghostStroke: 'rgba(255,255,255,0.18)',
   };
 
-  const title = useMemo(() => {
-    if (isAnon) return 'Upgrade your guest';
-    return mode === 'signin' ? 'Welcome back' : 'Create account';
-  }, [isAnon, mode]);
+  const headerTitle = useMemo(() => {
+    if (screen === 'start') return 'QuickClip';
+    if (screen === 'signin') return 'Sign in';
+    return 'Create account';
+  }, [screen]);
 
-  const subtitle = useMemo(() => {
-    if (isAnon) return 'Add an email so your clips sync across devices.';
-    return mode === 'signin'
-      ? 'Sign in to sync your matches across every device.'
-      : 'Create an account so your matches follow you everywhere.';
-  }, [isAnon, mode]);
+  const headerSub = useMemo(() => {
+    if (screen === 'start') {
+      return isAnon
+        ? 'Guest session active — create an account to keep this device and sync.'
+        : 'Record. Review. Win.';
+    }
+    if (screen === 'signin') return 'Sign in to sync across devices.';
+    return isAnon
+      ? 'Create an account to save this guest session (keeps the same ID).'
+      : 'Create an account so your clips follow you everywhere.';
+  }, [screen, isAnon]);
 
-  const primaryCta = useMemo(() => {
-    if (isAnon) return 'Upgrade guest account';
-    return mode === 'signin' ? 'Sign in' : 'Sign up';
-  }, [isAnon, mode]);
-
-  const validate = () => {
+  const validateEmailPass = (minPassLen = 6) => {
     const trimmedEmail = email.trim();
     if (!trimmedEmail) return 'Enter your email.';
-    if (!pass && (mode === 'signin' || mode === 'signup' || isAnon)) return 'Enter your password.';
-    if ((mode === 'signup' || isAnon) && pass.length < 6) return 'Password must be at least 6 characters.';
+    if (!pass) return 'Enter your password.';
+    if (pass.length < minPassLen) return `Password must be at least ${minPassLen} characters.`;
     return null;
   };
 
-  // ✅ FIX: guest now creates Firestore user doc immediately
+  // Guest button (only creates anon user if none exists)
   const onContinueGuest = async () => {
     setErr(null);
     setBusy(true);
@@ -81,11 +88,9 @@ export default function SignInScreen() {
       if (!auth.currentUser) {
         await signInAnonymously(auth);
       }
-
       if (auth.currentUser) {
         await ensureUserDoc(auth.currentUser.uid);
       }
-
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to continue as guest.');
@@ -113,7 +118,7 @@ export default function SignInScreen() {
     }
   };
 
-  async function upgradeAnonWithEmailPassword(trimmedEmail: string, password: string) {
+  async function linkAnonToEmailPassword(trimmedEmail: string, password: string) {
     const u = auth.currentUser;
     if (!u || !u.isAnonymous) return false;
 
@@ -121,26 +126,46 @@ export default function SignInScreen() {
 
     try {
       await linkWithCredential(u, cred);
-
-      // ✅ ensure Firestore user profile exists (keeps same UID)
-      await ensureUserDoc(u.uid);
-
+      await ensureUserDoc(u.uid); // keeps same UID
       return true;
     } catch (e: any) {
       if (String(e?.code) === 'auth/email-already-in-use') {
-        setErr(
-          'That email already has a QuickClip account. If you want to use it, tap “Sign into existing account instead”.'
-        );
+        setErr('That email already has an account. Tap “Sign in” instead to use your existing account.');
         return false;
       }
       throw e;
     }
   }
 
-  const onSubmitPrimary = async () => {
+  const onSubmitSignIn = async () => {
     setErr(null);
 
-    const msg = validate();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setErr('Enter your email.');
+      return;
+    }
+    if (!pass) {
+      setErr('Enter your password.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, trimmedEmail, pass);
+      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+      goToApp();
+    } catch (e: any) {
+      setErr(e?.message ?? 'Sign-in failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSubmitSignUp = async () => {
+    setErr(null);
+
+    const msg = validateEmailPass(6);
     if (msg) {
       setErr(msg);
       return;
@@ -150,73 +175,116 @@ export default function SignInScreen() {
 
     setBusy(true);
     try {
+      // If currently guest, convert it (keeps UID). Otherwise create a new account.
       if (isAnon) {
-        const ok = await upgradeAnonWithEmailPassword(trimmedEmail, pass);
+        const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
         if (ok) goToApp();
         return;
       }
 
-      if (mode === 'signin') {
-        await signInWithEmailAndPassword(auth, trimmedEmail, pass);
-        if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-      } else {
-        await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
-        if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-      }
-
+      await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
+      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
       goToApp();
     } catch (e: any) {
-      setErr(e?.message ?? 'Auth error');
+      setErr(e?.message ?? 'Sign-up failed.');
     } finally {
       setBusy(false);
     }
   };
 
-  const onSignIntoExistingInstead = async () => {
-    setErr(null);
+  const Card = ({ children }: { children: React.ReactNode }) => (
+    <View
+      style={{
+        borderRadius: 22,
+        padding: 18,
+        backgroundColor: colors.card,
+        borderWidth: 1,
+        borderColor: colors.stroke,
+        shadowColor: '#000',
+        shadowOpacity: 0.35,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 12 },
+        elevation: 8,
+      }}
+    >
+      {children}
+    </View>
+  );
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !pass) {
-      setErr('Enter an email and password to sign into an existing account.');
-      return;
-    }
+  const PrimaryButton = ({
+    label,
+    onPress,
+    disabled,
+  }: {
+    label: string;
+    onPress: () => void;
+    disabled?: boolean;
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled || busy}
+      style={{
+        borderRadius: 999,
+        paddingVertical: 12,
+        alignItems: 'center',
+        backgroundColor: busy || disabled ? colors.accentDark : colors.accent,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+      }}
+    >
+      {busy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{label}</Text>}
+    </TouchableOpacity>
+  );
 
-    Alert.alert(
-      'Switch accounts?',
-      'This will sign into your existing account. Any guest-only data that hasn’t been uploaded/synced may not show here.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign in',
-          style: 'default',
-          onPress: async () => {
-            setBusy(true);
-            try {
-              await signInWithEmailAndPassword(auth, trimmedEmail, pass);
-              if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-              goToApp();
-            } catch (e: any) {
-              setErr(e?.message ?? 'Sign-in failed.');
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ]
-    );
-  };
+  const GhostButton = ({ label, onPress }: { label: string; onPress: () => void }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={busy}
+      style={{
+        marginTop: 10,
+        borderRadius: 999,
+        paddingVertical: 11,
+        alignItems: 'center',
+        backgroundColor: colors.ghostBg,
+        borderWidth: 1,
+        borderColor: colors.ghostStroke,
+        opacity: busy ? 0.7 : 1,
+      }}
+    >
+      <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  const BackLink = ({ label }: { label: string }) => (
+    <Pressable
+      onPress={() => {
+        setErr(null);
+        setBusy(false);
+        setScreen('start');
+      }}
+      hitSlop={12}
+      style={({ pressed }) => ({
+        opacity: pressed ? 0.7 : 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+      })}
+    >
+      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>← Back</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '900', fontSize: 12 }}>{label}</Text>
+    </Pressable>
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ paddingHorizontal: 22, paddingTop: 10, paddingBottom: 14 }}>
         <Text style={{ color: colors.text, fontSize: 30, fontWeight: '900', letterSpacing: 0.8 }}>
-          QuickClip
+          {headerTitle}
         </Text>
-        <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
-          Record. Review. Win.
-        </Text>
+        <Text style={{ color: colors.sub, marginTop: 6, fontSize: 12 }}>{headerSub}</Text>
 
-        {isAnon && (
+        {isAnon && screen === 'start' && (
           <View
             style={{
               marginTop: 10,
@@ -238,192 +306,160 @@ export default function SignInScreen() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
-          <View
-            style={{
-              borderRadius: 22,
-              padding: 18,
-              backgroundColor: colors.card,
-              borderWidth: 1,
-              borderColor: colors.stroke,
-              shadowColor: '#000',
-              shadowOpacity: 0.35,
-              shadowRadius: 24,
-              shadowOffset: { width: 0, height: 12 },
-              elevation: 8,
-            }}
-          >
-            {!isAnon && (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.18)',
-                  overflow: 'hidden',
-                  marginBottom: 18,
-                  backgroundColor: 'rgba(0,0,0,0.25)',
+          {screen === 'start' && (
+            <Card>
+              <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }}>Get started</Text>
+              <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
+                Choose one option. You can change later.
+              </Text>
+
+              <PrimaryButton
+                label={isAnon ? 'Create account (save this device)' : 'Create account'}
+                onPress={() => {
+                  setErr(null);
+                  setScreen('signup');
                 }}
-              >
-                <TouchableOpacity
-                  onPress={() => setMode('signin')}
-                  disabled={busy}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 10,
-                    alignItems: 'center',
-                    backgroundColor: mode === 'signin' ? colors.accent : 'transparent',
-                  }}
-                >
-                  <Text style={{ color: mode === 'signin' ? '#fff' : colors.sub, fontWeight: '900', fontSize: 13 }}>
-                    Sign in
-                  </Text>
-                </TouchableOpacity>
+              />
+
+              <GhostButton
+                label="Sign in to existing account"
+                onPress={() => {
+                  setErr(null);
+                  setScreen('signin');
+                }}
+              />
+
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
+                <Text style={{ color: colors.sub, fontSize: 11, textAlign: 'center', marginBottom: 10 }}>
+                  Just want to try it out?
+                </Text>
 
                 <TouchableOpacity
-                  onPress={() => setMode('signup')}
+                  onPress={onContinueGuest}
                   disabled={busy}
                   style={{
-                    flex: 1,
-                    paddingVertical: 10,
+                    borderRadius: 999,
+                    paddingVertical: 11,
                     alignItems: 'center',
-                    backgroundColor: mode === 'signup' ? colors.accent : 'transparent',
+                    backgroundColor: 'rgba(0,0,0,0.35)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.25)',
+                    opacity: busy ? 0.7 : 1,
                   }}
                 >
-                  <Text style={{ color: mode === 'signup' ? '#fff' : colors.sub, fontWeight: '900', fontSize: 13 }}>
-                    Sign up
-                  </Text>
+                  <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>Continue as Guest</Text>
                 </TouchableOpacity>
               </View>
-            )}
 
-            <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }}>{title}</Text>
-            <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
-              {subtitle}
-            </Text>
-
-            <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Email</Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              placeholder="you@example.com"
-              placeholderTextColor="rgba(255,255,255,0.35)"
-              editable={!busy}
-              style={{
-                color: colors.text,
-                backgroundColor: colors.inputBg,
-                borderWidth: 1,
-                borderColor: colors.strokeSoft,
-                borderRadius: 14,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                fontSize: 14,
-                marginBottom: 12,
-              }}
-            />
-
-            <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Password</Text>
-            <TextInput
-              value={pass}
-              onChangeText={setPass}
-              secureTextEntry
-              placeholder="••••••••"
-              placeholderTextColor="rgba(255,255,255,0.35)"
-              editable={!busy}
-              style={{
-                color: colors.text,
-                backgroundColor: colors.inputBg,
-                borderWidth: 1,
-                borderColor: colors.strokeSoft,
-                borderRadius: 14,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                fontSize: 14,
-                marginBottom: 10,
-              }}
-            />
-
-            {!isAnon && mode === 'signin' && (
-              <Pressable onPress={onForgotPassword} disabled={busy} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
-                  Forgot password?
+              {!!err && (
+                <Text style={{ color: colors.accent, marginTop: 12, fontSize: 13 }} numberOfLines={4}>
+                  {err}
                 </Text>
-              </Pressable>
-            )}
-
-            {!!err && (
-              <Text style={{ color: colors.accent, marginBottom: 12, fontSize: 13 }} numberOfLines={4}>
-                {err}
-              </Text>
-            )}
-
-            <TouchableOpacity
-              onPress={onSubmitPrimary}
-              disabled={busy}
-              style={{
-                borderRadius: 999,
-                paddingVertical: 12,
-                alignItems: 'center',
-                backgroundColor: busy ? colors.accentDark : colors.accent,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.10)',
-              }}
-            >
-              {busy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{primaryCta}</Text>
               )}
-            </TouchableOpacity>
+            </Card>
+          )}
 
-            {isAnon && (
-              <TouchableOpacity
-                onPress={onSignIntoExistingInstead}
-                disabled={busy}
-                style={{
-                  marginTop: 10,
-                  borderRadius: 999,
-                  paddingVertical: 11,
-                  alignItems: 'center',
-                  backgroundColor: 'rgba(255,255,255,0.06)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.18)',
-                }}
-              >
-                <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>
-                  Sign into existing account instead
-                </Text>
-              </TouchableOpacity>
-            )}
+          {(screen === 'signin' || screen === 'signup') && (
+            <Card>
+              <BackLink label={screen === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'} />
 
-            <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
-              <Text style={{ color: colors.sub, fontSize: 11, textAlign: 'center', marginBottom: 10 }}>
-                Just want to try it out?
+              <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900', marginTop: 6 }}>
+                {screen === 'signin' ? 'Sign in' : 'Create account'}
+              </Text>
+              <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
+                {screen === 'signin'
+                  ? 'Use your existing email and password.'
+                  : isAnon
+                  ? 'This keeps your guest data and ID — it just adds an email/password.'
+                  : 'Create a new account with email and password.'}
               </Text>
 
-              <TouchableOpacity
-                onPress={onContinueGuest}
-                disabled={busy}
+              <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="you@example.com"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                editable={!busy}
                 style={{
-                  borderRadius: 999,
-                  paddingVertical: 11,
-                  alignItems: 'center',
-                  backgroundColor: 'rgba(0,0,0,0.35)',
+                  color: colors.text,
+                  backgroundColor: colors.inputBg,
                   borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.25)',
-                  opacity: busy ? 0.7 : 1,
+                  borderColor: colors.strokeSoft,
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 14,
+                  marginBottom: 12,
                 }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
-                  Continue as Guest
+              />
+
+              <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Password</Text>
+              <TextInput
+                value={pass}
+                onChangeText={setPass}
+                secureTextEntry
+                placeholder="••••••••"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                editable={!busy}
+                style={{
+                  color: colors.text,
+                  backgroundColor: colors.inputBg,
+                  borderWidth: 1,
+                  borderColor: colors.strokeSoft,
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 14,
+                  marginBottom: 10,
+                }}
+              />
+
+              {screen === 'signin' && (
+                <Pressable onPress={onForgotPassword} disabled={busy} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
+                    Forgot password?
+                  </Text>
+                </Pressable>
+              )}
+
+              {!!err && (
+                <Text style={{ color: colors.accent, marginBottom: 12, fontSize: 13 }} numberOfLines={4}>
+                  {err}
                 </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              )}
+
+              <PrimaryButton
+                label={screen === 'signin' ? 'Sign in' : 'Create account'}
+                onPress={screen === 'signin' ? onSubmitSignIn : onSubmitSignUp}
+              />
+
+              {screen === 'signup' && !isAnon && (
+                <GhostButton
+                  label="Already have an account? Sign in"
+                  onPress={() => {
+                    setErr(null);
+                    setScreen('signin');
+                  }}
+                />
+              )}
+
+              {screen === 'signin' && (
+                <GhostButton
+                  label="Need an account? Create one"
+                  onPress={() => {
+                    setErr(null);
+                    setScreen('signup');
+                  }}
+                />
+              )}
+            </Card>
+          )}
 
           <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 14 }}>
-            Stay signed in — you’ll only see this screen if you sign out.
+            You’ll only see this screen if you sign out.
           </Text>
         </View>
       </KeyboardAvoidingView>
