@@ -1,9 +1,11 @@
 // app/(auth)/paywall.tsx
 import { subscribeAccess, type AccessState } from '@/lib/access';
+import { getMonthlyPackage, purchaseMonthly, restorePurchases } from '@/lib/purchases';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Linking,
     Pressable,
     ScrollView,
     Text,
@@ -57,7 +59,9 @@ function IconCheck({ isPro = false }: { isPro?: boolean }) {
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: isPro ? '#f5c24d' : '#22c55e', fontWeight: '900', fontSize: 13, lineHeight: 13 }}>✓</Text>
+      <Text style={{ color: isPro ? '#f5c24d' : '#22c55e', fontWeight: '900', fontSize: 13, lineHeight: 13 }}>
+        ✓
+      </Text>
     </View>
   );
 }
@@ -83,6 +87,10 @@ function IconX() {
   );
 }
 
+// TODO: paste real URLs (must be reachable on the web)
+const TERMS_URL = 'https://example.com/terms';
+const PRIVACY_URL = 'https://example.com/privacy';
+
 export default function PaywallScreen() {
   const insets = useSafeAreaInsets();
 
@@ -96,6 +104,12 @@ export default function PaywallScreen() {
     isPro: false,
   });
 
+  const [pkgLoading, setPkgLoading] = useState(true);
+  const [priceText, setPriceText] = useState<string>('…');
+  const [buying, setBuying] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     const unsub = subscribeAccess(setAccess);
     return unsub;
@@ -106,6 +120,29 @@ export default function PaywallScreen() {
       router.replace('/(tabs)');
     }
   }, [access.loading, access.isPro]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setPkgLoading(true);
+      setErr(null);
+      try {
+        const p = await getMonthlyPackage(); // from RevenueCat offerings
+        if (!alive) return;
+        setPriceText(p?.product?.priceString ?? '$10.99');
+      } catch (e: any) {
+        if (!alive) return;
+        // We still show UI, but reviewers prefer the Store price when available
+        setPriceText('$10.99');
+        setErr(e?.message ?? null);
+      } finally {
+        if (alive) setPkgLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const subtitle = useMemo(() => {
     if (!access.isSignedIn) return 'Sign in to unlock all features and sync across devices';
@@ -119,9 +156,6 @@ export default function PaywallScreen() {
     return `Currently limited to: ${s}`;
   }, [access.allowedSport, access.isPro]);
 
-  const price = '$10.99';
-  const priceSub = '/month';
-
   if (access.loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#050507', justifyContent: 'center' }}>
@@ -130,38 +164,62 @@ export default function PaywallScreen() {
     );
   }
 
+  const onBuy = async () => {
+    setErr(null);
+    setBuying(true);
+    try {
+      await purchaseMonthly();
+      // subscribeAccess should update and auto-redirect to tabs
+    } catch (e: any) {
+      // User cancelled is not an “error” experience; keep it quiet-ish
+      const msg = String(e?.message ?? '');
+      if (msg && !msg.toLowerCase().includes('cancel')) setErr(msg);
+    } finally {
+      setBuying(false);
+    }
+  };
+
+  const onRestore = async () => {
+    setErr(null);
+    setRestoring(true);
+    try {
+      await restorePurchases();
+    } catch (e: any) {
+      setErr(String(e?.message ?? 'Restore failed.'));
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
-      {/* Enhanced gradient background */}
+      {/* background */}
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          opacity: 0.4,
-        }}
-      >
-        <View style={{ 
-          position: 'absolute', 
-          top: -100, 
-          left: '10%', 
-          width: 300, 
-          height: 300, 
-          borderRadius: 150,
-          backgroundColor: '#ef4444',
-          opacity: 0.15,
-        }} />
-        <View style={{ 
-          position: 'absolute', 
-          bottom: -120, 
-          right: '5%', 
-          width: 350, 
-          height: 350, 
-          borderRadius: 175,
-          backgroundColor: '#f5c24d',
-          opacity: 0.12,
-        }} />
+      <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
+        <View
+          style={{
+            position: 'absolute',
+            top: -100,
+            left: '10%',
+            width: 300,
+            height: 300,
+            borderRadius: 150,
+            backgroundColor: '#ef4444',
+            opacity: 0.15,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            bottom: -120,
+            right: '5%',
+            width: 350,
+            height: 350,
+            borderRadius: 175,
+            backgroundColor: '#f5c24d',
+            opacity: 0.12,
+          }}
+        />
       </View>
 
       {/* Top bar */}
@@ -175,19 +233,17 @@ export default function PaywallScreen() {
           justifyContent: 'space-between',
         }}
       >
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-        >
-          <View style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            backgroundColor: 'rgba(255,255,255,0.08)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
+        <Pressable onPress={() => router.back()} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+          <View
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: 'rgba(255,255,255,0.08)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '700', fontSize: 18 }}>✕</Text>
           </View>
         </Pressable>
@@ -202,20 +258,20 @@ export default function PaywallScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero Section */}
+        {/* Hero */}
         <View style={{ marginTop: 12, marginBottom: 24 }}>
-          <View style={{
-            backgroundColor: 'rgba(239,68,68,0.12)',
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderRadius: 20,
-            alignSelf: 'flex-start',
-            borderWidth: 1,
-            borderColor: 'rgba(239,68,68,0.3)',
-          }}>
-            <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '900' }}>
-              UPGRADE TO PRO
-            </Text>
+          <View
+            style={{
+              backgroundColor: 'rgba(239,68,68,0.12)',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 20,
+              alignSelf: 'flex-start',
+              borderWidth: 1,
+              borderColor: 'rgba(239,68,68,0.3)',
+            }}
+          >
+            <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '900' }}>UPGRADE TO PRO</Text>
           </View>
 
           <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
@@ -227,15 +283,17 @@ export default function PaywallScreen() {
           </Text>
 
           {!!lockedLine && (
-            <View style={{
-              marginTop: 14,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-              backgroundColor: 'rgba(245,194,77,0.10)',
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: 'rgba(245,194,77,0.25)',
-            }}>
+            <View
+              style={{
+                marginTop: 14,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+                backgroundColor: 'rgba(245,194,77,0.10)',
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: 'rgba(245,194,77,0.25)',
+              }}
+            >
               <Text style={{ color: 'rgba(245,194,77,0.95)', fontSize: 13, fontWeight: '800' }}>
                 ⚠️ {lockedLine}
               </Text>
@@ -243,7 +301,7 @@ export default function PaywallScreen() {
           )}
         </View>
 
-        {/* Plan Comparison Card */}
+        {/* Compare */}
         <View
           style={{
             borderRadius: 20,
@@ -254,9 +312,7 @@ export default function PaywallScreen() {
             marginBottom: 20,
           }}
         >
-          {/* Plan Headers */}
           <View style={{ flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.3)' }}>
-            {/* Pro Column Header */}
             <View
               style={{
                 flex: 1,
@@ -269,33 +325,49 @@ export default function PaywallScreen() {
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>Pro</Text>
-                <View style={{
-                  marginLeft: 8,
-                  backgroundColor: '#f5c24d',
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                  borderRadius: 6,
-                }}>
+                <View
+                  style={{
+                    marginLeft: 8,
+                    backgroundColor: '#f5c24d',
+                    paddingHorizontal: 8,
+                    paddingVertical: 2,
+                    borderRadius: 6,
+                  }}
+                >
                   <Text style={{ color: '#000', fontWeight: '900', fontSize: 10 }}>BEST</Text>
                 </View>
               </View>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.85)',
+                  fontWeight: '700',
+                  fontSize: 13,
+                  marginTop: 4,
+                  textAlign: 'center',
+                }}
+              >
                 Full access
               </Text>
             </View>
 
-            {/* Basic Column Header */}
             <View style={{ flex: 1, paddingVertical: 18, paddingHorizontal: 16 }}>
               <Text style={{ color: 'rgba(255,255,255,0.65)', fontWeight: '900', fontSize: 18, textAlign: 'center' }}>
                 Basic
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.40)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.40)',
+                  fontWeight: '700',
+                  fontSize: 13,
+                  marginTop: 4,
+                  textAlign: 'center',
+                }}
+              >
                 Limited features
               </Text>
             </View>
           </View>
 
-          {/* Feature Rows */}
           <View style={{ paddingVertical: 4 }}>
             {FEATURES.map((feature, idx) => (
               <View
@@ -329,7 +401,7 @@ export default function PaywallScreen() {
           </View>
         </View>
 
-        {/* Pricing Card */}
+        {/* Price */}
         <View
           style={{
             borderRadius: 20,
@@ -343,10 +415,18 @@ export default function PaywallScreen() {
           <View style={{ paddingHorizontal: 20, paddingVertical: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 48, lineHeight: 48 }}>
-                {price}
+                {priceText}
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 18, marginLeft: 4, marginBottom: 8 }}>
-                {priceSub}
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.70)',
+                  fontWeight: '800',
+                  fontSize: 18,
+                  marginLeft: 4,
+                  marginBottom: 8,
+                }}
+              >
+                /month
               </Text>
             </View>
 
@@ -355,67 +435,87 @@ export default function PaywallScreen() {
                 Cancel anytime • No commitments
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.50)', fontWeight: '600', fontSize: 12, marginTop: 6, textAlign: 'center' }}>
-                Yearly plan coming soon with savings
+                Yearly plan coming soon
               </Text>
             </View>
+
+            {pkgLoading && (
+              <View style={{ marginTop: 10, alignItems: 'center' }}>
+                <ActivityIndicator color="#ef4444" />
+              </View>
+            )}
+
+            {!!err && (
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 10, textAlign: 'center' }}>
+                {err}
+              </Text>
+            )}
           </View>
         </View>
 
-        {/* CTA Button */}
+        {/* CTA */}
         <TouchableOpacity
-          onPress={() => {
-            alert('Purchasing not wired yet (monthly)');
-          }}
+          onPress={onBuy}
+          disabled={buying || pkgLoading}
           activeOpacity={0.88}
           style={{
             borderRadius: 18,
             paddingVertical: 18,
             alignItems: 'center',
-            backgroundColor: '#ef4444',
+            backgroundColor: buying || pkgLoading ? 'rgba(239,68,68,0.55)' : '#ef4444',
             borderWidth: 1,
             borderColor: 'rgba(255,255,255,0.15)',
             shadowColor: '#ef4444',
-            shadowOpacity: 0.5,
+            shadowOpacity: buying || pkgLoading ? 0 : 0.5,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 8 },
-            elevation: 10,
+            elevation: buying || pkgLoading ? 0 : 10,
             marginBottom: 14,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, letterSpacing: 0.3 }}>
-            Start Pro Now
-          </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 6 }}>
-            Instant unlock • Sync everywhere
-          </Text>
+          {buying ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, letterSpacing: 0.3 }}>
+                Start Pro — {priceText}/month
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 6 }}>
+                Instant unlock • Sync everywhere
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        {/* Restore Purchase */}
         <TouchableOpacity
-          onPress={() => {
-            alert('Restore not wired yet');
-          }}
-          style={{ paddingVertical: 16, alignItems: 'center' }}
+          onPress={onRestore}
+          disabled={restoring}
+          style={{ paddingVertical: 16, alignItems: 'center', opacity: restoring ? 0.6 : 1 }}
           activeOpacity={0.7}
         >
-          <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 15 }}>
-            Restore Purchase
-          </Text>
+          {restoring ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 15 }}>
+              Restore Purchase
+            </Text>
+          )}
         </TouchableOpacity>
 
-        {/* Legal Text */}
+        {/* Legal */}
         <View style={{ marginTop: 8, paddingHorizontal: 12 }}>
           <Text style={{ color: 'rgba(255,255,255,0.40)', fontSize: 11, textAlign: 'center', lineHeight: 16 }}>
             Subscription auto-renews unless canceled at least 24 hours before the end of the current period.
           </Text>
+
           <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 12 }}>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)} activeOpacity={0.7}>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700' }}>
                 Terms of Service
               </Text>
             </TouchableOpacity>
             <Text style={{ color: 'rgba(255,255,255,0.30)' }}>•</Text>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700' }}>
                 Privacy Policy
               </Text>

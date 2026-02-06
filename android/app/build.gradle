@@ -4,10 +4,6 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
-/**
- * This is the configuration block to customize your React Native Android app.
- * By default you don't need to apply any configuration, just uncomment the lines you need.
- */
 react {
     entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
@@ -15,23 +11,14 @@ react {
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
-    // Use Expo CLI to bundle the app, this ensures the Metro config
-    // works correctly with Expo projects.
+
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
 
-    /* Autolinking */
     autolinkLibrariesWithApp()
 }
 
-/**
- * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
- */
 def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInReleaseBuilds') ?: false).toBoolean()
-
-/**
- * The preferred build flavor of JavaScriptCore (JSC)
- */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
@@ -48,6 +35,7 @@ android {
         versionCode 1
         versionName "1.0.0"
     }
+
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -56,13 +44,12 @@ android {
             keyPassword 'android'
         }
     }
+
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
             signingConfig signingConfigs.debug
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableProguardInReleaseBuilds
@@ -70,11 +57,13 @@ android {
             crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
         }
     }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
         }
     }
+
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
@@ -82,8 +71,8 @@ android {
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`
 ["pickFirsts", "excludes", "merges", "doNotStrip"].each { prop ->
-    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",");
-    for (i in 0..<options.size()) options[i] = options[i].trim();
+    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",")
+    for (i in 0..<options.size()) options[i] = options[i].trim()
     options -= ""
     if (options.length > 0) {
         println "android.packagingOptions.$prop += $options ($options.length)"
@@ -93,24 +82,39 @@ android {
     }
 }
 
+/**
+ * 🔥 CRITICAL: Prevent ffmpeg-kit-react-native from pulling Maven FFmpeg packages.
+ * We are using the local AAR from android/libs instead.
+ */
+configurations.configureEach { cfg ->
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-full-gpl"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-full-gpl-runtime"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-full"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-full-runtime"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-https"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-https-runtime"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-min"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-min-runtime"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-audio"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-audio-runtime"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-video"
+    cfg.exclude group: "com.arthenica", module: "ffmpeg-kit-video-runtime"
+}
+
 dependencies {
-    // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
-    def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
-    def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
-    def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";
+    def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true"
+    def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true"
+    def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true"
 
     if (isGifEnabled) {
-        // For animated gif support
         implementation("com.facebook.fresco:animated-gif:${expoLibs.versions.fresco.get()}")
     }
 
     if (isWebpEnabled) {
-        // For webp support
         implementation("com.facebook.fresco:webpsupport:${expoLibs.versions.fresco.get()}")
         if (isWebpAnimatedEnabled) {
-            // Animated webp support
             implementation("com.facebook.fresco:animated-webp:${expoLibs.versions.fresco.get()}")
         }
     }
@@ -121,7 +125,9 @@ dependencies {
         implementation jscFlavor
     }
 
-    // 👉 Use local FFmpeg AAR directly from android/libs
-    implementation files("$rootDir/libs/ffmpeg-kit-full-gpl.aar")
+    // ✅ Use local FFmpeg AAR directly from android/libs (the one you control)
+
+
+    // ✅ Required by ffmpeg-kit
     implementation "com.arthenica:smart-exception-java:0.2.1"
 }
