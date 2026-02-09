@@ -19,6 +19,22 @@ function getPlatformApiKey() {
 
 let _configured = false;
 
+/**
+ * Returns the shared Purchases singleton (lazy-loaded).
+ * This prevents multiple copies / multiple imports from creating multiple instances.
+ */
+export async function getPurchases() {
+  if (!Purchases) {
+    const mod = await import('react-native-purchases');
+    Purchases = mod.default;
+  }
+  return Purchases;
+}
+
+/**
+ * Configure RevenueCat exactly once per JS runtime.
+ * Call this ONCE at app startup (root layout / provider), not inside screens.
+ */
 export async function configureRevenueCat(appUserId?: string | null) {
   if (!isNativePlatform()) return;
   if (_configured) return;
@@ -33,11 +49,7 @@ export async function configureRevenueCat(appUserId?: string | null) {
     return;
   }
 
-  // Lazy import so it doesn't run before native is ready
-  if (!Purchases) {
-    const mod = await import('react-native-purchases');
-    Purchases = mod.default;
-  }
+  const Purchases = await getPurchases();
 
   Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
 
@@ -51,11 +63,6 @@ export async function configureRevenueCat(appUserId?: string | null) {
 
 export async function getCustomerInfo() {
   if (!isNativePlatform()) return null;
-
-  if (!Purchases) {
-    const mod = await import('react-native-purchases');
-    Purchases = mod.default;
-  }
-
+  const Purchases = await getPurchases();
   return Purchases.getCustomerInfo();
 }

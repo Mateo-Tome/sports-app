@@ -1,10 +1,13 @@
 // lib/purchases.ts
-import Purchases, { CustomerInfo, PurchasesPackage } from 'react-native-purchases';
+import type { CustomerInfo, PurchasesPackage } from 'react-native-purchases';
+import { getPurchases } from './revenuecat';
 
 export const ENTITLEMENT_ID = 'pro'; // must match RevenueCat entitlement id
 export const OFFERING_ID = 'default'; // optional: your offering id in RevenueCat dashboard
 
 export async function getMonthlyPackage(): Promise<PurchasesPackage | null> {
+  const Purchases = await getPurchases();
+
   const offerings = await Purchases.getOfferings();
   const offering = offerings.all[OFFERING_ID] ?? offerings.current;
   if (!offering) return null;
@@ -18,6 +21,8 @@ export async function getMonthlyPackage(): Promise<PurchasesPackage | null> {
 }
 
 export async function purchaseMonthly(): Promise<CustomerInfo> {
+  const Purchases = await getPurchases();
+
   const pkg = await getMonthlyPackage();
   if (!pkg) throw new Error('No subscription package available.');
 
@@ -30,5 +35,6 @@ export async function purchaseMonthly(): Promise<CustomerInfo> {
 }
 
 export async function restorePurchases(): Promise<CustomerInfo> {
+  const Purchases = await getPurchases();
   return Purchases.restorePurchases();
 }
