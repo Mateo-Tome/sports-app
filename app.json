@@ -24,7 +24,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
-      "buildNumber": "10",
+      "buildNumber": "11",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
