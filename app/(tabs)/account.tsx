@@ -217,10 +217,11 @@ export default function AccountScreen() {
       return (
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
           <PrimaryButton label="Create Account" onPress={goToSignIn} disabled={busy} />
-          <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
+          <GhostButton label="Not now" onPress={() => router.back()} disabled={busy} />
         </View>
       );
     }
+    
 
     return (
       <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>

@@ -1,6 +1,7 @@
 // app/(auth)/sign-in.tsx
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
   EmailAuthProvider,
@@ -25,6 +26,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Screen = 'start' | 'signin' | 'signup';
+
+const GUEST_OK_KEY = 'guest_ok';
 
 const colors = {
   bg: '#050507',
@@ -128,13 +131,7 @@ function GhostButton({
   );
 }
 
-function BackLink({
-  label,
-  onBack,
-}: {
-  label: string;
-  onBack: () => void;
-}) {
+function BackLink({ label, onBack }: { label: string; onBack: () => void }) {
   return (
     <Pressable
       onPress={onBack}
@@ -198,12 +195,19 @@ export default function SignInScreen() {
     setErr(null);
     setBusy(true);
     try {
+      // If no user yet, create anon user. If already anon, keep same UID.
       if (!auth.currentUser) {
         await signInAnonymously(auth);
       }
-      if (auth.currentUser) {
-        await ensureUserDoc(auth.currentUser.uid);
-      }
+
+      const u = auth.currentUser;
+      if (!u) throw new Error('Guest session failed to initialize.');
+
+      await ensureUserDoc(u.uid);
+
+      // ✅ Allow guests into tabs after they tap Continue
+      await AsyncStorage.setItem(GUEST_OK_KEY, '1');
+
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to continue as guest.');
@@ -263,6 +267,10 @@ export default function SignInScreen() {
     try {
       await signInWithEmailAndPassword(auth, trimmedEmail, pass);
       if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+
+      // Real user: guest flag no longer needed
+      await AsyncStorage.removeItem(GUEST_OK_KEY);
+
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Sign-in failed.');
@@ -283,12 +291,18 @@ export default function SignInScreen() {
     try {
       if (isAnon) {
         const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
-        if (ok) goToApp();
+        if (ok) {
+          await AsyncStorage.removeItem(GUEST_OK_KEY);
+          goToApp();
+        }
         return;
       }
 
       await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
       if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+
+      await AsyncStorage.removeItem(GUEST_OK_KEY);
+
       goToApp();
     } catch (e: any) {
       setErr(e?.message ?? 'Sign-up failed.');
@@ -325,7 +339,10 @@ export default function SignInScreen() {
         )}
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
           {screen === 'start' && (
             <Card>
@@ -352,8 +369,22 @@ export default function SignInScreen() {
                 busy={busy}
               />
 
-              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: colors.strokeSoft, paddingTop: 14 }}>
-                <Text style={{ color: colors.sub, fontSize: 11, textAlign: 'center', marginBottom: 10 }}>
+              <View
+                style={{
+                  marginTop: 16,
+                  borderTopWidth: 1,
+                  borderTopColor: colors.strokeSoft,
+                  paddingTop: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    color: colors.sub,
+                    fontSize: 11,
+                    textAlign: 'center',
+                    marginBottom: 10,
+                  }}
+                >
                   Just want to try it out?
                 </Text>
 
@@ -450,7 +481,11 @@ export default function SignInScreen() {
               />
 
               {screen === 'signin' && (
-                <Pressable onPress={onForgotPassword} disabled={busy} style={{ alignSelf: 'flex-end', marginBottom: 12 }}>
+                <Pressable
+                  onPress={onForgotPassword}
+                  disabled={busy}
+                  style={{ alignSelf: 'flex-end', marginBottom: 12 }}
+                >
                   <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
                     Forgot password?
                   </Text>
@@ -493,7 +528,14 @@ export default function SignInScreen() {
             </Card>
           )}
 
-          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 14 }}>
+          <Text
+            style={{
+              color: 'rgba(255,255,255,0.35)',
+              fontSize: 11,
+              textAlign: 'center',
+              marginTop: 14,
+            }}
+          >
             You’ll only see this screen if you sign out.
           </Text>
         </View>
