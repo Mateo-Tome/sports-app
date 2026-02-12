@@ -3,6 +3,7 @@ import React from 'react';
 import type { PlaybackModuleProps } from './types';
 
 import BaseballHittingPlaybackModule from './baseball/BaseballHittingPlaybackModule';
+import BaseballPitchingPlaybackModule from './baseball/BaseballPitchingPlaybackModule';
 
 import WrestlingFolkstylePlaybackModule from './wrestling/WrestlingFolkstylePlaybackModule';
 import WrestlingFreestylePlaybackModule from './wrestling/WrestlingFreestylePlaybackModule';
@@ -22,10 +23,9 @@ const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
 
   // Baseball
   'baseball:hitting': BaseballHittingPlaybackModule,
+  'baseball:pitching': BaseballPitchingPlaybackModule, // ✅ ADD THIS
 
-  // add new ones here later:
-  // 'bjj:gi': BjjGiPlaybackModule,
-  // 'volleyball:default': VolleyballPlaybackModule,
+  // add new ones here later...
 };
 
 export function getPlaybackModule(sport?: string, style?: string) {

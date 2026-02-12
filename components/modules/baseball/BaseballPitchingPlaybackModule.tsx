@@ -1,21 +1,42 @@
-import React from 'react';
+import { useMemo, useState } from 'react';
 import { Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { OverlayProps } from './types';
+import type { PlaybackModuleProps } from '../types';
 
 import {
-  FlashToast,
-  HitOutChooser,
-  HomerunConfirm,
-  StrikeoutChooser,
-} from '../modules/baseball/baseballUiParts';
+    FlashToast,
+    HitOutChooser,
+    HomerunConfirm,
+    StrikeoutChooser,
+} from './baseballUiParts';
 
-import { FOUL_COLOR } from '../modules/baseball/useBaseballHittingLogic';
+import { deriveCountAtTime, FOUL_COLOR } from './useBaseballHittingLogic';
 
-export default function BaseballPitchingOverlay({ isRecording, onEvent }: OverlayProps) {
-  const insets = useSafeAreaInsets();
+type BeltLane = 'top' | 'bottom' | undefined;
+
+// Pitcher POV lane rule (optional):
+// you can keep same lanes as hitting, or swap.
+// Here I keep it simple: balls top, strikes bottom.
+function beltLaneForKeyPitching(key: string): BeltLane {
+  const k = String(key || '').toLowerCase();
+  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'top';
+  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
+  return undefined;
+}
+
+export default function BaseballPitchingPlaybackModule({
+  overlayOn,
+  insets,
+  editMode,
+  editSubmode,
+  onOverlayEvent,
+  events,
+  now,
+}: PlaybackModuleProps) {
+  if (!overlayOn) return null;
+
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
+  const isPortrait = screenH >= screenW;
 
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
@@ -29,35 +50,18 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   const SIZE = Math.max(44, Math.min(70, maxSize));
   const BTN_SIZE = Math.round(SIZE * 0.75);
 
-  const [balls, setBalls] = React.useState(0);
-  const [strikes, setStrikes] = React.useState(0);
-  const [fouls, setFouls] = React.useState(0);
-  const [outs, setOuts] = React.useState(0);
-
-  const [resultChooserOpen, setResultChooserOpen] = React.useState(false);
-  const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false);
-  const [hrConfirmOpen, setHrConfirmOpen] = React.useState(false);
-
-  const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
-  const showToast = (text: string, tint: string) => setToast({ text, tint });
-
-  const isPortrait = screenH >= screenW;
   const CHOOSER_TOP = isPortrait ? TOP + 40 : TOP + 10;
 
-  // Pitcher POV colors
-  const PITCHER_GOOD = '#22c55e'; // green (good for pitcher)
-  const PITCHER_BAD = '#ef4444';  // red   (bad for pitcher)
-  const PITCHER_WARN = '#f59e0b'; // amber (meh/bad-ish)
+  const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
-  // ✅ Pitching mapping:
-  // - Strike = good (green)
-  // - Ball = bad (red)
-  // - Hit/HR = bad (red)
-  // - Out/K = good (green)
-  // - Walk = bad-ish (amber or red, your call)
+  // Pitcher POV colors
+  const PITCHER_GOOD = '#22c55e'; // green
+  const PITCHER_BAD = '#ef4444';  // red
+  const PITCHER_WARN = '#f59e0b'; // amber
+
   const KEY_COLOR_PITCHING: Record<string, string> = {
-    ball: PITCHER_BAD,          // ✅ CHANGED
-    strike: PITCHER_GOOD,
+    ball: PITCHER_BAD,       // ✅ Ball = red
+    strike: PITCHER_GOOD,    // ✅ Strike = green
     foul: FOUL_COLOR,
     hit: PITCHER_BAD,
     out: PITCHER_GOOD,
@@ -66,38 +70,45 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     strikeout: PITCHER_GOOD,
   };
 
+  // derive count from event stream
+  const derived = useMemo(() => deriveCountAtTime(events as any[], now as any), [events, now]);
+  const derivedBalls = derived.balls;
+  const derivedStrikes = derived.strikes;
+
+  // local edit-mode count state
+  const [balls, setBalls] = useState(0);
+  const [strikes, setStrikes] = useState(0);
+  const [fouls, setFouls] = useState(0);
+  const [outs, setOuts] = useState(0);
+
+  const [resultChooserOpen, setResultChooserOpen] = useState(false);
+  const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
+  const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
+
+  const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
+  const showToast = (text: string, tint: string) => setToast({ text, tint });
+
   const resetCount = () => {
     setBalls(0);
     setStrikes(0);
     setFouls(0);
   };
 
-  // A tiny CountBar that matches pitcher POV colors (no global changes)
-  const PitchingCountBar = ({ top }: { top: number }) => (
-    <View pointerEvents="none" style={{ position: 'absolute', top: top + 8, left: 0, right: 0, alignItems: 'center' }}>
-      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}>
-        <Text style={{ fontSize: 11 }}>
-          <Text style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800' }}>Balls: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{balls}</Text>
-          <Text style={{ color: 'white' }}>   </Text>
-          <Text style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800' }}>Strikes: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{strikes}</Text>
-        </Text>
-      </View>
-    </View>
-  );
+  // simple actor fallback (you can keep neutral)
+  const actorForKey = (_key: string): 'home' | 'opponent' | 'neutral' => 'neutral';
 
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
-    if (!isRecording) return;
-
     const color = KEY_COLOR_PITCHING[key] ?? 'rgba(148,163,184,0.9)';
+    const beltLane = beltLaneForKeyPitching(key);
 
-    onEvent({
+    onOverlayEvent?.({
       key,
       label,
-      actor: 'neutral',
+      actor: actorForKey(key),
+      value: undefined,
       meta: {
-        // ✅ This is what makes playback + library pick up your pitcher colors
+        baseballMode: 'pitching', // ✅ keep consistent
+        beltLane,
         pillColor: color,
         color,
         tint: color,
@@ -109,14 +120,12 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         fouls,
         outs,
 
-        baseballMode: 'pitching',
         ...(extraMeta || {}),
       },
     });
   };
 
   const onBall = () => {
-    if (!isRecording) return;
     setBalls((prev) => {
       const next = Math.min(prev + 1, 4);
       fire('ball', 'Ball', { ballsAfter: next });
@@ -126,7 +135,6 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   };
 
   const onStrike = () => {
-    if (!isRecording) return;
     setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('strike', 'Strike', { strikesAfter: next });
@@ -136,19 +144,13 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   };
 
   const onFoul = () => {
-    if (!isRecording) return;
     setFouls((prevFouls) => {
-      let nextStrikes = 0;
-
+      let nextStrikes = strikes;
       setStrikes((prevStrikes) => {
         nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', {
-          foulsAfter: prevFouls + 1,
-          strikesAfter: nextStrikes,
-        });
+        fire('foul', 'Foul Ball', { foulsAfter: prevFouls + 1, strikesAfter: nextStrikes });
         return nextStrikes;
       });
-
       const newFouls = prevFouls + 1;
       showToast(`Foul (${newFouls})`, FOUL_COLOR);
       return newFouls;
@@ -156,14 +158,12 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   };
 
   const recordWalk = () => {
-    if (!isRecording) return;
     fire('walk', 'Walk', { type: 'walk' });
     showToast('Walk', KEY_COLOR_PITCHING.walk);
     resetCount();
   };
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
-    if (!isRecording) return;
     fire('hit', 'Hit Allowed', { type });
     showToast(
       type === 'single' ? '1B Allowed' :
@@ -175,26 +175,23 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     resetCount();
   };
 
-  const incrementOuts = (label: string) => {
-    if (!isRecording) return;
+  const incrementOuts = (type: string) => {
     setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('out', 'Out', { type: label, outsAfter: next });
-      showToast(label, KEY_COLOR_PITCHING.out);
+      fire('out', 'Out', { type, outsAfter: next });
+      showToast(type, KEY_COLOR_PITCHING.out);
       return next;
     });
     resetCount();
   };
 
   const recordHomerun = () => {
-    if (!isRecording) return;
     fire('homerun', 'HR Allowed', { type: 'homerun' });
     showToast('HR Allowed', KEY_COLOR_PITCHING.homerun);
     resetCount();
   };
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
-    if (!isRecording) return;
     setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('strikeout', 'Strikeout', { kind, outsAfter: next });
@@ -204,10 +201,27 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     resetCount();
   };
 
+  const displayBalls = showPalette ? balls : derivedBalls;
+  const displayStrikes = showPalette ? strikes : derivedStrikes;
+
+  const PitchingCountBar = () => (
+    <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, alignItems: 'center' }}>
+      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}>
+        <Text style={{ fontSize: 11 }}>
+          <Text style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800' }}>Balls: </Text>
+          <Text style={{ color: 'white', fontWeight: '900' }}>{displayBalls}</Text>
+          <Text style={{ color: 'white' }}>   </Text>
+          <Text style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800' }}>Strikes: </Text>
+          <Text style={{ color: 'white', fontWeight: '900' }}>{displayStrikes}</Text>
+        </Text>
+      </View>
+    </View>
+  );
+
   const Circle = ({ label, bg, onPress }: { label: string; bg: string; onPress: () => void }) => (
     <TouchableOpacity
-      disabled={!isRecording}
-      onPress={() => isRecording && onPress()}
+      disabled={!showPalette}
+      onPress={() => showPalette && onPress()}
       style={{
         width: BTN_SIZE,
         height: BTN_SIZE,
@@ -215,45 +229,19 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         backgroundColor: bg,
         alignItems: 'center',
         justifyContent: 'center',
-        opacity: isRecording ? 1 : 0.55,
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3,
-        elevation: 2,
+        opacity: showPalette ? 1 : 0.0,
       }}
     >
       <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </TouchableOpacity>
   );
 
-  const LeftStackPitching = () => (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: TOP, bottom: BOTTOM, justifyContent: 'center' }}>
-      <View style={{ gap: GAP }}>
-        <Circle label="Ball" bg={KEY_COLOR_PITCHING.ball} onPress={onBall} />
-        <Circle label="Strike" bg={KEY_COLOR_PITCHING.strike} onPress={onStrike} />
-        <Circle label="Foul" bg={FOUL_COLOR} onPress={onFoul} />
-      </View>
-    </View>
-  );
-
-  const RightStackPitching = () => (
-    <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: TOP, bottom: BOTTOM, justifyContent: 'center', alignItems: 'flex-end' }}>
-      <View style={{ gap: GAP }}>
-        <Circle label="Result" bg={KEY_COLOR_PITCHING.hit} onPress={() => setResultChooserOpen(true)} />
-        <Circle label="K" bg={KEY_COLOR_PITCHING.strikeout} onPress={() => setStrikeoutChooserOpen(true)} />
-        <Circle label="HR" bg={KEY_COLOR_PITCHING.homerun} onPress={() => setHrConfirmOpen(true)} />
-        <Circle label="Walk" bg={KEY_COLOR_PITCHING.walk} onPress={recordWalk} />
-      </View>
-    </View>
-  );
-
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
-      <PitchingCountBar top={insets.top} />
+      <PitchingCountBar />
 
       <HitOutChooser
-        showPalette
+        showPalette={showPalette}
         open={resultChooserOpen}
         onClose={() => setResultChooserOpen(false)}
         onHit={(type) => {
@@ -271,7 +259,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
       />
 
       <StrikeoutChooser
-        showPalette
+        showPalette={showPalette}
         open={strikeoutChooserOpen}
         onClose={() => setStrikeoutChooserOpen(false)}
         onPick={(kind) => {
@@ -285,7 +273,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
       />
 
       <HomerunConfirm
-        showPalette
+        showPalette={showPalette}
         open={hrConfirmOpen}
         onCancel={() => setHrConfirmOpen(false)}
         onConfirm={() => {
@@ -298,7 +286,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         screenW={screenW}
       />
 
-      {toast ? (
+      {showPalette && toast ? (
         <FlashToast
           text={toast.text}
           tint={toast.tint}
@@ -308,8 +296,28 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         />
       ) : null}
 
-      <LeftStackPitching />
-      <RightStackPitching />
+      {/* Left buttons */}
+      {showPalette ? (
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: TOP, bottom: BOTTOM, justifyContent: 'center' }}>
+          <View style={{ gap: GAP }}>
+            <Circle label="Ball" bg={KEY_COLOR_PITCHING.ball} onPress={onBall} />
+            <Circle label="Strike" bg={KEY_COLOR_PITCHING.strike} onPress={onStrike} />
+            <Circle label="Foul" bg={FOUL_COLOR} onPress={onFoul} />
+          </View>
+        </View>
+      ) : null}
+
+      {/* Right buttons */}
+      {showPalette ? (
+        <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: TOP, bottom: BOTTOM, justifyContent: 'center', alignItems: 'flex-end' }}>
+          <View style={{ gap: GAP }}>
+            <Circle label="Result" bg={KEY_COLOR_PITCHING.hit} onPress={() => setResultChooserOpen(true)} />
+            <Circle label="K" bg={KEY_COLOR_PITCHING.strikeout} onPress={() => setStrikeoutChooserOpen(true)} />
+            <Circle label="HR" bg={KEY_COLOR_PITCHING.homerun} onPress={() => setHrConfirmOpen(true)} />
+            <Circle label="Walk" bg={KEY_COLOR_PITCHING.walk} onPress={recordWalk} />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
