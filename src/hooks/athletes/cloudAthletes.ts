@@ -6,16 +6,23 @@ import { auth, db } from '../../../lib/firebase';
  * Cloud-safe athlete model (Firestore)
  * ✅ Never store file:// local URIs in cloud.
  *
- * Backwards compatible:
- * - photoUrl: legacy / current (can be tokened)
- * - photoKey: stable Backblaze object key (forever identifier)
+ * We only WRITE stable fields:
+ * - photoKey (stable forever)
+ * - photoUpdatedAt (version)
+ *
+ * Legacy:
+ * - photoUrl may exist in old data; we READ it but never WRITE it.
  */
 export type CloudAthlete = {
   id: string;
   name: string;
-  photoUrl?: string | null; // legacy / current (may expire if tokened)
-  photoKey?: string | null; // ✅ stable key in B2 (e.g. "videos/<uid>/athletes/<id>/profile_....jpg")
-  photoUpdatedAt?: number | null; // optional (versioning / cache bust)
+
+  // ✅ stable forever
+  photoKey?: string | null;
+  photoUpdatedAt?: number | null;
+
+  // legacy (read-only, may be tokened/expire)
+  photoUrl?: string | null;
 };
 
 function toStringOrNull(v: any): string | null {
@@ -37,10 +44,11 @@ function sanitize(list: any): CloudAthlete[] {
       id: String(a?.id ?? '').trim(),
       name: String(a?.name ?? '').trim(),
 
-      // keep BOTH for backward compatibility
+      // legacy (read only)
       photoUrl: toStringOrNull(a?.photoUrl),
-      photoKey: toStringOrNull(a?.photoKey),
 
+      // stable
+      photoKey: toStringOrNull(a?.photoKey),
       photoUpdatedAt: toNumberOrNull(a?.photoUpdatedAt),
     }))
     .filter((a) => a.id && a.name);
@@ -60,8 +68,14 @@ export async function getCloudAthletes(uid: string): Promise<CloudAthlete[]> {
 export async function setCloudAthletes(uid: string, athletes: CloudAthlete[]): Promise<void> {
   const ref = doc(db, 'users', uid);
 
-  // ✅ always sanitize (defensive)
-  const cloudSafe = sanitize(athletes);
+  // ✅ sanitize, then STRIP legacy fields before writing
+  const cloudSafe = sanitize(athletes).map((a) => ({
+    id: a.id,
+    name: a.name,
+    photoKey: a.photoKey ?? null,
+    photoUpdatedAt: a.photoUpdatedAt ?? null,
+    // 🚫 do NOT write photoUrl
+  }));
 
   await setDoc(ref, { athletes: cloudSafe }, { merge: true });
 }

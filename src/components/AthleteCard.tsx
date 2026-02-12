@@ -14,6 +14,10 @@ import {
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
 
+// IMPORTANT: adjust this relative import if your AthleteCard is in a different folder.
+// This should point to your existing ensureAnonymous() helper.
+import { ensureAnonymous } from '../../lib/firebase';
+
 import type { Athlete } from '../lib/athleteTypes';
 export type { Athlete };
 
@@ -65,17 +69,18 @@ async function ensureDir(dirUri: string) {
   }
 }
 
-async function fileExists(uri: string) {
+async function fileInfo(uri: string) {
   try {
-    const info = await FileSystem.getInfoAsync(uri);
-    return !!info.exists;
+    return await FileSystem.getInfoAsync(uri);
   } catch {
-    return false;
+    return { exists: false } as any;
   }
 }
 
 async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; expiresInSec?: number } | null> {
-  // must be signed-in or anon (Firebase Auth)
+  // ✅ guarantee auth user exists (anon ok)
+  await ensureAnonymous();
+
   const user = getAuth().currentUser;
   const idToken = user ? await user.getIdToken() : null;
   if (!idToken) return null;
@@ -90,6 +95,7 @@ async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; 
 
   const j = (await r.json().catch(() => ({}))) as any;
   if (!r.ok) return null;
+
   const photoUrl = safeStr(j?.photoUrl);
   if (!photoUrl) return null;
 
@@ -108,7 +114,7 @@ export default function AthleteCard({
   const [editOpen, setEditOpen] = useState(false);
   const [renameInput, setRenameInput] = useState(a.name);
 
-  // ✅ we will resolve remote signed URL into a permanent cached local file
+  // ✅ we resolve remote signed URL into a permanent cached local file
   const [resolvedRemoteUrl, setResolvedRemoteUrl] = useState<string | null>(null);
   const [cachedLocalUri, setCachedLocalUri] = useState<string | null>(null);
 
@@ -201,11 +207,11 @@ export default function AthleteCard({
   const photoUriLegacy = safeStr((a as any).photoUri);
 
   /**
-   * ✅ Core behavior:
-   * - If we have local photoLocalUri, show it (works offline)
-   * - Else if we have cachedLocalUri (downloaded earlier), show it
-   * - Else if we got a fresh signed remote URL, show it
-   * - Else fallback legacy (might 401), then placeholder
+   * ✅ Display priority:
+   * 1) device-local
+   * 2) cached local from signed url
+   * 3) signed remote url
+   * 4) legacy (may 401)
    */
   const displayUri =
     photoLocalUri ||
@@ -221,50 +227,52 @@ export default function AthleteCard({
     const myReq = ++reqIdRef.current;
 
     async function run() {
-      // if we already have local photo, nothing to do
+      // If we have a local photo, we don't need cache/remote.
       if (photoLocalUri) {
         setResolvedRemoteUrl(null);
         setCachedLocalUri(null);
         return;
       }
 
-      // only works cross-device if photoKey exists
+      // cross-device requires photoKey
       if (!photoKey) return;
 
-      // choose deterministic cache path by athlete + updatedAt version
       const cacheUri = cachePathForAthlete(a.id, photoUpdatedAt);
       const cacheDir = cacheUri.replace(/[^/]+$/, '');
 
-      // if cache already exists, use it immediately
-      if (await fileExists(cacheUri)) {
-        if (!cancelled && reqIdRef.current === myReq) {
-          setCachedLocalUri(cacheUri);
-        }
+      // If cache already exists (and is non-trivial), use it.
+      const pre = await fileInfo(cacheUri);
+      if (pre?.exists && typeof pre.size === 'number' && pre.size > 2000) {
+        if (!cancelled && reqIdRef.current === myReq) setCachedLocalUri(cacheUri);
         return;
       }
 
-      // no network? (we don’t have a perfect check without NetInfo; just try and fail silently)
+      // Get signed URL
       const signed = await getSignedPhotoUrl(photoKey);
       if (!signed?.photoUrl) return;
 
       if (cancelled || reqIdRef.current !== myReq) return;
       setResolvedRemoteUrl(signed.photoUrl);
 
-      // cache permanently on this phone
+      // Cache permanently on this device
       try {
         await ensureDir(cacheDir);
 
-        const dl = await FileSystem.downloadAsync(signed.photoUrl, cacheUri);
+        await FileSystem.downloadAsync(signed.photoUrl, cacheUri);
 
-        // downloadAsync returns 200 even if content is JSON error sometimes,
-        // but in your case signed URL should return image bytes.
-        if (dl?.uri && (await fileExists(cacheUri))) {
+        const post = await fileInfo(cacheUri);
+        // Basic sanity check: image should be > ~2KB
+        if (post?.exists && typeof post.size === 'number' && post.size > 2000) {
           if (!cancelled && reqIdRef.current === myReq) {
             setCachedLocalUri(cacheUri);
           }
+        } else {
+          // if we cached junk, remove it
+          try {
+            await FileSystem.deleteAsync(cacheUri, { idempotent: true });
+          } catch {}
         }
       } catch (e) {
-        // caching failed; still OK to show signed url while it lasts
         console.log('[AthleteCard] cache download failed:', { id: a.id, name: a.name, e });
       }
     }
@@ -276,8 +284,7 @@ export default function AthleteCard({
     return () => {
       cancelled = true;
     };
-    // Re-run when the key/version changes
-  }, [a.id, a.name, photoKey, photoUpdatedAt, photoLocalUri]);
+  }, [a.id, photoKey, photoUpdatedAt, photoLocalUri]);
 
   return (
     <View
@@ -304,12 +311,12 @@ export default function AthleteCard({
                 nativeEvent: native,
               });
 
-              // If signed url fails (expired), clear and let effect refetch next time
+              // If signed url fails (expired), clear it and let effect refetch later
               if (resolvedRemoteUrl && displayUri === resolvedRemoteUrl) {
                 setResolvedRemoteUrl(null);
               }
 
-              // If cached local file got deleted, clear it and refetch/cache again
+              // If cached local file got deleted or was bad, clear and refetch/cache again
               if (cachedLocalUri && displayUri === cachedLocalUri) {
                 setCachedLocalUri(null);
               }
