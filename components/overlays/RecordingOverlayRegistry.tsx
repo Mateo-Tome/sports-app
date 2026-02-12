@@ -3,6 +3,7 @@ import React from 'react';
 import type { OverlayProps } from './types';
 
 import BaseballHittingOverlay from './BaseballHittingOverlay';
+import BaseballPitchingOverlay from './BaseballPitchingOverlay';
 
 // IMPORTANT: match your existing actual path (misspelled)
 import VolleyballOverlay from './vollyball/VollyballOverlay';
@@ -16,7 +17,7 @@ export function normalizeKey(sport?: string, style?: string) {
   let s = String(sport ?? '').trim().toLowerCase();
   let st = String(style ?? 'default').trim().toLowerCase();
 
-  // sport aliases (optional)
+  // sport aliases
   if (s === 'vb' || s === 'volley') s = 'volleyball';
   if (s === 'wrestle') s = 'wrestling';
   if (s === 'base') s = 'baseball';
@@ -24,6 +25,12 @@ export function normalizeKey(sport?: string, style?: string) {
   // style aliases
   if (s === 'wrestling') {
     if (st === 'folk' || st === 'fs') st = 'folkstyle';
+  }
+
+  // ✅ baseball aliases (optional but nice)
+  if (s === 'baseball') {
+    if (st === 'pitch') st = 'pitching';
+    if (st === 'hit') st = 'hitting';
   }
 
   if (!st) st = 'default';
@@ -45,6 +52,7 @@ const Registry: Record<string, RecordingOverlayEntry> = {
 
   // Baseball
   'baseball:hitting': { Overlay: BaseballHittingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+  'baseball:pitching': { Overlay: BaseballPitchingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
   // Volleyball
   'volleyball:default': { Overlay: VolleyballOverlay, preRollSec: DEFAULT_PREROLL_SEC },
