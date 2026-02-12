@@ -31,12 +31,35 @@ import useAthleteSync from '../../src/hooks/athletes/useAthleteSync';
 import type { Athlete } from '../../src/lib/athleteTypes';
 
 import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
-import { uploadAthleteProfilePhotoToB2 } from '../../src/lib/athletePhotoUpload';
 
-const ATHLETES_KEY = 'athletes:list';
-const CURRENT_ATHLETE_KEY = 'currentAthleteName';
+const CURRENT_ATHLETE_KEY_PREFIX = 'currentAthleteName';
+const ATHLETES_KEY_PREFIX = 'athletes:list';
 
 const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
+
+function toStringOrNull(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
+function toNumberOrNull(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function athletesKey(uid: string) {
+  return `${ATHLETES_KEY_PREFIX}:${uid}`;
+}
+function currentAthleteKey(uid: string) {
+  return `${CURRENT_ATHLETE_KEY_PREFIX}:${uid}`;
+}
+
+async function getActiveUid(): Promise<string> {
+  const u = await ensureAnonymous();
+  return u.uid;
+}
 
 function imagesMediaTypesLegacy(): any {
   const MT = (ImagePicker as any).MediaType;
@@ -181,14 +204,8 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
   });
 }
 
-function toStringOrNull(v: any): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  return s.length ? s : null;
-}
-
-// ✅ If the local file is missing, clear photoLocalUri so UI falls back to photoUrl
-async function scrubMissingLocalPhotos(list: Athlete[]): Promise<Athlete[]> {
+// ✅ If the local file is missing, clear photoLocalUri so UI falls back to cloud later
+async function scrubMissingLocalPhotos(storageKey: string, list: Athlete[]): Promise<Athlete[]> {
   const out: Athlete[] = [];
   let changed = false;
 
@@ -214,7 +231,7 @@ async function scrubMissingLocalPhotos(list: Athlete[]): Promise<Athlete[]> {
   }
 
   if (changed) {
-    await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(out));
+    await AsyncStorage.setItem(storageKey, JSON.stringify(out));
   }
   return out;
 }
@@ -230,18 +247,21 @@ export default function HomeAthletes() {
   const [nameInput, setNameInput] = useState('');
   const [pendingPhotoTempUri, setPendingPhotoTempUri] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [uid, setUid] = useState<string | null>(auth.currentUser?.uid ?? null);
 
-  // ✅ FIX: new useAthleteSync does not take getLocal
   const { syncing, syncNow } = useAthleteSync({
     setLocal: (list) => setAthletes(list as any),
     showAlerts: true,
   });
 
-  const loadLocal = useCallback(async () => {
+  const loadLocal = useCallback(async (useUid?: string | null) => {
     try {
-      const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+      const effectiveUid = useUid ?? (await getActiveUid());
+      const key = athletesKey(effectiveUid);
+
+      const raw = await AsyncStorage.getItem(key);
       const list = raw ? (JSON.parse(raw) as Athlete[]) : [];
-      const cleaned = await scrubMissingLocalPhotos(Array.isArray(list) ? list : []);
+      const cleaned = await scrubMissingLocalPhotos(key, Array.isArray(list) ? list : []);
       setAthletes(cleaned as any);
     } catch (e) {
       console.log('athletes load error:', e);
@@ -249,10 +269,10 @@ export default function HomeAthletes() {
   }, []);
 
   useEffect(() => {
-    loadLocal();
-  }, [loadLocal]);
+    loadLocal(uid ?? undefined);
+  }, [loadLocal, uid]);
 
-  // ✅ Initial cloud pull: merge WITHOUT importing any cloud "photoLocalUri"
+  // ✅ Initial cloud pull (does not bring photoLocalUri)
   useEffect(() => {
     const normalizeLocal = (list: Athlete[]): Athlete[] => {
       const out: Athlete[] = [];
@@ -269,16 +289,19 @@ export default function HomeAthletes() {
         out.push({
           id,
           name,
-          photoLocalUri: toStringOrNull((a as any)?.photoLocalUri), // local only
+          photoLocalUri: toStringOrNull((a as any)?.photoLocalUri),
           photoUrl: toStringOrNull((a as any)?.photoUrl),
-          photoUri: toStringOrNull((a as any)?.photoUri), // legacy local
+          photoKey: toStringOrNull((a as any)?.photoKey),
+          photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
+          photoUri: toStringOrNull((a as any)?.photoUri),
+          photoNeedsUpload: (a as any)?.photoNeedsUpload === true,
         } as any);
       }
       return out;
     };
 
-    const normalizeCloud = (list: Athlete[]): Athlete[] => {
-      const out: Athlete[] = [];
+    const normalizeCloud = (list: any[]): any[] => {
+      const out: any[] = [];
       const seen = new Set<string>();
 
       for (const a of Array.isArray(list) ? list : []) {
@@ -289,17 +312,18 @@ export default function HomeAthletes() {
         if (seen.has(id)) continue;
         seen.add(id);
 
-        // ✅ only accept cloud-safe fields
         out.push({
           id,
           name,
           photoUrl: toStringOrNull((a as any)?.photoUrl),
-        } as any);
+          photoKey: toStringOrNull((a as any)?.photoKey),
+          photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
+        });
       }
       return out;
     };
 
-    const merge = (local: Athlete[], cloud: Athlete[]): Athlete[] => {
+    const merge = (local: Athlete[], cloud: any[]): Athlete[] => {
       const L = normalizeLocal(local);
       const C = normalizeCloud(cloud);
 
@@ -313,12 +337,14 @@ export default function HomeAthletes() {
           id: c.id,
           name: c.name?.trim() ? c.name.trim() : (l as any)?.name ?? c.name,
 
-          // cloud truth
-          photoUrl: (c as any).photoUrl ?? (l as any)?.photoUrl ?? null,
+          photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
+          photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
+          photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
 
-          // keep local-only fields from local
           photoLocalUri: (l as any)?.photoLocalUri ?? null,
           photoUri: (l as any)?.photoUri ?? null,
+
+          photoNeedsUpload: (l as any)?.photoNeedsUpload === true,
         } as any);
       }
 
@@ -346,16 +372,20 @@ export default function HomeAthletes() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       try {
         const u = user ?? (await ensureAnonymous());
+        setUid(u.uid);
+
+        const key = athletesKey(u.uid);
+
         const cloud = await getCloudAthletes(u.uid);
 
-        const rawLocal = await AsyncStorage.getItem(ATHLETES_KEY);
+        const rawLocal = await AsyncStorage.getItem(key);
         const local = rawLocal ? (JSON.parse(rawLocal) as Athlete[]) : [];
 
-        const merged = merge(local, cloud);
-        const cleaned = await scrubMissingLocalPhotos(merged);
+        const merged = merge(local, cloud as any);
+        const cleaned = await scrubMissingLocalPhotos(key, merged);
 
         setAthletes(cleaned as any);
-        await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(cleaned));
+        await AsyncStorage.setItem(key, JSON.stringify(cleaned));
       } catch (e) {
         console.log('[Athletes] initial cloud load failed:', e);
       }
@@ -366,13 +396,15 @@ export default function HomeAthletes() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadLocal();
+    await loadLocal(uid ?? undefined);
     setRefreshing(false);
-  }, [loadLocal]);
+  }, [loadLocal, uid]);
 
   const saveAthletes = async (list: Athlete[]) => {
+    const effectiveUid = uid ?? (await getActiveUid());
+    const key = athletesKey(effectiveUid);
     setAthletes(list);
-    await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(list));
+    await AsyncStorage.setItem(key, JSON.stringify(list));
   };
 
   const addAthlete = async () => {
@@ -384,29 +416,42 @@ export default function HomeAthletes() {
 
     const id = `${Date.now()}`;
     let photoLocalUri: string | null = null;
-    let photoUrl: string | null = null;
+
+    // cross-device fields (only become real after Sync upload)
+    const photoUrl: string | null = null;
+    const photoKey: string | null = null;
+    const photoUpdatedAt = Date.now();
 
     if (pendingPhotoTempUri) {
       try {
+        // ✅ Always save locally immediately (offline safe)
         photoLocalUri = await persistAthleteProfilePhoto(pendingPhotoTempUri, id);
-        const up = await uploadAthleteProfilePhotoToB2({ athleteId: id, localFileUri: photoLocalUri });
-        photoUrl = up.photoUrl;
       } catch (e: any) {
-        console.log('[addAthlete] photo upload failed:', e);
-        Alert.alert('Photo upload failed', 'Saved athlete without cloud photo. You can set it later.');
+        console.log('[addAthlete] persist photo failed:', e);
+        Alert.alert('Photo save failed', 'Saved athlete without a photo.');
       }
     }
 
-    const next: Athlete[] = [{ id, name: n, photoLocalUri, photoUrl } as any, ...athletes];
+    const next: Athlete[] = [
+      {
+        id,
+        name: n,
+        photoLocalUri,
+        photoUrl,
+        photoKey,
+        photoUpdatedAt,
+        // ✅ queue upload for Sync button
+        photoNeedsUpload: !!photoLocalUri,
+      } as any,
+      ...athletes,
+    ];
     await saveAthletes(next);
 
     setNameInput('');
     setPendingPhotoTempUri(null);
     setAddOpen(false);
 
-    try {
-      await syncNow();
-    } catch {}
+    // ❌ no auto-sync (you want user to tap Sync)
   };
 
   const pickPendingPhoto = async () => {
@@ -421,19 +466,23 @@ export default function HomeAthletes() {
     if (!tempUri) return;
 
     try {
+      // ✅ save local immediately
       const localUri = await persistAthleteProfilePhoto(tempUri, id);
-      const { photoUrl } = await uploadAthleteProfilePhotoToB2({ athleteId: id, localFileUri: localUri });
 
       const next = athletes.map((a) =>
-        a.id === id ? ({ ...a, photoLocalUri: localUri, photoUrl } as any) : a
+        a.id === id
+          ? ({
+              ...a,
+              photoLocalUri: localUri,
+              photoUpdatedAt: Date.now(),
+              photoNeedsUpload: true, // ✅ queue upload
+            } as any)
+          : a
       );
 
       await saveAthletes(next);
 
-      // Sync pushes cloud-safe fields only, and keeps local-only fields locally
-      await syncNow();
-
-      Alert.alert('Saved', 'Profile photo uploaded + synced.');
+      Alert.alert('Saved', 'Saved locally. Upload will happen when you tap Sync.');
     } catch (e: any) {
       console.log('[setPhotoForAthlete] failed:', e);
       Alert.alert('Failed', String(e?.message ?? e));
@@ -448,26 +497,28 @@ export default function HomeAthletes() {
     }
     const next = athletes.map((a) => (a.id === id ? ({ ...a, name } as any) : a));
     await saveAthletes(next);
-    try {
-      await syncNow();
-    } catch {}
+
+    // you probably DO want rename to sync on button only, so no auto sync here either
   };
 
   const deleteAthleteShell = async (id: string) => {
     const next = athletes.filter((a) => a.id !== id);
     await saveAthletes(next);
 
-    const current = await AsyncStorage.getItem(CURRENT_ATHLETE_KEY);
+    const effectiveUid = uid ?? (await getActiveUid());
+    const curKey = currentAthleteKey(effectiveUid);
+
+    const current = await AsyncStorage.getItem(curKey);
     if (current && !next.find((a) => a.name === current)) {
-      await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
+      await AsyncStorage.removeItem(curKey);
     }
-    try {
-      await syncNow();
-    } catch {}
+
+    // deletion also stays local until Sync
   };
 
   const recordNoAthlete = async () => {
-    await AsyncStorage.removeItem(CURRENT_ATHLETE_KEY);
+    const effectiveUid = uid ?? (await getActiveUid());
+    await AsyncStorage.removeItem(currentAthleteKey(effectiveUid));
     router.push({
       pathname: '/record/camera',
       params: { athlete: 'Unassigned', sport: 'plain', style: 'none' },
@@ -476,7 +527,8 @@ export default function HomeAthletes() {
 
   const recordWithAthlete = async (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
-    await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, clean);
+    const effectiveUid = uid ?? (await getActiveUid());
+    await AsyncStorage.setItem(currentAthleteKey(effectiveUid), clean);
     router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
 

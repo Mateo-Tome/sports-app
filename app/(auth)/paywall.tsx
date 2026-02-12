@@ -4,13 +4,13 @@ import { getMonthlyPackage, purchaseMonthly, restorePurchases } from '@/lib/purc
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Linking,
-    Pressable,
-    ScrollView,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  ScrollView,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -116,23 +116,16 @@ export default function PaywallScreen() {
   }, []);
 
   useEffect(() => {
-    if (!access.loading && access.isPro) {
-      router.replace('/(tabs)');
-    }
-  }, [access.loading, access.isPro]);
-
-  useEffect(() => {
     let alive = true;
     (async () => {
       setPkgLoading(true);
       setErr(null);
       try {
-        const p = await getMonthlyPackage(); // from RevenueCat offerings
+        const p = await getMonthlyPackage();
         if (!alive) return;
         setPriceText(p?.product?.priceString ?? '$10.99');
       } catch (e: any) {
         if (!alive) return;
-        // We still show UI, but reviewers prefer the Store price when available
         setPriceText('$10.99');
         setErr(e?.message ?? null);
       } finally {
@@ -164,14 +157,170 @@ export default function PaywallScreen() {
     );
   }
 
+  // ✅ Pro state: show a clean “already pro” screen instead of redirecting away
+  if (access.isPro) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
+        {/* background */}
+        <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
+        <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
+          <View
+            style={{
+              position: 'absolute',
+              top: -100,
+              left: '10%',
+              width: 300,
+              height: 300,
+              borderRadius: 150,
+              backgroundColor: '#ef4444',
+              opacity: 0.15,
+            }}
+          />
+          <View
+            style={{
+              position: 'absolute',
+              bottom: -120,
+              right: '5%',
+              width: 350,
+              height: 350,
+              borderRadius: 175,
+              backgroundColor: '#f5c24d',
+              opacity: 0.12,
+            }}
+          />
+        </View>
+
+        {/* Top bar */}
+        <View
+          style={{
+            paddingTop: 8,
+            paddingHorizontal: 20,
+            paddingBottom: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <Pressable onPress={() => router.back()} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: 'rgba(255,255,255,0.08)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '700', fontSize: 18 }}>✕</Text>
+            </View>
+          </Pressable>
+
+          <View style={{ width: 32 }} />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingBottom: Math.max(28, insets.bottom + 20),
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={{ marginTop: 12 }}>
+            <View
+              style={{
+                backgroundColor: 'rgba(34,197,94,0.12)',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 20,
+                alignSelf: 'flex-start',
+                borderWidth: 1,
+                borderColor: 'rgba(34,197,94,0.30)',
+              }}
+            >
+              <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '900' }}>PRO ACTIVE</Text>
+            </View>
+
+            <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
+              You’re already Pro
+            </Text>
+
+            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 16, marginTop: 10, lineHeight: 24 }}>
+              Thanks for supporting QuickClip. All Pro features are unlocked on this account.
+            </Text>
+
+            <View
+              style={{
+                marginTop: 16,
+                borderRadius: 20,
+                overflow: 'hidden',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'rgba(255,255,255,0.04)',
+              }}
+            >
+              <View style={{ paddingVertical: 4 }}>
+                {FEATURES.filter((f) => f.pro).map((feature, idx) => (
+                  <View
+                    key={feature.title}
+                    style={{
+                      paddingVertical: 16,
+                      paddingHorizontal: 18,
+                      borderTopWidth: idx === 0 ? 0 : 1,
+                      borderTopColor: 'rgba(255,255,255,0.06)',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: 'white', fontWeight: '800', fontSize: 15, marginBottom: 4 }}>
+                        {feature.title}
+                      </Text>
+                      {!!feature.description && (
+                        <Text style={{ color: 'rgba(255,255,255,0.50)', fontWeight: '600', fontSize: 12, lineHeight: 16 }}>
+                          {feature.description}
+                        </Text>
+                      )}
+                    </View>
+                    <IconCheck />
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => router.back()}
+              activeOpacity={0.88}
+              style={{
+                marginTop: 18,
+                borderRadius: 18,
+                paddingVertical: 18,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.14)',
+              }}
+            >
+              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
+                Close
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ height: 20 }} />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   const onBuy = async () => {
     setErr(null);
     setBuying(true);
     try {
       await purchaseMonthly();
-      // subscribeAccess should update and auto-redirect to tabs
     } catch (e: any) {
-      // User cancelled is not an “error” experience; keep it quiet-ish
       const msg = String(e?.message ?? '');
       if (msg && !msg.toLowerCase().includes('cancel')) setErr(msg);
     } finally {
@@ -337,15 +486,7 @@ export default function PaywallScreen() {
                   <Text style={{ color: '#000', fontWeight: '900', fontSize: 10 }}>BEST</Text>
                 </View>
               </View>
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.85)',
-                  fontWeight: '700',
-                  fontSize: 13,
-                  marginTop: 4,
-                  textAlign: 'center',
-                }}
-              >
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
                 Full access
               </Text>
             </View>
@@ -354,15 +495,7 @@ export default function PaywallScreen() {
               <Text style={{ color: 'rgba(255,255,255,0.65)', fontWeight: '900', fontSize: 18, textAlign: 'center' }}>
                 Basic
               </Text>
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.40)',
-                  fontWeight: '700',
-                  fontSize: 13,
-                  marginTop: 4,
-                  textAlign: 'center',
-                }}
-              >
+              <Text style={{ color: 'rgba(255,255,255,0.40)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
                 Limited features
               </Text>
             </View>
@@ -417,15 +550,7 @@ export default function PaywallScreen() {
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 48, lineHeight: 48 }}>
                 {priceText}
               </Text>
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.70)',
-                  fontWeight: '800',
-                  fontSize: 18,
-                  marginLeft: 4,
-                  marginBottom: 8,
-                }}
-              >
+              <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 18, marginLeft: 4, marginBottom: 8 }}>
                 /month
               </Text>
             </View>

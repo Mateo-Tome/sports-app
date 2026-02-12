@@ -13,15 +13,25 @@ function mustBaseUrl() {
 type UploadUrlResp = {
   uploadUrl: string;
   uploadAuthToken: string;
+
+  // B2 object key/name (stable)
   fileName: string;
-  photoUrl: string; // ✅ tokened CDN URL (or otherwise publicly loadable)
+
+  // legacy: tokened url (may expire)
+  photoUrl: string;
+
   expiresInSec?: number;
+  photoKey?: string | null;
 };
 
 export async function uploadAthleteProfilePhotoToB2(params: {
   athleteId: string;
   localFileUri: string; // file://... (documentDirectory)
-}): Promise<{ photoUrl: string }> {
+}): Promise<{
+  photoKey: string;
+  photoUrl: string;
+  expiresInSec?: number | null;
+}> {
   const { athleteId, localFileUri } = params;
 
   await ensureAnonymous();
@@ -43,15 +53,11 @@ export async function uploadAthleteProfilePhotoToB2(params: {
     details?: string;
   };
 
-  if (!r.ok) {
-    throw new Error(j?.error || j?.details || `getAthletePhotoUploadUrl failed (${r.status})`);
-  }
-
+  if (!r.ok) throw new Error(j?.error || j?.details || `getAthletePhotoUploadUrl failed (${r.status})`);
   if (!j.uploadUrl || !j.uploadAuthToken || !j.fileName || !j.photoUrl) {
     throw new Error('Bad response from getAthletePhotoUploadUrl (missing fields)');
   }
 
-  // 2) upload bytes to B2
   const up = await FileSystem.uploadAsync(j.uploadUrl, localFileUri, {
     httpMethod: 'POST',
     uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
@@ -67,6 +73,11 @@ export async function uploadAthleteProfilePhotoToB2(params: {
     throw new Error(`B2 upload failed: ${up.status} ${String(up.body || '').slice(0, 300)}`);
   }
 
-  // ✅ store this on athlete.photoUrl
-  return { photoUrl: j.photoUrl };
+  const photoKey = String(j.photoKey ?? j.fileName).trim();
+
+  return {
+    photoKey,
+    photoUrl: j.photoUrl,
+    expiresInSec: typeof j.expiresInSec === 'number' ? j.expiresInSec : null,
+  };
 }

@@ -12,13 +12,13 @@ import { getCloudAthletes, setCloudAthletes } from '../../src/hooks/athletes/clo
 import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
 import { uploadAthleteProfilePhotoToB2 } from '../../src/lib/athletePhotoUpload';
 
-const ATHLETES_KEY = 'athletes:list';
-
 type Athlete = {
   id: string;
   name: string;
   photoLocalUri?: string | null;
-  photoUrl?: string | null;
+  photoUrl?: string | null; // legacy / tokened or public
+  photoKey?: string | null; // ✅ stable B2 object key
+  photoUpdatedAt?: number | null;
 };
 
 function toStringOrNull(v: any): string | null {
@@ -27,9 +27,37 @@ function toStringOrNull(v: any): string | null {
   return s.length ? s : null;
 }
 
-async function updateLocalAthlete(athleteId: string, patch: Partial<Athlete>) {
-  const raw = await AsyncStorage.getItem(ATHLETES_KEY);
-  const list: Athlete[] = raw ? JSON.parse(raw) : [];
+function toNumberOrNull(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function athletesKey(uid: string) {
+  return `athletes:list:${uid}`;
+}
+
+async function getActiveUid(): Promise<string> {
+  const u = await ensureAnonymous();
+  return u.uid;
+}
+
+async function readLocalList(uid: string): Promise<Athlete[]> {
+  try {
+    const raw = await AsyncStorage.getItem(athletesKey(uid));
+    const list: Athlete[] = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeLocalList(uid: string, list: Athlete[]) {
+  await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(Array.isArray(list) ? list : []));
+}
+
+async function updateLocalAthlete(uid: string, athleteId: string, patch: Partial<Athlete>) {
+  const list = await readLocalList(uid);
 
   const next = list.map((a) => {
     if (a.id !== athleteId) return a;
@@ -38,10 +66,12 @@ async function updateLocalAthlete(athleteId: string, patch: Partial<Athlete>) {
       ...patch,
       photoLocalUri: patch.photoLocalUri ?? a.photoLocalUri ?? null,
       photoUrl: patch.photoUrl ?? a.photoUrl ?? null,
+      photoKey: patch.photoKey ?? (a as any).photoKey ?? null,
+      photoUpdatedAt: patch.photoUpdatedAt ?? (a as any).photoUpdatedAt ?? null,
     };
   });
 
-  await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next));
+  await writeLocalList(uid, next);
   return next;
 }
 
@@ -98,6 +128,8 @@ export default function ProfilePhotoCamera() {
     setBusy(true);
 
     try {
+      const uid = await getActiveUid();
+
       const res = await (camRef.current as any)?.takePictureAsync?.({
         skipProcessing: true,
         quality: 0.9,
@@ -120,40 +152,50 @@ export default function ProfilePhotoCamera() {
       const savedUri = await persistAthleteProfilePhoto(uri, athleteId);
       console.log('[ProfilePhotoCamera] savedUri:', savedUri);
 
-      // Update local immediately so THIS device shows it right away
-      await updateLocalAthlete(athleteId, { photoLocalUri: savedUri });
+      const updatedAt = Date.now();
 
-      // 2) Upload to Backblaze B2
-      const { photoUrl } = await uploadAthleteProfilePhotoToB2({
+      // Update local immediately so THIS device shows it right away
+      await updateLocalAthlete(uid, athleteId, { photoLocalUri: savedUri, photoUpdatedAt: updatedAt });
+
+      // 2) Upload to Backblaze B2 (now returns photoUrl + photoKey)
+      const up = await uploadAthleteProfilePhotoToB2({
         athleteId,
         localFileUri: savedUri,
       });
-      console.log('[ProfilePhotoCamera] photoUrl:', photoUrl);
 
-      // Update local with cross-device URL
-      const localAfter = await updateLocalAthlete(athleteId, { photoUrl });
+      const photoUrl = up.photoUrl;
+      const photoKey = (up as any).photoKey ?? null;
+
+      console.log('[ProfilePhotoCamera] photoUrl:', photoUrl);
+      console.log('[ProfilePhotoCamera] photoKey:', photoKey);
+
+      // Update local with cross-device fields
+      const localAfter = await updateLocalAthlete(uid, athleteId, {
+        photoUrl,
+        photoKey: toStringOrNull(photoKey),
+        photoUpdatedAt: updatedAt,
+      });
 
       // 3) Push to cloud so OTHER devices get it on Sync
-      const user = await ensureAnonymous();
-      const uid = user.uid;
-
       const cloud = await getCloudAthletes(uid);
 
-      // Merge: keep cloud names; keep local photoLocalUri on this device; photoUrl must be set
       const byId = new Map<string, Athlete>();
-      for (const c of cloud as any) byId.set(c.id, c);
+      for (const c of cloud as any) byId.set(String((c as any)?.id ?? ''), c as any);
 
       for (const l of localAfter) {
         const c = byId.get(l.id);
         byId.set(l.id, {
           id: l.id,
           name: (c?.name ?? l.name).trim(),
-          photoLocalUri: toStringOrNull(l.photoLocalUri) ?? toStringOrNull(c?.photoLocalUri) ?? null,
-          photoUrl: toStringOrNull(l.photoUrl) ?? toStringOrNull(c?.photoUrl) ?? null,
-        });
+
+          // ✅ cloud-safe
+          photoUrl: toStringOrNull(l.photoUrl) ?? toStringOrNull((c as any)?.photoUrl) ?? null,
+          photoKey: toStringOrNull((l as any).photoKey) ?? toStringOrNull((c as any)?.photoKey) ?? null,
+          photoUpdatedAt: toNumberOrNull((l as any).photoUpdatedAt) ?? toNumberOrNull((c as any)?.photoUpdatedAt) ?? null,
+        } as any);
       }
 
-      await setCloudAthletes(uid, Array.from(byId.values()));
+      await setCloudAthletes(uid, Array.from(byId.values()) as any);
 
       Alert.alert('Saved', 'Profile photo saved + uploaded.');
       (nav as any)?.goBack?.();

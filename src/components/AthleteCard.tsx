@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   Alert,
@@ -11,8 +11,18 @@ import {
   View,
 } from 'react-native';
 
+import * as FileSystem from 'expo-file-system';
+import { getAuth } from 'firebase/auth';
+
 import type { Athlete } from '../lib/athleteTypes';
 export type { Athlete };
+
+const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
+
+function mustBaseUrl() {
+  if (!FUNCTIONS_BASE_URL) throw new Error('Missing EXPO_PUBLIC_FUNCTIONS_BASE_URL');
+  return FUNCTIONS_BASE_URL.replace(/\/+$/, '');
+}
 
 type Props = {
   a: Athlete;
@@ -32,6 +42,60 @@ function safeStr(v: any): string | null {
   return s.length ? s : null;
 }
 
+function safeNum(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function cachePathForAthlete(athleteId: string, photoUpdatedAt?: number | null) {
+  const ver = safeNum(photoUpdatedAt) ?? 0;
+  // ✅ stable file path per athlete + version
+  return `${FileSystem.documentDirectory}athlete_photos/${athleteId}/profile_${ver || 'v0'}.jpg`;
+}
+
+async function ensureDir(dirUri: string) {
+  try {
+    const info = await FileSystem.getInfoAsync(dirUri);
+    if (!info.exists) {
+      await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function fileExists(uri: string) {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    return !!info.exists;
+  } catch {
+    return false;
+  }
+}
+
+async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; expiresInSec?: number } | null> {
+  // must be signed-in or anon (Firebase Auth)
+  const user = getAuth().currentUser;
+  const idToken = user ? await user.getIdToken() : null;
+  if (!idToken) return null;
+
+  const base = mustBaseUrl();
+  const url = `${base}/getAthletePhotoViewUrl?path=${encodeURIComponent(photoKey)}`;
+
+  const r = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+
+  const j = (await r.json().catch(() => ({}))) as any;
+  if (!r.ok) return null;
+  const photoUrl = safeStr(j?.photoUrl);
+  if (!photoUrl) return null;
+
+  return { photoUrl, expiresInSec: typeof j?.expiresInSec === 'number' ? j.expiresInSec : undefined };
+}
+
 export default function AthleteCard({
   a,
   isWide,
@@ -44,8 +108,12 @@ export default function AthleteCard({
   const [editOpen, setEditOpen] = useState(false);
   const [renameInput, setRenameInput] = useState(a.name);
 
-  // ✅ If local file fails, fall back to photoUrl automatically
-  const [forceRemote, setForceRemote] = useState(false);
+  // ✅ we will resolve remote signed URL into a permanent cached local file
+  const [resolvedRemoteUrl, setResolvedRemoteUrl] = useState<string | null>(null);
+  const [cachedLocalUri, setCachedLocalUri] = useState<string | null>(null);
+
+  // avoids race conditions when scrolling list fast
+  const reqIdRef = useRef(0);
 
   const styles = useMemo(() => {
     const base = {
@@ -125,13 +193,91 @@ export default function AthleteCard({
   };
 
   const photoLocalUri = safeStr((a as any).photoLocalUri);
-  const photoUrl = safeStr((a as any).photoUrl);
+  const photoKey = safeStr((a as any).photoKey);
+  const photoUpdatedAt = safeNum((a as any).photoUpdatedAt);
+
+  // legacy values kept but NOT trusted (can 401)
+  const photoUrlLegacy = safeStr((a as any).photoUrl);
   const photoUriLegacy = safeStr((a as any).photoUri);
 
-  // ✅ prefer local unless we detected it’s broken
-  const displayUri = forceRemote
-    ? (photoUrl || photoUriLegacy || photoLocalUri || null)
-    : (photoLocalUri || photoUrl || photoUriLegacy || null);
+  /**
+   * ✅ Core behavior:
+   * - If we have local photoLocalUri, show it (works offline)
+   * - Else if we have cachedLocalUri (downloaded earlier), show it
+   * - Else if we got a fresh signed remote URL, show it
+   * - Else fallback legacy (might 401), then placeholder
+   */
+  const displayUri =
+    photoLocalUri ||
+    cachedLocalUri ||
+    resolvedRemoteUrl ||
+    photoUrlLegacy ||
+    photoUriLegacy ||
+    null;
+
+  // ✅ When athlete has photoKey but no local file, fetch signed url and cache it locally
+  useEffect(() => {
+    let cancelled = false;
+    const myReq = ++reqIdRef.current;
+
+    async function run() {
+      // if we already have local photo, nothing to do
+      if (photoLocalUri) {
+        setResolvedRemoteUrl(null);
+        setCachedLocalUri(null);
+        return;
+      }
+
+      // only works cross-device if photoKey exists
+      if (!photoKey) return;
+
+      // choose deterministic cache path by athlete + updatedAt version
+      const cacheUri = cachePathForAthlete(a.id, photoUpdatedAt);
+      const cacheDir = cacheUri.replace(/[^/]+$/, '');
+
+      // if cache already exists, use it immediately
+      if (await fileExists(cacheUri)) {
+        if (!cancelled && reqIdRef.current === myReq) {
+          setCachedLocalUri(cacheUri);
+        }
+        return;
+      }
+
+      // no network? (we don’t have a perfect check without NetInfo; just try and fail silently)
+      const signed = await getSignedPhotoUrl(photoKey);
+      if (!signed?.photoUrl) return;
+
+      if (cancelled || reqIdRef.current !== myReq) return;
+      setResolvedRemoteUrl(signed.photoUrl);
+
+      // cache permanently on this phone
+      try {
+        await ensureDir(cacheDir);
+
+        const dl = await FileSystem.downloadAsync(signed.photoUrl, cacheUri);
+
+        // downloadAsync returns 200 even if content is JSON error sometimes,
+        // but in your case signed URL should return image bytes.
+        if (dl?.uri && (await fileExists(cacheUri))) {
+          if (!cancelled && reqIdRef.current === myReq) {
+            setCachedLocalUri(cacheUri);
+          }
+        }
+      } catch (e) {
+        // caching failed; still OK to show signed url while it lasts
+        console.log('[AthleteCard] cache download failed:', { id: a.id, name: a.name, e });
+      }
+    }
+
+    run().catch((e) => {
+      console.log('[AthleteCard] resolve remote photo failed:', { id: a.id, name: a.name, e });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // Re-run when the key/version changes
+  }, [a.id, a.name, photoKey, photoUpdatedAt, photoLocalUri]);
 
   return (
     <View
@@ -158,9 +304,14 @@ export default function AthleteCard({
                 nativeEvent: native,
               });
 
-              // ✅ if local fails (ENOENT etc), force remote fallback
-              if (!forceRemote && photoLocalUri && displayUri === photoLocalUri) {
-                setForceRemote(true);
+              // If signed url fails (expired), clear and let effect refetch next time
+              if (resolvedRemoteUrl && displayUri === resolvedRemoteUrl) {
+                setResolvedRemoteUrl(null);
+              }
+
+              // If cached local file got deleted, clear it and refetch/cache again
+              if (cachedLocalUri && displayUri === cachedLocalUri) {
+                setCachedLocalUri(null);
               }
             }}
             style={{

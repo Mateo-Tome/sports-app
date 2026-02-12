@@ -36,34 +36,27 @@ function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
   )}`;
 }
 
-// ✅ Build Cloudflare CDN URL for a B2 object key like "videos/<uid>/<file>.mp4"
+// ✅ Build Cloudflare CDN URL for a B2 object key like "videos/<uid>/.../file.jpg"
 function buildCdnUrl(fileKey, b2DownloadAuthToken) {
   const CDN_BASE = 'https://media.quickclipapp.com';
   const path = String(fileKey || '').replace(/^\/+/, '');
   return `${CDN_BASE}/${path}?token=${encodeURIComponent(b2DownloadAuthToken)}`;
 }
 
-/**
- * Shared helper: authorize B2 + create a short-lived download authorization token.
- * Returns { downloadUrl, downloadAuthToken, expiresInSec }
- */
-async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
-  const B2_KEY_ID = clean(process.env.B2_KEY_ID);
-  const B2_APP_KEY = clean(process.env.B2_APP_KEY);
-  const B2_BUCKET_ID = clean(process.env.B2_BUCKET_ID);
-
-  if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID) {
-    const missing = {
-      hasB2KeyId: !!B2_KEY_ID,
-      hasB2AppKey: !!B2_APP_KEY,
-      hasB2BucketId: !!B2_BUCKET_ID,
-    };
-    const err = new Error(`Missing B2 env vars: ${JSON.stringify(missing)}`);
+function mustEnv(name) {
+  const v = clean(process.env[name]);
+  if (!v) {
+    const err = new Error(`Missing env var: ${name}`);
     err.code = 'MISSING_ENV';
     throw err;
   }
+  return v;
+}
 
-  // ---- Backblaze authorize ----
+async function authorizeB2Account() {
+  const B2_KEY_ID = mustEnv('B2_KEY_ID');
+  const B2_APP_KEY = mustEnv('B2_APP_KEY');
+
   const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString('base64');
 
   const authRes = await fetch('https://api.backblazeb2.com/b2api/v1/b2_authorize_account', {
@@ -89,6 +82,18 @@ async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
     err.details = authJson;
     throw err;
   }
+
+  return { apiUrl, downloadUrl, authToken };
+}
+
+/**
+ * Shared helper: authorize B2 + create a short-lived download authorization token.
+ * Returns { downloadUrl, downloadAuthToken, expiresInSec }
+ */
+async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
+  const B2_BUCKET_ID = mustEnv('B2_BUCKET_ID');
+
+  const { apiUrl, downloadUrl, authToken } = await authorizeB2Account();
 
   // ---- Temporary download authorization ----
   const MAX_SEC = 7 * 24 * 60 * 60; // 604800
@@ -127,7 +132,7 @@ async function getB2DownloadAuth(prefix = 'videos/', expiresInSec = 60 * 60) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* ✅ NEW HELPERS (ADDED): B2 upload URL helper */
+/* ✅ B2 upload URL helper                                                     */
 /* -------------------------------------------------------------------------- */
 
 async function getB2UploadUrl(apiUrl, authToken, bucketId) {
@@ -158,21 +163,15 @@ async function getB2UploadUrl(apiUrl, authToken, bucketId) {
   return { uploadUrl: j.uploadUrl, uploadAuthToken: j.authorizationToken };
 }
 
-/**
- * ✅ FIXED: returns tokened CDN photoUrl (NOT publicUrl)
- *
- * App flow:
- * 1) App calls this endpoint (authenticated) with athleteId
- * 2) App uploads photo bytes to B2 using uploadUrl + uploadAuthToken
- * 3) App stores photoUrl (tokened CDN) in Firestore athlete record
- * 4) Other devices load from photoUrl (no 401)
- */
-exports.getAthletePhotoUploadUrl = onRequest(async (req, res) => {
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW ENDPOINT: Get signed VIEW url for a private athlete photo            */
+/* -------------------------------------------------------------------------- */
+
+exports.getAthletePhotoViewUrl = onRequest((req, res) => {
   corsHandler(req, res, async () => {
     try {
       if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
 
-      // 1) Verify Firebase ID token
       const authHeader = (req.headers.authorization || '').toString();
       const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
       if (!idToken) return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
@@ -180,51 +179,63 @@ exports.getAthletePhotoUploadUrl = onRequest(async (req, res) => {
       const decoded = await admin.auth().verifyIdToken(idToken);
       const uid = decoded.uid;
 
-      // 2) athleteId required
+      const path = (req.query.path ?? '').toString().trim();
+      if (!path.startsWith('videos/')) return res.status(400).json({ error: 'Invalid path' });
+
+      // enforce: videos/<uid>/...
+      const parts = path.split('/');
+      const uidInPath = parts[1];
+      if (!uidInPath || uidInPath !== uid) return res.status(403).json({ error: 'Forbidden' });
+
+      const expiresInSec = 60 * 60; // 1 hour
+      const { downloadAuthToken } = await getB2DownloadAuth('videos/', expiresInSec);
+
+      const photoUrl = buildCdnUrl(path, downloadAuthToken);
+      return res.json({ photoUrl, expiresInSec });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'getAthletePhotoViewUrl failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ UPDATED: Athlete upload-url endpoint returns photoKey too                */
+/* -------------------------------------------------------------------------- */
+
+exports.getAthletePhotoUploadUrl = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const uid = decoded.uid;
+
       const athleteId = (req.query.athleteId ?? '').toString().trim();
       if (!athleteId) return res.status(400).json({ error: 'Missing athleteId' });
 
-      const B2_KEY_ID = clean(process.env.B2_KEY_ID);
-      const B2_APP_KEY = clean(process.env.B2_APP_KEY);
-      const B2_BUCKET_ID = clean(process.env.B2_BUCKET_ID);
+      const B2_BUCKET_ID = mustEnv('B2_BUCKET_ID');
 
-      if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID) {
-        return res.status(500).json({
-          error: 'Missing B2 env vars',
-          hasB2KeyId: !!B2_KEY_ID,
-          hasB2AppKey: !!B2_APP_KEY,
-          hasB2BucketId: !!B2_BUCKET_ID,
-        });
-      }
+      // Authorize B2 (account auth)
+      const { apiUrl, authToken } = await authorizeB2Account();
 
-      // 3) Authorize B2
-      const basicAuth = Buffer.from(`${B2_KEY_ID}:${B2_APP_KEY}`).toString('base64');
-      const authRes = await fetch('https://api.backblazeb2.com/b2api/v1/b2_authorize_account', {
-        method: 'GET',
-        headers: { Authorization: `Basic ${basicAuth}` },
-      });
-
-      const authJson = await authRes.json().catch(() => ({}));
-      if (!authRes.ok) {
-        return res.status(500).json({ error: 'b2_authorize_account failed', details: authJson });
-      }
-
-      const apiUrl = authJson.apiUrl;
-      const authToken = authJson.authorizationToken;
-
-      if (!apiUrl || !authToken) {
-        return res.status(500).json({ error: 'B2 auth missing fields', details: authJson });
-      }
-
-      // 4) File key (keep under videos/ so prefix auth works)
+      // File key (keep under videos/ so prefix auth works)
       const safeAthleteId = athleteId.replace(/[^a-zA-Z0-9_-]/g, '');
       const ts = Date.now();
       const fileName = `videos/${uid}/athletes/${safeAthleteId}/profile_${ts}.jpg`;
 
-      // 5) Get upload URL + token (phone uploads directly)
+      // Upload URL + token (phone uploads directly)
       const { uploadUrl, uploadAuthToken } = await getB2UploadUrl(apiUrl, authToken, B2_BUCKET_ID);
 
-      // ✅ 6) Return tokened CDN URL so it loads everywhere (no 401)
+      // tokened url (legacy convenience; don’t rely on it long-term)
       const { downloadAuthToken, expiresInSec } = await getB2DownloadAuth('videos/', 60 * 60);
       const photoUrl = buildCdnUrl(fileName, downloadAuthToken);
 
@@ -232,6 +243,7 @@ exports.getAthletePhotoUploadUrl = onRequest(async (req, res) => {
         uploadUrl,
         uploadAuthToken,
         fileName,
+        photoKey: fileName, // ✅ stable forever
         photoUrl,
         expiresInSec,
       });
@@ -275,7 +287,7 @@ exports.syncShareIndex = onDocumentWritten('videos/{videoId}', async (event) => 
   }
 });
 
-exports.getPlaybackUrls = onRequest(async (req, res) => {
+exports.getPlaybackUrls = onRequest((req, res) => {
   corsHandler(req, res, async () => {
     try {
       if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
@@ -332,7 +344,7 @@ exports.getPlaybackUrls = onRequest(async (req, res) => {
   });
 });
 
-exports.getSidecar = onRequest(async (req, res) => {
+exports.getSidecar = onRequest((req, res) => {
   corsHandler(req, res, async () => {
     try {
       if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
@@ -358,8 +370,7 @@ exports.getSidecar = onRequest(async (req, res) => {
       const b2SidecarKey = v.b2SidecarKey;
       if (!b2SidecarKey) return res.status(500).json({ error: 'Video missing b2SidecarKey' });
 
-      const B2_BUCKET_NAME = clean(process.env.B2_BUCKET_NAME);
-      if (!B2_BUCKET_NAME) return res.status(500).json({ error: 'Missing B2_BUCKET_NAME env var' });
+      const B2_BUCKET_NAME = mustEnv('B2_BUCKET_NAME');
 
       const { downloadUrl, downloadAuthToken } = await getB2DownloadAuth('videos/', 60 * 60);
       const sidecarUrl = buildB2FileUrl(downloadUrl, B2_BUCKET_NAME, b2SidecarKey, downloadAuthToken);
@@ -380,7 +391,7 @@ exports.getSidecar = onRequest(async (req, res) => {
   });
 });
 
-exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
+exports.getB2DownloadAuthForPath = onRequest((req, res) => {
   corsHandler(req, res, async () => {
     try {
       if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
@@ -399,8 +410,7 @@ exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
       const uidInPath = parts[1];
       if (!uidInPath || uidInPath !== uid) return res.status(403).json({ error: 'Forbidden' });
 
-      const B2_BUCKET_NAME = clean(process.env.B2_BUCKET_NAME);
-      if (!B2_BUCKET_NAME) return res.status(500).json({ error: 'Missing B2_BUCKET_NAME env var' });
+      const B2_BUCKET_NAME = mustEnv('B2_BUCKET_NAME');
 
       const expiresInSec = 60 * 30;
       const { downloadUrl, downloadAuthToken } = await getB2DownloadAuth(path, expiresInSec);
@@ -415,6 +425,8 @@ exports.getB2DownloadAuthForPath = onRequest(async (req, res) => {
       return res.status(500).json({
         error: 'getB2DownloadAuthForPath failed',
         details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
       });
     }
   });

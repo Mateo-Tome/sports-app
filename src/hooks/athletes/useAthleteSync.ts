@@ -4,10 +4,15 @@ import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { ensureAnonymous } from '../../../lib/firebase';
+import { uploadAthleteProfilePhotoToB2 } from '../../lib/athletePhotoUpload';
 import type { Athlete } from '../../lib/athleteTypes';
 import { getCloudAthletes, setCloudAthletes } from './cloudAthletes';
 
-const ATHLETES_KEY = 'athletes:list';
+const ATHLETES_KEY_PREFIX = 'athletes:list';
+
+function athletesKey(uid: string) {
+  return `${ATHLETES_KEY_PREFIX}:${uid}`;
+}
 
 function toStringOrNull(v: any): string | null {
   if (typeof v !== 'string') return null;
@@ -15,17 +20,27 @@ function toStringOrNull(v: any): string | null {
   return s.length ? s : null;
 }
 
-type CloudAthlete = { id: string; name: string; photoUrl?: string | null };
+function toNumberOrNull(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+type CloudAthlete = {
+  id: string;
+  name: string;
+  photoUrl?: string | null; // legacy
+  photoKey?: string | null; // stable
+  photoUpdatedAt?: number | null;
+};
 
 function normalizeLocal(list: Athlete[]): Athlete[] {
   const out: Athlete[] = [];
   const seen = new Set<string>();
-
   for (const a of Array.isArray(list) ? list : []) {
     const id = String((a as any)?.id ?? '').trim();
     const name = String((a as any)?.name ?? '').trim();
     if (!id || !name) continue;
-
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -35,21 +50,21 @@ function normalizeLocal(list: Athlete[]): Athlete[] {
       photoLocalUri: toStringOrNull((a as any)?.photoLocalUri),
       photoUri: toStringOrNull((a as any)?.photoUri),
       photoUrl: toStringOrNull((a as any)?.photoUrl),
+      photoKey: toStringOrNull((a as any)?.photoKey),
+      photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
+      photoNeedsUpload: (a as any)?.photoNeedsUpload === true,
     } as any);
   }
-
   return out;
 }
 
 function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
   const out: CloudAthlete[] = [];
   const seen = new Set<string>();
-
   for (const a of Array.isArray(list) ? list : []) {
     const id = String((a as any)?.id ?? '').trim();
     const name = String((a as any)?.name ?? '').trim();
     if (!id || !name) continue;
-
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -57,18 +72,13 @@ function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
       id,
       name,
       photoUrl: toStringOrNull((a as any)?.photoUrl),
+      photoKey: toStringOrNull((a as any)?.photoKey),
+      photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
     });
   }
-
   return out;
 }
 
-/**
- * Merge rules:
- * - cloud "name" wins if present
- * - cloud "photoUrl" wins if present
- * - local-only fields (photoLocalUri, photoUri) NEVER come from cloud
- */
 function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
   const L = normalizeLocal(local);
   const C = normalizeCloud(cloud);
@@ -83,16 +93,20 @@ function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
       id: c.id,
       name: c.name?.trim() ? c.name.trim() : (l?.name ?? c.name),
 
-      // cloud truth (cross-device)
-      photoUrl: c.photoUrl ?? l?.photoUrl ?? null,
+      // cloud truth
+      photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
+      photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
+      photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
 
-      // device-only fields stay device-only
-      photoLocalUri: l?.photoLocalUri ?? null,
-      photoUri: l?.photoUri ?? null,
+      // device-only stays device-only
+      photoLocalUri: (l as any)?.photoLocalUri ?? null,
+      photoUri: (l as any)?.photoUri ?? null,
+
+      // keep local queue flag
+      photoNeedsUpload: (l as any)?.photoNeedsUpload === true,
     } as any);
   }
 
-  // keep ordering: cloud first, then local-only
   const merged: Athlete[] = [];
   const used = new Set<string>();
 
@@ -114,9 +128,9 @@ function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
   return merged;
 }
 
-async function readLocalFromStorage(): Promise<Athlete[]> {
+async function readLocalFromStorage(uid: string): Promise<Athlete[]> {
   try {
-    const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+    const raw = await AsyncStorage.getItem(athletesKey(uid));
     const list = raw ? (JSON.parse(raw) as Athlete[]) : [];
     return Array.isArray(list) ? list : [];
   } catch {
@@ -125,18 +139,17 @@ async function readLocalFromStorage(): Promise<Athlete[]> {
 }
 
 function toCloudPayload(list: Athlete[]): CloudAthlete[] {
-  // only cloud-safe fields
   return (Array.isArray(list) ? list : []).map((a: any) => ({
     id: String(a?.id ?? '').trim(),
     name: String(a?.name ?? '').trim(),
+    photoKey: toStringOrNull(a?.photoKey),
+    photoUpdatedAt: toNumberOrNull(a?.photoUpdatedAt),
+    // keep legacy for now (optional)
     photoUrl: toStringOrNull(a?.photoUrl),
   }));
 }
 
-export default function useAthleteSync(params: {
-  setLocal: (list: Athlete[]) => void;
-  showAlerts?: boolean;
-}) {
+export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => void; showAlerts?: boolean }) {
   const { setLocal, showAlerts = true } = params;
   const [syncing, setSyncing] = useState(false);
 
@@ -148,21 +161,66 @@ export default function useAthleteSync(params: {
       const user = await ensureAnonymous();
       const uid = user.uid;
 
-      // ✅ Always read from AsyncStorage (source of truth), avoids stale React state
-      const localList = await readLocalFromStorage();
-
+      const localList = await readLocalFromStorage(uid);
       const cloudList = await getCloudAthletes(uid);
 
-      const merged = mergeAthletes(localList, cloudList);
+      let merged = mergeAthletes(localList, cloudList as any);
 
-      // ✅ Push ONLY cloud-safe fields
-      await setCloudAthletes(uid, toCloudPayload(merged));
+      // ✅ Upload photos ONLY if queued
+      let uploadedCount = 0;
+      let failedCount = 0;
+
+      const nextMerged: Athlete[] = [];
+      for (const a of merged) {
+        const needs = (a as any)?.photoNeedsUpload === true;
+        const localUri = toStringOrNull((a as any)?.photoLocalUri);
+
+        if (needs && localUri) {
+          try {
+            const up = await uploadAthleteProfilePhotoToB2({ athleteId: a.id, localFileUri: localUri });
+            uploadedCount++;
+
+            nextMerged.push({
+              ...(a as any),
+              photoKey: up.photoKey,
+              photoUpdatedAt: Date.now(),
+              // optional keep for now; but don’t rely on it
+              photoUrl: up.photoUrl ?? (a as any)?.photoUrl ?? null,
+              photoNeedsUpload: false,
+            } as any);
+            continue;
+          } catch (e) {
+            failedCount++;
+            // keep it queued for next Sync attempt
+            nextMerged.push(a);
+            continue;
+          }
+        }
+
+        nextMerged.push(a);
+      }
+
+      merged = nextMerged;
+
+      // ✅ Push ONLY cloud-safe fields (now includes photoKey)
+      await setCloudAthletes(uid, toCloudPayload(merged) as any);
 
       // ✅ Save merged locally (preserves photoLocalUri)
-      await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(merged));
+      await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(merged));
       setLocal(merged);
 
-      if (showAlerts) Alert.alert('Synced', `Synced ${merged.length} athlete(s).`);
+      if (showAlerts) {
+        if (failedCount > 0) {
+          Alert.alert(
+            'Synced (some pending)',
+            `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).\n${failedCount} photo(s) still pending (likely no network).`
+          );
+        } else if (uploadedCount > 0) {
+          Alert.alert('Synced', `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).`);
+        } else {
+          Alert.alert('Synced', `Synced ${merged.length} athlete(s).`);
+        }
+      }
     } catch (e: any) {
       console.log('[useAthleteSync] sync failed:', e);
       if (showAlerts) Alert.alert('Sync failed', String(e?.message ?? e));
