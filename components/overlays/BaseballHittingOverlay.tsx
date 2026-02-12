@@ -26,10 +26,18 @@ import {
   WALK_COLOR,
 } from '../modules/baseball/useBaseballHittingLogic';
 
-export default function BaseballHittingOverlay({
-  isRecording,
-  onEvent,
-}: OverlayProps) {
+type BeltLane = 'top' | 'bottom' | undefined;
+
+// ✅ Hitting lane rules (opposite of pitching):
+// strikes/top, balls/bottom
+function beltLaneForHittingKey(key: string): BeltLane {
+  const k = String(key || '').toLowerCase();
+  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'top';
+  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun') return 'bottom';
+  return undefined;
+}
+
+export default function BaseballHittingOverlay({ isRecording, onEvent }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
@@ -74,12 +82,16 @@ export default function BaseballHittingOverlay({
     if (!isRecording) return;
 
     const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+    const beltLane = beltLaneForHittingKey(key); // ✅ NEW
 
     onEvent({
       key,
       label,
       actor: 'neutral',
       meta: {
+        // ✅ NEW: this splits belt pills into 2 lanes
+        beltLane,
+
         pillColor: color,
         color,
         tint: color,
@@ -150,11 +162,14 @@ export default function BaseballHittingOverlay({
     if (!isRecording) return;
     fire('hit', 'Hit', { type });
     showToast(
-      type === 'single' ? 'Single' :
-      type === 'double' ? 'Double' :
-      type === 'triple' ? 'Triple' :
-      'Bunt',
-      HIT_COLOR
+      type === 'single'
+        ? 'Single'
+        : type === 'double'
+          ? 'Double'
+          : type === 'triple'
+            ? 'Triple'
+            : 'Bunt',
+      HIT_COLOR,
     );
     resetCount();
   };
