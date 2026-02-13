@@ -49,7 +49,6 @@ function clamp0(n: any) {
 // Normalize helpers (safe)
 // -----------------------------
 
-// folkstyle: supports both of your shapes
 function normalizeFolkstyle(w: any) {
   const scoring = w?.scoring;
   if (scoring) {
@@ -65,7 +64,6 @@ function normalizeFolkstyle(w: any) {
     };
   }
 
-  // legacy-ish fallback
   return {
     myPoints: clamp0(w?.points?.athlete),
     td: clamp0(w?.counts?.athlete?.takedown),
@@ -109,11 +107,22 @@ function normalizeGreco(gs: any) {
   };
 }
 
-// ✅ Baseball: Hitting
+// ✅ Baseball: Hitting (now includes BA)
 function normalizeBaseballHitting(b: any) {
+  const derivedHits =
+    b?.derived?.hits != null ? clamp0(b.derived.hits) : clamp0(b?.counts?.hit) + clamp0(b?.counts?.homerun);
+
+  const derivedAtBats = b?.derived?.atBats != null ? clamp0(b.derived.atBats) : 0;
+  const baText = String(b?.derived?.battingAverageText ?? '.000');
+
   return {
     clips: clamp0(b?.totals?.clips),
     events: clamp0(b?.totals?.events),
+
+    // ✅ derived
+    hitsTotal: derivedHits,
+    atBats: derivedAtBats,
+    baText,
 
     balls: clamp0(b?.counts?.ball),
     strikes: clamp0(b?.counts?.strike),
@@ -122,18 +131,18 @@ function normalizeBaseballHitting(b: any) {
     walks: clamp0(b?.counts?.walk),
     strikeouts: clamp0(b?.counts?.strikeout),
 
+    // raw
     hits: clamp0(b?.counts?.hit),
-    single: clamp0(b?.counts?.single),
-    double: clamp0(b?.counts?.double),
-    triple: clamp0(b?.counts?.triple),
+    single: clamp0(b?.counts?.hitTypes?.single),
+    double: clamp0(b?.counts?.hitTypes?.double),
+    triple: clamp0(b?.counts?.hitTypes?.triple),
     homerun: clamp0(b?.counts?.homerun),
-    bunt: clamp0(b?.counts?.bunt),
+    bunt: clamp0(b?.counts?.hitTypes?.bunt),
 
     outs: clamp0(b?.counts?.out),
   };
 }
 
-// ✅ Baseball: Pitching
 function normalizeBaseballPitching(p: any) {
   return {
     clips: clamp0(p?.totals?.clips),
@@ -147,17 +156,20 @@ function normalizeBaseballPitching(p: any) {
     strikeouts: clamp0(p?.counts?.strikeout),
 
     hitsAllowed: clamp0(p?.counts?.hitAllowed),
-    singleAllowed: clamp0(p?.counts?.singleAllowed),
-    doubleAllowed: clamp0(p?.counts?.doubleAllowed),
-    tripleAllowed: clamp0(p?.counts?.tripleAllowed),
-    buntAllowed: clamp0(p?.counts?.buntAllowed),
+
+    // NOTE: your pitching reducer stores these in counts.hitTypes.*
+    singleAllowed: clamp0(p?.counts?.hitTypes?.single),
+    doubleAllowed: clamp0(p?.counts?.hitTypes?.double),
+    tripleAllowed: clamp0(p?.counts?.hitTypes?.triple),
+    buntAllowed: clamp0(p?.counts?.hitTypes?.bunt),
+
     hrAllowed: clamp0(p?.counts?.homerunAllowed),
 
-    outsRecorded: clamp0(p?.counts?.outsRecorded),
+    // NOTE: your pitching reducer calls it outRecorded (not outsRecorded)
+    outsRecorded: clamp0(p?.counts?.outRecorded),
   };
 }
 
-// Generic fallback: always show *something* helpful
 function normalizeGeneric(s: any) {
   const clips =
     s?.totals?.clips ??
@@ -196,6 +208,11 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
           <Chip label="Clips" value={b.clips} />
           <Chip label="Events" value={b.events} />
 
+          {/* ✅ NEW */}
+          <Chip label="BA" value={b.baText} />
+          <Chip label="AB" value={b.atBats} />
+          <Chip label="H" value={b.hitsTotal} />
+
           <Chip label="Balls" value={b.balls} />
           <Chip label="Strikes" value={b.strikes} />
           <Chip label="Fouls" value={b.fouls} />
@@ -203,7 +220,7 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
           <Chip label="Walks" value={b.walks} />
           <Chip label="Strikeouts" value={b.strikeouts} />
 
-          <Chip label="Hits" value={b.hits} />
+          <Chip label="Hits (non-HR)" value={b.hits} />
           <Chip label="1B" value={b.single} />
           <Chip label="2B" value={b.double} />
           <Chip label="3B" value={b.triple} />
@@ -339,7 +356,7 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
   }
 
   // -----------------------------
-  // Generic fallback (ALL sports)
+  // Generic fallback
   // -----------------------------
   const g = normalizeGeneric(sportStats);
 

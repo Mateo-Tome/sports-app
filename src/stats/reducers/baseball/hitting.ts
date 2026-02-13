@@ -18,6 +18,15 @@ export type BaseballHittingStats = {
     outTypes: Record<string, number>; // e.g. "Fly Out", "Ground Out"
     strikeoutTypes: { swinging: number; looking: number; unknown: number };
   };
+
+  // ✅ NEW: derived stats (BA, AB, etc.)
+  derived: {
+    hits: number;              // hit + homerun
+    atBats: number;            // hits + outs + strikeouts (walks excluded)
+    battingAverage: number;    // 0..1
+    battingAverageText: string; // ".333"
+  };
+
   lastUpdatedAt: number;
 };
 
@@ -28,6 +37,13 @@ function clamp0(n: any) {
 
 function readKey(e: any) {
   return String(e?.key ?? e?.kind ?? '').trim().toLowerCase();
+}
+
+// ✅ NEW: BA formatter like ".333"
+function formatBA(hits: number, atBats: number) {
+  if (!atBats) return '.000';
+  const s = (hits / atBats).toFixed(3);
+  return s.startsWith('0') ? s.slice(1) : s;
 }
 
 export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStats {
@@ -47,6 +63,12 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       hitTypes: { single: 0, double: 0, triple: 0, bunt: 0, unknown: 0 },
       outTypes: {},
       strikeoutTypes: { swinging: 0, looking: 0, unknown: 0 },
+    },
+    derived: {
+      hits: 0,
+      atBats: 0,
+      battingAverage: 0,
+      battingAverageText: '.000',
     },
     lastUpdatedAt: 0,
   };
@@ -69,17 +91,16 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       else if (key === 'hit') {
         base.counts.hit += 1;
 
-        // If you store meta.type = 'single'|'double'|'triple'|'bunt'
         const t = String(meta?.type ?? '').toLowerCase();
         if (t === 'single') base.counts.hitTypes.single += 1;
         else if (t === 'double') base.counts.hitTypes.double += 1;
         else if (t === 'triple') base.counts.hitTypes.triple += 1;
         else if (t === 'bunt') base.counts.hitTypes.bunt += 1;
         else base.counts.hitTypes.unknown += 1;
-      } else if (key === 'homerun') base.counts.homerun += 1;
-      else if (key === 'out') {
+      } else if (key === 'homerun') {
+        base.counts.homerun += 1;
+      } else if (key === 'out') {
         base.counts.out += 1;
-        // If you store meta.type as label like "Fly Out"
         const t = String(meta?.type ?? meta?.label ?? '').trim();
         if (t) base.counts.outTypes[t] = (base.counts.outTypes[t] ?? 0) + 1;
       } else if (key === 'strikeout') {
@@ -91,6 +112,15 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       }
     }
   }
+
+  // ✅ NEW: derived BA
+  const hitsTotal = base.counts.hit + base.counts.homerun;
+  const atBats = hitsTotal + base.counts.out + base.counts.strikeout; // walks excluded
+
+  base.derived.hits = hitsTotal;
+  base.derived.atBats = atBats;
+  base.derived.battingAverage = atBats > 0 ? hitsTotal / atBats : 0;
+  base.derived.battingAverageText = formatBA(hitsTotal, atBats);
 
   return base;
 }
