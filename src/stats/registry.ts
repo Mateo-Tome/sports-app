@@ -1,11 +1,13 @@
-// src/stats/registry.ts
-
 import type { ClipSidecar } from './types';
 
-// ✅ reducers (match your actual folder + filenames)
+// ✅ wrestling reducers
 import { reduceWrestlingFreestyle } from './reducers/wrestling/freestyle';
 import { reduceWrestlingGreco } from './reducers/wrestling/greco';
 import { reduceWrestlingFolkstyle } from './reducers/wrestling/wrestlingFolkstyle';
+
+// ✅ baseball reducers
+import { reduceBaseballHitting } from './reducers/baseball/hitting';
+import { reduceBaseballPitching } from './reducers/baseball/pitching';
 
 // A reducer takes clips and returns a stats object
 export type SportStatsReducer = (clips: ClipSidecar[]) => any;
@@ -29,3 +31,7 @@ export function listRegisteredSports() {
 registerSportStats('wrestling:folkstyle', reduceWrestlingFolkstyle);
 registerSportStats('wrestling:freestyle', reduceWrestlingFreestyle);
 registerSportStats('wrestling:greco', reduceWrestlingGreco);
+
+// ✅ Baseball
+registerSportStats('baseball:hitting', reduceBaseballHitting);
+registerSportStats('baseball:pitching', reduceBaseballPitching);

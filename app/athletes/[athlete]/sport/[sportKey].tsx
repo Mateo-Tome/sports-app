@@ -1,63 +1,12 @@
-import * as FileSystem from 'expo-file-system';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { buildAthleteStats } from '../../../../src/stats/buildAthleteStats';
+import { loadVerifiedClipsForAthleteFromCloud } from '../../../../src/stats/loadClipsCloud';
 import { sportTitle } from '../../../../src/stats/sportMeta';
-import type { ClipSidecar } from '../../../../src/stats/types';
 import { renderSportStatsCard } from '../../../../src/stats/ui/renderSportStats';
-
-const VIDEOS_DIR = `${FileSystem.documentDirectory}videos`;
-
-async function listDirSafe(uri: string) {
-  try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists || !info.isDirectory) return [];
-    return await FileSystem.readDirectoryAsync(uri);
-  } catch {
-    return [];
-  }
-}
-
-async function readJsonSafe<T>(uri: string): Promise<T | null> {
-  try {
-    const raw = await FileSystem.readAsStringAsync(uri);
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function loadClipsForAthleteByScanning(athleteName: string): Promise<ClipSidecar[]> {
-  const clips: ClipSidecar[] = [];
-
-  const athleteDirs = await listDirSafe(VIDEOS_DIR);
-  for (const athleteDirName of athleteDirs) {
-    const athleteDirUri = `${VIDEOS_DIR}/${athleteDirName}`;
-    const sportDirs = await listDirSafe(athleteDirUri);
-
-    for (const sportDirName of sportDirs) {
-      const sportDirUri = `${athleteDirUri}/${sportDirName}`;
-      const files = await listDirSafe(sportDirUri);
-
-      for (const f of files) {
-        if (!f.toLowerCase().endsWith('.json')) continue;
-        const jsonUri = `${sportDirUri}/${f}`;
-        const clip = await readJsonSafe<ClipSidecar>(jsonUri);
-        if (!clip) continue;
-
-        if ((clip.athlete ?? '').trim() === athleteName.trim()) {
-          clips.push(clip);
-        }
-      }
-    }
-  }
-
-  clips.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return clips;
-}
 
 function Header({
   title,
@@ -77,6 +26,7 @@ function Header({
       <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }} numberOfLines={1}>
         {title}
       </Text>
+
       {!!subtitle && (
         <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 4 }}>{subtitle}</Text>
       )}
@@ -89,8 +39,6 @@ export default function AthleteSportStatsScreen() {
   const params = useLocalSearchParams<{ athlete: string; sportKey: string }>();
 
   const athleteName = decodeURIComponent(String(params.athlete ?? 'Unassigned'));
-
-  // NOTE: sportKey contains ":" so it may arrive URL-encoded
   const sportKey = decodeURIComponent(String(params.sportKey ?? ''));
 
   const [loading, setLoading] = React.useState(true);
@@ -105,7 +53,8 @@ export default function AthleteSportStatsScreen() {
         setLoading(true);
         setError(null);
 
-        const clips = await loadClipsForAthleteByScanning(athleteName);
+        // ✅ Single source of truth: uploaded clips only (synced across devices)
+        const clips = await loadVerifiedClipsForAthleteFromCloud(athleteName);
         const s = buildAthleteStats(athleteName, clips);
 
         if (!alive) return;
@@ -130,11 +79,7 @@ export default function AthleteSportStatsScreen() {
     <View style={{ flex: 1, backgroundColor: 'black', paddingTop: insets.top }}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <Header
-        title={sportTitle(sportKey)}
-        subtitle={athleteName}
-        onBack={() => router.back()}
-      />
+      <Header title={sportTitle(sportKey)} subtitle={athleteName} onBack={() => router.back()} />
 
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -150,7 +95,9 @@ export default function AthleteSportStatsScreen() {
         <View style={{ padding: 16 }}>
           <Text style={{ color: 'white', fontWeight: '900' }}>No stats yet</Text>
           <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 8 }}>
-            This athlete has no saved clips for {sportTitle(sportKey)}.
+            No uploaded videos found for {sportTitle(sportKey)}.
+            {'\n'}
+            Upload a video for {athleteName} to see synced stats on any device.
           </Text>
         </View>
       ) : (

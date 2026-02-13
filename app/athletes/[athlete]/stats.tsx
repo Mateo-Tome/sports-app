@@ -1,62 +1,11 @@
-import * as FileSystem from 'expo-file-system';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { buildAthleteStats } from '../../../src/stats/buildAthleteStats';
+import { loadVerifiedClipsForAthleteFromCloud } from '../../../src/stats/loadClipsCloud';
 import { sportTitle } from '../../../src/stats/sportMeta';
-import type { ClipSidecar } from '../../../src/stats/types';
-
-const VIDEOS_DIR = `${FileSystem.documentDirectory}videos`;
-
-async function listDirSafe(uri: string) {
-  try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists || !info.isDirectory) return [];
-    return await FileSystem.readDirectoryAsync(uri);
-  } catch {
-    return [];
-  }
-}
-
-async function readJsonSafe<T>(uri: string): Promise<T | null> {
-  try {
-    const raw = await FileSystem.readAsStringAsync(uri);
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function loadClipsForAthleteByScanning(athleteName: string): Promise<ClipSidecar[]> {
-  const clips: ClipSidecar[] = [];
-
-  const athleteDirs = await listDirSafe(VIDEOS_DIR);
-  for (const athleteDirName of athleteDirs) {
-    const athleteDirUri = `${VIDEOS_DIR}/${athleteDirName}`;
-    const sportDirs = await listDirSafe(athleteDirUri);
-
-    for (const sportDirName of sportDirs) {
-      const sportDirUri = `${athleteDirUri}/${sportDirName}`;
-      const files = await listDirSafe(sportDirUri);
-
-      for (const f of files) {
-        if (!f.toLowerCase().endsWith('.json')) continue;
-        const jsonUri = `${sportDirUri}/${f}`;
-        const clip = await readJsonSafe<ClipSidecar>(jsonUri);
-        if (!clip) continue;
-
-        if ((clip.athlete ?? '').trim() === athleteName.trim()) {
-          clips.push(clip);
-        }
-      }
-    }
-  }
-
-  clips.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return clips;
-}
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
@@ -114,7 +63,9 @@ export default function AthleteStatsHomeScreen() {
         setLoading(true);
         setError(null);
 
-        const clips = await loadClipsForAthleteByScanning(athleteName);
+        // ✅ ONE source of truth for cross-device stats:
+        // uploaded clips -> Firestore metadata -> fetch sidecars -> build stats
+        const clips = await loadVerifiedClipsForAthleteFromCloud(athleteName);
         const s = buildAthleteStats(athleteName, clips);
 
         if (!alive) return;
@@ -148,8 +99,9 @@ export default function AthleteStatsHomeScreen() {
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900' }} numberOfLines={1}>
           {athleteName}
         </Text>
+
         <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 4 }}>
-          Stats (V1)
+          Stats (synced)
         </Text>
       </View>
 
@@ -174,13 +126,15 @@ export default function AthleteStatsHomeScreen() {
           <View style={{ marginTop: 16 }}>
             <Text style={{ color: 'white', fontSize: 16, fontWeight: '900' }}>Select a sport</Text>
             <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 6 }}>
-              Only sports with saved clips will appear here.
+              Stats are based on uploaded videos for this account.
             </Text>
 
             {sportsCount === 0 ? (
               <View style={{ marginTop: 12 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.7)' }}>
-                  No sports found yet for this athlete. Record a clip first.
+                  No uploaded stats found yet for this athlete.
+                  {'\n'}
+                  Upload a video for {athleteName} to see synced stats on any device.
                 </Text>
               </View>
             ) : (

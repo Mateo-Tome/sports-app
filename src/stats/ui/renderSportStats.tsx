@@ -79,10 +79,6 @@ function normalizeFolkstyle(w: any) {
 }
 
 function normalizeFreestyle(fs: any) {
-  // expects your reducer output shape:
-  // totals { clips, events }
-  // points { myKid, opp }
-  // counts { takedown/exposure/out/feetToDanger/ga4/ga5/... } each has {myKid, opp}
   return {
     clips: clamp0(fs?.totals?.clips),
     events: clamp0(fs?.totals?.events),
@@ -113,6 +109,54 @@ function normalizeGreco(gs: any) {
   };
 }
 
+// ✅ Baseball: Hitting
+function normalizeBaseballHitting(b: any) {
+  return {
+    clips: clamp0(b?.totals?.clips),
+    events: clamp0(b?.totals?.events),
+
+    balls: clamp0(b?.counts?.ball),
+    strikes: clamp0(b?.counts?.strike),
+    fouls: clamp0(b?.counts?.foul),
+
+    walks: clamp0(b?.counts?.walk),
+    strikeouts: clamp0(b?.counts?.strikeout),
+
+    hits: clamp0(b?.counts?.hit),
+    single: clamp0(b?.counts?.single),
+    double: clamp0(b?.counts?.double),
+    triple: clamp0(b?.counts?.triple),
+    homerun: clamp0(b?.counts?.homerun),
+    bunt: clamp0(b?.counts?.bunt),
+
+    outs: clamp0(b?.counts?.out),
+  };
+}
+
+// ✅ Baseball: Pitching
+function normalizeBaseballPitching(p: any) {
+  return {
+    clips: clamp0(p?.totals?.clips),
+    events: clamp0(p?.totals?.events),
+
+    balls: clamp0(p?.counts?.ball),
+    strikes: clamp0(p?.counts?.strike),
+    fouls: clamp0(p?.counts?.foul),
+
+    walksIssued: clamp0(p?.counts?.walk),
+    strikeouts: clamp0(p?.counts?.strikeout),
+
+    hitsAllowed: clamp0(p?.counts?.hitAllowed),
+    singleAllowed: clamp0(p?.counts?.singleAllowed),
+    doubleAllowed: clamp0(p?.counts?.doubleAllowed),
+    tripleAllowed: clamp0(p?.counts?.tripleAllowed),
+    buntAllowed: clamp0(p?.counts?.buntAllowed),
+    hrAllowed: clamp0(p?.counts?.homerunAllowed),
+
+    outsRecorded: clamp0(p?.counts?.outsRecorded),
+  };
+}
+
 // Generic fallback: always show *something* helpful
 function normalizeGeneric(s: any) {
   const clips =
@@ -125,7 +169,6 @@ function normalizeGeneric(s: any) {
 
   const events = s?.totals?.events ?? s?.totals?.eventCount ?? null;
 
-  // some reducers might expose points in different places
   const myPoints = s?.points?.myKid ?? s?.points?.athlete ?? s?.points?.home ?? null;
   const oppPoints = s?.points?.opp ?? s?.points?.opponent ?? null;
 
@@ -138,6 +181,76 @@ function normalizeGeneric(s: any) {
 }
 
 export function renderSportStatsCard(sportKey: string, sportStats: any, athleteName: string) {
+  // -----------------------------
+  // Baseball: Hitting
+  // -----------------------------
+  if (sportKey === 'baseball:hitting') {
+    const b = normalizeBaseballHitting(sportStats);
+    return (
+      <CardShell title={sportTitle(sportKey)}>
+        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+          Athlete: {athleteName}
+        </Text>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={b.clips} />
+          <Chip label="Events" value={b.events} />
+
+          <Chip label="Balls" value={b.balls} />
+          <Chip label="Strikes" value={b.strikes} />
+          <Chip label="Fouls" value={b.fouls} />
+
+          <Chip label="Walks" value={b.walks} />
+          <Chip label="Strikeouts" value={b.strikeouts} />
+
+          <Chip label="Hits" value={b.hits} />
+          <Chip label="1B" value={b.single} />
+          <Chip label="2B" value={b.double} />
+          <Chip label="3B" value={b.triple} />
+          <Chip label="HR" value={b.homerun} />
+          <Chip label="Bunt" value={b.bunt} />
+
+          <Chip label="Outs" value={b.outs} />
+        </View>
+      </CardShell>
+    );
+  }
+
+  // -----------------------------
+  // Baseball: Pitching
+  // -----------------------------
+  if (sportKey === 'baseball:pitching') {
+    const p = normalizeBaseballPitching(sportStats);
+    return (
+      <CardShell title={sportTitle(sportKey)}>
+        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+          Athlete: {athleteName}
+        </Text>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={p.clips} />
+          <Chip label="Events" value={p.events} />
+
+          <Chip label="Balls" value={p.balls} />
+          <Chip label="Strikes" value={p.strikes} />
+          <Chip label="Fouls" value={p.fouls} />
+
+          <Chip label="Walks Issued" value={p.walksIssued} />
+          <Chip label="Strikeouts" value={p.strikeouts} />
+
+          <Chip label="Hits Allowed" value={p.hitsAllowed} />
+          <Chip label="1B Allowed" value={p.singleAllowed} />
+          <Chip label="2B Allowed" value={p.doubleAllowed} />
+          <Chip label="3B Allowed" value={p.tripleAllowed} />
+          <Chip label="HR Allowed" value={p.hrAllowed} />
+          <Chip label="Bunt Allowed" value={p.buntAllowed} />
+
+          <Chip label="Outs Recorded" value={p.outsRecorded} />
+        </View>
+      </CardShell>
+    );
+  }
+
   // -----------------------------
   // Wrestling: Folkstyle
   // -----------------------------
