@@ -1,8 +1,15 @@
+// src/stats/ui/renderSportStats.tsx
 import React from 'react';
 import { Text, View } from 'react-native';
 import { sportTitle } from '../sportMeta';
 
-function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
+function CardShell({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <View
       style={{
@@ -14,7 +21,9 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
         padding: 14,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 16, fontWeight: '900' }}>{title}</Text>
+      <Text style={{ color: 'white', fontSize: 16, fontWeight: '900' }}>
+        {title}
+      </Text>
       <View style={{ marginTop: 12 }}>{children}</View>
     </View>
   );
@@ -34,8 +43,25 @@ function Chip({ label, value }: { label: string; value: string | number }) {
         backgroundColor: 'rgba(255,255,255,0.05)',
       }}
     >
-      <Text style={{ color: 'rgba(255,255,255,0.70)', fontSize: 12, fontWeight: '900' }}>{label}</Text>
-      <Text style={{ color: 'white', fontSize: 18, fontWeight: '900', marginTop: 4 }}>{String(value)}</Text>
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.70)',
+          fontSize: 12,
+          fontWeight: '900',
+        }}
+      >
+        {label}
+      </Text>
+      <Text
+        style={{
+          color: 'white',
+          fontSize: 18,
+          fontWeight: '900',
+          marginTop: 4,
+        }}
+      >
+        {String(value)}
+      </Text>
     </View>
   );
 }
@@ -107,19 +133,22 @@ function normalizeGreco(gs: any) {
   };
 }
 
-// ✅ Baseball: Hitting (now includes BA)
+// ✅ Baseball: Hitting (includes BA)
 function normalizeBaseballHitting(b: any) {
   const derivedHits =
-    b?.derived?.hits != null ? clamp0(b.derived.hits) : clamp0(b?.counts?.hit) + clamp0(b?.counts?.homerun);
+    b?.derived?.hits != null
+      ? clamp0(b.derived.hits)
+      : clamp0(b?.counts?.hit) + clamp0(b?.counts?.homerun);
 
-  const derivedAtBats = b?.derived?.atBats != null ? clamp0(b.derived.atBats) : 0;
+  const derivedAtBats =
+    b?.derived?.atBats != null ? clamp0(b.derived.atBats) : 0;
+
   const baText = String(b?.derived?.battingAverageText ?? '.000');
 
   return {
     clips: clamp0(b?.totals?.clips),
     events: clamp0(b?.totals?.events),
 
-    // ✅ derived
     hitsTotal: derivedHits,
     atBats: derivedAtBats,
     baText,
@@ -131,7 +160,6 @@ function normalizeBaseballHitting(b: any) {
     walks: clamp0(b?.counts?.walk),
     strikeouts: clamp0(b?.counts?.strikeout),
 
-    // raw
     hits: clamp0(b?.counts?.hit),
     single: clamp0(b?.counts?.hitTypes?.single),
     double: clamp0(b?.counts?.hitTypes?.double),
@@ -157,7 +185,6 @@ function normalizeBaseballPitching(p: any) {
 
     hitsAllowed: clamp0(p?.counts?.hitAllowed),
 
-    // NOTE: your pitching reducer stores these in counts.hitTypes.*
     singleAllowed: clamp0(p?.counts?.hitTypes?.single),
     doubleAllowed: clamp0(p?.counts?.hitTypes?.double),
     tripleAllowed: clamp0(p?.counts?.hitTypes?.triple),
@@ -165,7 +192,6 @@ function normalizeBaseballPitching(p: any) {
 
     hrAllowed: clamp0(p?.counts?.homerunAllowed),
 
-    // NOTE: your pitching reducer calls it outRecorded (not outsRecorded)
     outsRecorded: clamp0(p?.counts?.outRecorded),
   };
 }
@@ -181,7 +207,9 @@ function normalizeGeneric(s: any) {
 
   const events = s?.totals?.events ?? s?.totals?.eventCount ?? null;
 
-  const myPoints = s?.points?.myKid ?? s?.points?.athlete ?? s?.points?.home ?? null;
+  const myPoints =
+    s?.points?.myKid ?? s?.points?.athlete ?? s?.points?.home ?? null;
+
   const oppPoints = s?.points?.opp ?? s?.points?.opponent ?? null;
 
   return {
@@ -192,7 +220,41 @@ function normalizeGeneric(s: any) {
   };
 }
 
-export function renderSportStatsCard(sportKey: string, sportStats: any, athleteName: string) {
+// ✅ Basketball normalization (from your reducer shape)
+function normalizeBasketballDefault(b: any) {
+  return {
+    clips: clamp0(b?.totals?.clips),
+    events: clamp0(b?.totals?.events),
+
+    points: clamp0(b?.points?.total),
+
+    fgM: clamp0(b?.shooting?.fgM),
+    fgA: clamp0(b?.shooting?.fgA),
+    t3M: clamp0(b?.shooting?.t3M),
+    t3A: clamp0(b?.shooting?.t3A),
+    ftM: clamp0(b?.shooting?.ftM),
+    ftA: clamp0(b?.shooting?.ftA),
+
+    ast: clamp0(b?.counts?.assist),
+    stl: clamp0(b?.counts?.steal),
+    blk: clamp0(b?.counts?.block),
+    rebO: clamp0(b?.counts?.reboundOff),
+    rebD: clamp0(b?.counts?.reboundDef),
+    tov: clamp0(b?.counts?.turnover),
+    foul: clamp0(b?.counts?.foul),
+  };
+}
+
+function pct(m: number, a: number) {
+  if (!a) return '0%';
+  return `${Math.round((m / a) * 100)}%`;
+}
+
+export function renderSportStatsCard(
+  sportKey: string,
+  sportStats: any,
+  athleteName: string,
+) {
   // -----------------------------
   // Baseball: Hitting
   // -----------------------------
@@ -200,7 +262,13 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
     const b = normalizeBaseballHitting(sportStats);
     return (
       <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
           Athlete: {athleteName}
         </Text>
 
@@ -208,7 +276,6 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
           <Chip label="Clips" value={b.clips} />
           <Chip label="Events" value={b.events} />
 
-          {/* ✅ NEW */}
           <Chip label="BA" value={b.baText} />
           <Chip label="AB" value={b.atBats} />
           <Chip label="H" value={b.hitsTotal} />
@@ -240,7 +307,13 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
     const p = normalizeBaseballPitching(sportStats);
     return (
       <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
           Athlete: {athleteName}
         </Text>
 
@@ -296,7 +369,13 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
     const fs = normalizeFreestyle(sportStats);
     return (
       <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
           Athlete: {athleteName}
         </Text>
 
@@ -331,7 +410,13 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
     const gs = normalizeGreco(sportStats);
     return (
       <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
           Athlete: {athleteName}
         </Text>
 
@@ -356,13 +441,64 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
   }
 
   // -----------------------------
+  // ✅ Basketball: Default
+  // -----------------------------
+  if (sportKey === 'basketball:default') {
+    const b = normalizeBasketballDefault(sportStats);
+
+    return (
+      <CardShell title={sportTitle(sportKey)}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
+          Athlete: {athleteName}
+        </Text>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={b.clips} />
+          <Chip label="Events" value={b.events} />
+
+          <Chip label="Points" value={b.points} />
+
+          <Chip label="FG" value={`${b.fgM}/${b.fgA} (${pct(b.fgM, b.fgA)})`} />
+          <Chip
+            label="3PT"
+            value={`${b.t3M}/${b.t3A} (${pct(b.t3M, b.t3A)})`}
+          />
+          <Chip label="FT" value={`${b.ftM}/${b.ftA} (${pct(b.ftM, b.ftA)})`} />
+
+          <Chip label="AST" value={b.ast} />
+          <Chip label="STL" value={b.stl} />
+          <Chip label="BLK" value={b.blk} />
+
+          <Chip label="REB (O)" value={b.rebO} />
+          <Chip label="REB (D)" value={b.rebD} />
+
+          <Chip label="TO" value={b.tov} />
+          <Chip label="Fouls" value={b.foul} />
+        </View>
+      </CardShell>
+    );
+  }
+
+  // -----------------------------
   // Generic fallback
   // -----------------------------
   const g = normalizeGeneric(sportStats);
 
   return (
     <CardShell title={sportTitle(sportKey)}>
-      <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.75)',
+          fontWeight: '800',
+          marginBottom: 10,
+        }}
+      >
         Athlete: {athleteName}
       </Text>
 
@@ -371,11 +507,14 @@ export function renderSportStatsCard(sportKey: string, sportStats: any, athleteN
         {g.clips != null ? <Chip label="Clips" value={g.clips} /> : null}
         {g.events != null ? <Chip label="Events" value={g.events} /> : null}
         {g.myPoints != null ? <Chip label="My Points" value={g.myPoints} /> : null}
-        {g.oppPoints != null ? <Chip label="Opp Points" value={g.oppPoints} /> : null}
+        {g.oppPoints != null ? (
+          <Chip label="Opp Points" value={g.oppPoints} />
+        ) : null}
       </View>
 
       <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 10 }}>
-        (Generic view) Add a custom card for this sportKey later if you want richer stats.
+        (Generic view) Add a custom card for this sportKey later if you want
+        richer stats.
       </Text>
     </CardShell>
   );
