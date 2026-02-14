@@ -5,6 +5,9 @@ import type { OverlayProps } from './types';
 import BaseballHittingOverlay from './BaseballHittingOverlay';
 import BaseballPitchingOverlay from './BaseballPitchingOverlay';
 
+// ✅ Basketball (make sure this path matches your folder/file exactly)
+import BasketballOverlay from './basketball/BasketballOverlay';
+
 // IMPORTANT: match your existing actual path (misspelled)
 import VolleyballOverlay from './volleyball/VolleyballOverlay';
 
@@ -21,6 +24,7 @@ export function normalizeKey(sport?: string, style?: string) {
   if (s === 'vb' || s === 'volley') s = 'volleyball';
   if (s === 'wrestle') s = 'wrestling';
   if (s === 'base') s = 'baseball';
+  if (s === 'bball' || s === 'hoops') s = 'basketball'; // ✅ optional nice aliases
 
   // style aliases
   if (s === 'wrestling') {
@@ -56,6 +60,9 @@ const Registry: Record<string, RecordingOverlayEntry> = {
 
   // Volleyball
   'volleyball:default': { Overlay: VolleyballOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+
+  // ✅ Basketball
+  'basketball:default': { Overlay: BasketballOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 };
 
 export function getRecordingOverlay(sport?: string, style?: string) {
