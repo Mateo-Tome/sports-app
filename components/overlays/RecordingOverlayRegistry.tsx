@@ -6,7 +6,7 @@ import BaseballHittingOverlay from './BaseballHittingOverlay';
 import BaseballPitchingOverlay from './BaseballPitchingOverlay';
 
 // IMPORTANT: match your existing actual path (misspelled)
-import VolleyballOverlay from './vollyball/VollyballOverlay';
+import VolleyballOverlay from './volleyball/VolleyballOverlay';
 
 // IMPORTANT: match your existing actual filenames (lowercase)
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';

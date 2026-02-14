@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+// VolleyballOverlay.tsx
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Modal, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OverlayEvent, OverlayProps } from '../types';
 
-const GLASS = 'rgba(0,0,0,0.40)';
 const BORDER = 'rgba(255,255,255,0.18)';
 const TEXT_DIM = 'rgba(255,255,255,0.82)';
 
@@ -15,17 +15,17 @@ const COLORS = {
   block: '#a855f7',
   dig: '#38bdf8',
   pass: '#14b8a6',
-  serveIn: '#60a5fa', // ✅ Serve In
-  attack: '#16a34a',  // ✅ slightly different green than Kill
+  serveIn: '#60a5fa', // Serve In
+  attack: '#16a34a', // slightly different green than Kill
   error: '#ef4444',
   neutral: 'rgba(148,163,184,0.92)',
 };
 
 type Btn = {
   id: string;
-  label: string;        // short button label
-  sub?: string;         // tiny text under label
-  action: string;       // FULL word used for toast
+  label: string; // short button label
+  sub?: string; // tiny text under label
+  action: string; // FULL word used for toast
   key: string;
   color: string;
   value?: number;
@@ -85,18 +85,12 @@ function CircleButton({
   );
 }
 
-export default function VollyballOverlay({
-  isRecording,
-  onEvent,
-  getCurrentTSec,
-  score,
-}: OverlayProps) {
+export default function VolleyballOverlay({ isRecording, onEvent, getCurrentTSec }: OverlayProps) {
   const insets = useSafeAreaInsets();
-  const pts = score ?? { home: 0, opponent: 0 };
 
   const [passChooserOpen, setPassChooserOpen] = useState(false);
 
-  // ✅ visual feedback states
+  // visual feedback states
   const [litId, setLitId] = useState<string | null>(null);
   const litTimerRef = useRef<any>(null);
 
@@ -107,38 +101,31 @@ export default function VollyballOverlay({
 
   const disableTaps = !isRecording;
 
-  // ✅ never set state during render
+  // never set state during render
   useEffect(() => {
     if (!isRecording && passChooserOpen) setPassChooserOpen(false);
   }, [isRecording, passChooserOpen]);
 
-  const leftButtons: Btn[] = useMemo(
-    () => [
-      { id: 'L_K', label: 'K', sub: 'Kill', action: 'Kill', key: 'kill', color: COLORS.kill, value: 0, kind: 'good' },
-      { id: 'L_D', label: 'D', sub: 'Dig', action: 'Dig', key: 'dig', color: COLORS.dig, value: 0, kind: 'good' },
-      { id: 'L_B', label: 'B', sub: 'Block', action: 'Block', key: 'block', color: COLORS.block, value: 0, kind: 'good' },
+  const leftButtons: Btn[] = [
+    { id: 'L_K', label: 'K', sub: 'Kill', action: 'Kill', key: 'kill', color: COLORS.kill, value: 0, kind: 'good' },
+    { id: 'L_D', label: 'D', sub: 'Dig', action: 'Dig', key: 'dig', color: COLORS.dig, value: 0, kind: 'good' },
+    { id: 'L_B', label: 'B', sub: 'Block', action: 'Block', key: 'block', color: COLORS.block, value: 0, kind: 'good' },
 
-      { id: 'L_TB', label: 'TB', sub: 'Touch', action: 'Touch', key: 'touch', color: COLORS.neutral, value: 0, kind: 'neutral' },
-      { id: 'L_1B', label: '1st', sub: 'Ball', action: 'First Ball', key: 'firstBall', color: COLORS.neutral, value: 0, kind: 'neutral' },
-      { id: 'L_BP', label: 'BP', sub: 'Bump', action: 'Bump Pass', key: 'bump', color: COLORS.neutral, value: 0, kind: 'neutral' },
-    ],
-    []
-  );
+    { id: 'L_TB', label: 'TB', sub: 'Touch', action: 'Touch', key: 'touch', color: COLORS.neutral, value: 0, kind: 'neutral' },
+    { id: 'L_1B', label: '1st', sub: 'Ball', action: 'First Ball', key: 'firstBall', color: COLORS.neutral, value: 0, kind: 'neutral' },
+    { id: 'L_BP', label: 'BP', sub: 'Bump', action: 'Bump Pass', key: 'bump', color: COLORS.neutral, value: 0, kind: 'neutral' },
+  ];
 
-  // ✅ RIGHT SIDE NOW HAS 7 BUTTONS (added SI without removing ATK)
-  const rightButtons: Btn[] = useMemo(
-    () => [
-      { id: 'R_SI',  label: 'SI',  sub: 'Serve', action: 'Serve In', key: 'serveIn', color: COLORS.serveIn, value: 0, kind: 'good' },
-      { id: 'R_A',   label: 'A',   sub: 'Ace',   action: 'Ace',      key: 'ace',     color: COLORS.ace,     value: 1, kind: 'good' },
-      { id: 'R_PR',  label: 'PR',  sub: 'Pass',  action: 'Pass',     key: 'passRating', color: COLORS.pass, value: 0, kind: 'good' },
-      { id: 'R_ATK', label: 'ATK', sub: 'Atk',   action: 'Attack',   key: 'attack',  color: COLORS.attack,  value: 0, kind: 'good' },
+  const rightButtons: Btn[] = [
+    { id: 'R_SI', label: 'SI', sub: 'Serve', action: 'Serve In', key: 'serveIn', color: COLORS.serveIn, value: 0, kind: 'good' },
+    { id: 'R_A', label: 'A', sub: 'Ace', action: 'Ace', key: 'ace', color: COLORS.ace, value: 1, kind: 'good' },
+    { id: 'R_PR', label: 'PR', sub: 'Pass', action: 'Pass', key: 'passRating', color: COLORS.pass, value: 0, kind: 'good' },
+    { id: 'R_ATK', label: 'ATK', sub: 'Atk', action: 'Attack', key: 'attack', color: COLORS.attack, value: 0, kind: 'good' },
 
-      { id: 'R_E',   label: 'E',   sub: 'Err',   action: 'Error',      key: 'error',      color: COLORS.error, value: 0, kind: 'bad' },
-      { id: 'R_SE',  label: 'SE',  sub: 'Svc',   action: 'Serve Error', key: 'serveError', color: COLORS.error, value: 0, kind: 'bad' },
-      { id: 'R_NET', label: 'NET', sub: 'Net',   action: 'Net Violation', key: 'net',      color: COLORS.error, value: 0, kind: 'bad' },
-    ],
-    []
-  );
+    { id: 'R_E', label: 'E', sub: 'Err', action: 'Error', key: 'error', color: COLORS.error, value: 0, kind: 'bad' },
+    { id: 'R_SE', label: 'SE', sub: 'Svc', action: 'Serve Error', key: 'serveError', color: COLORS.error, value: 0, kind: 'bad' },
+    { id: 'R_NET', label: 'NET', sub: 'Net', action: 'Net Violation', key: 'net', color: COLORS.error, value: 0, kind: 'bad' },
+  ];
 
   const showToast = (text: string, color: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -176,7 +163,7 @@ export default function VollyballOverlay({
     tint?: string,
     extraMeta?: Record<string, any>,
     toast?: string,
-    btnId?: string
+    btnId?: string,
   ) => {
     const color = tint ?? COLORS.neutral;
 
@@ -214,40 +201,13 @@ export default function VollyballOverlay({
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
-      {/* Top score chip */}
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: insets.top + 10,
-          left: insets.left + 12,
-          right: insets.right + 12,
-          alignItems: 'center',
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: GLASS,
-            borderWidth: 1,
-            borderColor: BORDER,
-            borderRadius: 999,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>
-            {pts.home}–{pts.opponent}
-          </Text>
-        </View>
-      </View>
-
       {/* Last-action pill (FULL WORDS) */}
       {toastText ? (
         <Animated.View
           pointerEvents="none"
           style={{
             position: 'absolute',
-            top: insets.top + 46,
+            top: insets.top + 12,
             left: insets.left + 12,
             right: insets.right + 12,
             alignItems: 'center',
@@ -303,7 +263,7 @@ export default function VollyballOverlay({
         </View>
       </View>
 
-      {/* Right grid (now wraps 7 buttons in 2 columns) */}
+      {/* Right grid */}
       <View
         pointerEvents="box-none"
         style={{
@@ -392,7 +352,7 @@ export default function VollyballOverlay({
                       p.color,
                       { passRating: p.n, kind: p.n === 0 ? 'bad' : 'good' },
                       p.toast,
-                      'R_PR'
+                      'R_PR',
                     );
                     setPassChooserOpen(false);
                   }}
@@ -423,7 +383,7 @@ export default function VollyballOverlay({
                 borderRadius: 999,
                 backgroundColor: 'rgba(255,255,255,0.10)',
                 borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.18)',
+                borderColor: BORDER,
               }}
             >
               <Text style={{ color: 'white', fontWeight: '900' }}>Cancel</Text>
