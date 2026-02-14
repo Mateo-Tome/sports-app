@@ -1,4 +1,3 @@
-// lib/library/buildLibraryRows.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 
@@ -75,18 +74,14 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
   // ✅ read full sidecar (events) so sport modules can compute label/colors
   const sidecar = await readSidecarForUpload(meta.uri);
 
-  // ✅ IMPORTANT FIX:
-  // Prefer the sportKey derived from the sidecar (handles legacy, ensures pitching/hitting)
-  // Fall back to meta.sport if sidecar missing.
+  // ✅ IMPORTANT FIX: sportKey from sidecar, fallback to meta.sport
   const effectiveSport =
     sidecar ? getSportKeyFromSidecar(sidecar) : (meta.sport || '');
 
-  // ✅ sport-specific overrides (optional)
+  // ✅ sport-specific overrides (baseball/basketball)
   const sportBits = buildSportLibraryBits(effectiveSport || '', sidecar);
 
   // Thumbnails:
-  // - eager for first N newest rows
-  // - otherwise use cached thumb if it exists
   let thumb: string | null = null;
 
   if (eagerThumb) {
@@ -102,8 +97,6 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
   }
 
   // ✅ final edge/highlight selection:
-  // - prefer sportBits (baseball pitching K green, etc)
-  // - fall back to existing scoreBits (keeps wrestling/W/L behavior)
   const finalEdgeColor =
     (sportBits.edgeColor ?? null) ?? (scoreBits.edgeColor ?? null);
 
@@ -112,12 +105,17 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
       ? sportBits.highlightGold
       : scoreBits.highlightGold;
 
+  // ✅ KEY FIX:
+  // ONLY wrestling should show outcome + score chip (T 0–0 etc).
+  // Basketball (and others) should NOT inherit that.
+  const sportLower = String(effectiveSport || '').toLowerCase();
+  const isWrestling = sportLower.startsWith('wrestling');
+
   return {
     uri: meta.uri,
     displayName: meta.displayName || (meta.uri.split('/').pop() || 'video'),
     athlete: (meta.athlete || 'Unassigned').trim() || 'Unassigned',
 
-    // ✅ use effectiveSport so cards/registry always get "baseball:pitching" etc
     sport: (effectiveSport || 'unknown').trim() || 'unknown',
 
     assetId: meta.assetId,
@@ -127,17 +125,18 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
       : meta.createdAt ?? null,
     thumbUri: thumb,
 
-    finalScore: scoreBits.finalScore,
-    homeIsAthlete: scoreBits.homeIsAthlete,
-    outcome: scoreBits.outcome ?? undefined,
-    myScore: scoreBits.myScore,
-    oppScore: scoreBits.oppScore,
+    // ✅ Wrestling keeps score/outcome chips exactly as before.
+    // ✅ All other sports get these nulled so the wrestling chip can’t render.
+    finalScore: isWrestling ? scoreBits.finalScore : null,
+    homeIsAthlete: isWrestling ? scoreBits.homeIsAthlete : null,
+    outcome: isWrestling ? (scoreBits.outcome ?? undefined) : undefined,
+    myScore: isWrestling ? scoreBits.myScore : null,
+    oppScore: isWrestling ? scoreBits.oppScore : null,
 
     // ✅ styling
     highlightGold: finalHighlightGold,
     edgeColor: finalEdgeColor,
 
-    // ✅ preferred generic style bundle (LibraryVideoRow already supports it)
     libraryStyle: {
       edgeColor: finalEdgeColor,
       badgeText: sportBits.badgeText ?? null,
@@ -148,7 +147,6 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
         null,
     },
 
-    // ✅ sport cards can use these
     hittingLabel: sportBits.hittingLabel ?? null,
     pitchingLabel: sportBits.pitchingLabel ?? null,
   } as Row;
