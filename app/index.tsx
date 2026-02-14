@@ -2,5 +2,6 @@
 import { Redirect } from 'expo-router';
 
 export default function Index() {
-  return <Redirect href="/boot" />;
+  // Always land somewhere real. Your _layout.tsx will still redirect to auth if needed.
+  return <Redirect href="/(tabs)" />;
 }

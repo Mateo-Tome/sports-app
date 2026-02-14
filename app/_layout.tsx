@@ -3,7 +3,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import { InteractionManager, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,7 +14,7 @@ import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { configureRevenueCat } from '@/lib/revenuecat';
 
-const GUEST_OK_KEY = 'guest_ok'; // local-only “continue as guest” flag
+const GUEST_OK_KEY = 'guest_ok';
 
 export default function RootLayout() {
   const scheme = useColorScheme();
@@ -24,18 +24,23 @@ export default function RootLayout() {
   const [booted, setBooted] = useState(false);
   const [user, setUser] = useState<User | null>(null);
 
-  // Prevent double redirects
   const didNavRef = useRef(false);
+  const didConfigureRCRef = useRef(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setBooted(true);
 
-      // Configure RevenueCat using the CURRENT Firebase user (anon or real)
-      configureRevenueCat(u?.uid ?? null);
+      // ✅ Configure RevenueCat at most once at startup, safely and deferred.
+      if (!didConfigureRCRef.current) {
+        didConfigureRCRef.current = true;
+        InteractionManager.runAfterInteractions(() => {
+          void configureRevenueCat(u?.uid ?? null);
+        });
+      }
 
-      // When auth user changes, allow nav effect to run once
+      // allow nav effect to run again when auth changes
       didNavRef.current = false;
     });
 
@@ -54,18 +59,11 @@ export default function RootLayout() {
       const isGuest = !!user?.isAnonymous;
       const isRealUser = !!user && !user.isAnonymous;
 
-      // Read guest flag (set when user taps "Continue as Guest")
       const guestOk = (await AsyncStorage.getItem(GUEST_OK_KEY)) === '1';
-
-      // Your desired behavior:
-      // - Signed out => must see auth
-      // - Guest => see auth UNLESS they pressed Continue as Guest
-      // - Real user => go to tabs
       const shouldShowAuth = isSignedOut || (isGuest && !guestOk);
 
       if (cancelled) return;
 
-      // If already in the right group, do nothing
       if (shouldShowAuth && inAuth) return;
       if (!shouldShowAuth && !inAuth) return;
 

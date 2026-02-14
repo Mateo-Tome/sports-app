@@ -2,6 +2,7 @@
   "expo": {
     "name": "QuickClip",
     "slug": "sport-app",
+    "jsEngine": "jsc",
     "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
