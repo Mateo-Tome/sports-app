@@ -9,6 +9,9 @@ import WrestlingFolkstylePlaybackModule from './wrestling/WrestlingFolkstylePlay
 import WrestlingFreestylePlaybackModule from './wrestling/WrestlingFreestylePlaybackModule';
 import WrestlingGrecoPlaybackModule from './wrestling/WrestlingGrecoPlaybackModule';
 
+// ✅ Basketball
+import BasketballPlaybackModule from './basketball/BasketballPlaybackModule';
+
 export function normalizeKey(sport?: string, style?: string) {
   const s = String(sport ?? '').trim().toLowerCase();
   const st = String(style ?? 'default').trim().toLowerCase();
@@ -23,7 +26,12 @@ const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
 
   // Baseball
   'baseball:hitting': BaseballHittingPlaybackModule,
-  'baseball:pitching': BaseballPitchingPlaybackModule, // ✅ ADD THIS
+  'baseball:pitching': BaseballPitchingPlaybackModule,
+
+  // Basketball
+  'basketball:default': BasketballPlaybackModule,
+  // If your clips use another style, add it too (safe alias):
+  // 'basketball:pickup': BasketballPlaybackModule,
 
   // add new ones here later...
 };

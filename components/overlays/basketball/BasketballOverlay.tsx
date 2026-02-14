@@ -1,9 +1,21 @@
 // components/overlays/basketball/BasketballOverlay.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OverlayEvent, OverlayProps } from '../types';
+
+// ✅ basketball-spec (buttons, colors, lanes, shot tint/points)
+import {
+    BB_COLORS,
+    LEFT_BTNS,
+    RIGHT_BTNS,
+    laneForAction,
+    pointsForShot,
+    tintForShot,
+    type OverlayBtn,
+    type ShotType,
+} from './basketballUiSpec';
 
 const THEME = {
   panel: 'rgba(15,23,42,0.78)',
@@ -13,37 +25,10 @@ const THEME = {
   textDim: 'rgba(226,232,240,0.78)',
 };
 
-const COLORS = {
-  assist: '#22c55e',
-  pass: '#14b8a6',
-  steal: '#38bdf8',
-  block: '#a855f7',
-  rebound: '#f59e0b',
-  shot2: '#60a5fa',
-  shot3: '#3b82f6',
-  ft: '#93c5fd',
-  turnover: '#ef4444',
-  foul: '#fb7185',
-  neutral: 'rgba(148,163,184,0.92)',
-};
-
-type ShotType = '2PT' | '3PT' | 'FT';
 type Picker =
   | null
   | { kind: 'shot'; type: ShotType; btnId: string }
   | { kind: 'rebound'; btnId: string };
-
-type Btn = {
-  id: string;
-  label: string;
-  sub?: string;
-  toast: string;
-  key: string;
-  color: string;
-  kind?: 'good' | 'bad' | 'neutral';
-};
-
-const DEFAULT_PREROLL_SEC = 3;
 
 function CircleButton({
   label,
@@ -169,7 +154,7 @@ function CenterChooser({
           right: 0,
           top: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.25)', // not heavy
+          backgroundColor: 'rgba(0,0,0,0.25)',
           zIndex: 60,
         }}
       />
@@ -199,7 +184,13 @@ function CenterChooser({
             padding: 14,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
             <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>{title}</Text>
             <Pressable
               onPress={onCancel}
@@ -232,8 +223,6 @@ function CenterChooser({
 
 export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec }: OverlayProps) {
   const insets = useSafeAreaInsets();
-  const dims = useWindowDimensions();
-
   const disableTaps = !isRecording;
 
   const [picker, setPicker] = useState<Picker>(null);
@@ -244,7 +233,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
   // toast (only after final choice)
   const [toastText, setToastText] = useState<string | null>(null);
-  const [toastColor, setToastColor] = useState<string>(COLORS.neutral);
+  const [toastColor, setToastColor] = useState<string>(BB_COLORS.neutral);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
 
@@ -299,12 +288,14 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     meta?: Record<string, any>,
     toast?: string,
     btnId?: string,
-    value?: number
+    value?: number,
   ) => {
     if (btnId) flashButton(btnId);
 
-    // ✅ toast happens ONLY when caller passes it (final decision)
     if (toast) showToast(toast, tint);
+
+    // ✅ belt lane is decided here (basketball-only, clean)
+    const beltLane = laneForAction(key, meta);
 
     const evt: OverlayEvent = {
       actor: 'neutral',
@@ -312,6 +303,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
       label,
       value,
       meta: {
+        beltLane, // ✅ EventBelt uses this; no shared sport logic needed
         pillColor: tint,
         tint,
         color: tint,
@@ -325,69 +317,48 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     onEvent?.(evt);
   };
 
-  const leftButtons: Btn[] = useMemo(
-    () => [
-      { id: 'L_AST', label: 'AST', sub: 'Assist', toast: 'Assist', key: 'assist', color: COLORS.assist, kind: 'good' },
-      { id: 'L_PASS', label: 'PASS', sub: 'Pass', toast: 'Pass', key: 'pass', color: COLORS.pass, kind: 'good' },
-      { id: 'L_REB', label: 'REB', sub: 'Rebound', toast: 'Rebound', key: 'rebound', color: COLORS.rebound, kind: 'good' },
-
-      { id: 'L_STL', label: 'STL', sub: 'Steal', toast: 'Steal', key: 'steal', color: COLORS.steal, kind: 'good' },
-      { id: 'L_BLK', label: 'BLK', sub: 'Block', toast: 'Block', key: 'block', color: COLORS.block, kind: 'good' },
-      { id: 'L_TO', label: 'TO', sub: 'Turnover', toast: 'Turnover', key: 'turnover', color: COLORS.turnover, kind: 'bad' },
-    ],
-    []
-  );
-
-  const rightButtons: Btn[] = useMemo(
-    () => [
-      { id: 'R_2', label: '2PT', sub: 'Shot', toast: '2PT', key: 'shot2', color: COLORS.shot2, kind: 'neutral' },
-      { id: 'R_3', label: '3PT', sub: 'Shot', toast: '3PT', key: 'shot3', color: COLORS.shot3, kind: 'neutral' },
-      { id: 'R_FT', label: 'FT', sub: 'Free', toast: 'FT', key: 'ft', color: COLORS.ft, kind: 'neutral' },
-      { id: 'R_PF', label: 'PF', sub: 'Foul', toast: 'Personal Foul', key: 'foul', color: COLORS.foul, kind: 'bad' },
-    ],
-    []
-  );
-
-  // layout
-  const BTN = 58;
-  const GAP = 10;
-  const COLS = 2;
-
-  const leftWidth = COLS * BTN + (COLS - 1) * GAP;
-  const rightWidth = COLS * BTN + (COLS - 1) * GAP;
-
   const openShotPicker = (type: ShotType, btnId: string) => {
     if (disableTaps) return;
     flashButton(btnId);
-    setPicker({ kind: 'shot', type, btnId }); // ✅ NO toast here
+    setPicker({ kind: 'shot', type, btnId });
   };
 
   const openReboundPicker = (btnId: string) => {
     if (disableTaps) return;
     flashButton(btnId);
-    setPicker({ kind: 'rebound', btnId }); // ✅ NO toast here
+    setPicker({ kind: 'rebound', btnId });
   };
 
-  const logSimple = (b: Btn) => {
+  const logSimple = (b: OverlayBtn) => {
     // local UX stats
     setStats((s) => {
-      if (b.key === 'assist') return { ...s, ast: s.ast + 1 };
-      if (b.key === 'steal') return { ...s, stl: s.stl + 1 };
-      if (b.key === 'block') return { ...s, blk: s.blk + 1 };
-      if (b.key === 'turnover') return { ...s, to: s.to + 1 };
-      if (b.key === 'foul') return { ...s, pf: s.pf + 1 };
+      if (b.action === 'assist') return { ...s, ast: s.ast + 1 };
+      if (b.action === 'steal') return { ...s, stl: s.stl + 1 };
+      if (b.action === 'block') return { ...s, blk: s.blk + 1 };
+      if (b.action === 'turnover') return { ...s, to: s.to + 1 };
+      if (b.action === 'foul') return { ...s, pf: s.pf + 1 };
       return s;
     });
 
-    emit(b.key, b.toast, b.color, { kind: b.kind }, b.toast, b.id);
+    const toast = b.sub ?? b.label;
+
+    emit(
+      b.action,
+      toast,
+      b.ringColor,
+      { kind: b.action },
+      toast,
+      b.id,
+    );
   };
 
   const shoot = (type: ShotType, made: boolean, btnId: string) => {
-    const color = type === '2PT' ? COLORS.shot2 : type === '3PT' ? COLORS.shot3 : COLORS.ft;
-    const points = type === '2PT' ? 2 : type === '3PT' ? 3 : 1;
+    const tint = tintForShot(type, made); // ✅ miss -> red, make -> family color
+    const pts = pointsForShot(type);
 
     setStats((s) => {
       const next = { ...s };
+
       if (type === 'FT') next.ftA += 1;
       else next.fgA += 1;
 
@@ -399,7 +370,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
         if (type === '3PT') next.t3M += 1;
 
-        next.pts += points;
+        next.pts += pts;
       }
       return next;
     });
@@ -407,11 +378,11 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     emit(
       'shot',
       'Shot',
-      color,
-      { kind: made ? 'good' : 'neutral', shotType: type, made, attempt: true, points: made ? points : 0 },
-      `${type} ${made ? 'Make' : 'Miss'}`, // ✅ toast only now
+      tint,
+      { shotType: type, made, attempt: true },
+      `${type} ${made ? 'Make' : 'Miss'}`,
       btnId,
-      made ? points : 0
+      made ? pts : 0,
     );
 
     setPicker(null);
@@ -423,32 +394,27 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     emit(
       'rebound',
       'Rebound',
-      COLORS.rebound,
-      { rebound: type, kind: 'good' },
-      type === 'off' ? 'Offensive Rebound' : 'Defensive Rebound', // ✅ toast only now
-      btnId
+      BB_COLORS.rebound,
+      { rebound: type },
+      type === 'off' ? 'Offensive Rebound' : 'Defensive Rebound',
+      btnId,
     );
 
     setPicker(null);
   };
 
-  // ---------- chooser render ----------
   const renderPicker = () => {
     if (!picker) return null;
 
     if (picker.kind === 'shot') {
       const type = picker.type;
-      const accent = type === '2PT' ? COLORS.shot2 : type === '3PT' ? COLORS.shot3 : COLORS.ft;
+      const accent =
+        type === '2PT' ? BB_COLORS.shot2 : type === '3PT' ? BB_COLORS.shot3 : BB_COLORS.ft;
 
       return (
         <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
-            <ChoiceButton
-              label="MAKE"
-              bg={accent}
-              border={accent}
-              onPress={() => shoot(type, true, picker.btnId)}
-            />
+            <ChoiceButton label="MAKE" bg={accent} border={accent} onPress={() => shoot(type, true, picker.btnId)} />
             <ChoiceButton
               label="MISS"
               bg="rgba(255,255,255,0.10)"
@@ -460,26 +426,22 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
       );
     }
 
-    // rebound chooser
     return (
-      <CenterChooser title="Rebound" accent={COLORS.rebound} onCancel={() => setPicker(null)}>
+      <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <ChoiceButton
-            label="OFFENSE"
-            bg={COLORS.rebound}
-            border={COLORS.rebound}
-            onPress={() => rebound('off', picker.btnId)}
-          />
-          <ChoiceButton
-            label="DEFENSE"
-            bg="rgba(255,255,255,0.10)"
-            border={COLORS.rebound}
-            onPress={() => rebound('def', picker.btnId)}
-          />
+          <ChoiceButton label="OFFENSE" bg={BB_COLORS.rebound} border={BB_COLORS.rebound} onPress={() => rebound('off', picker.btnId)} />
+          <ChoiceButton label="DEFENSE" bg="rgba(255,255,255,0.10)" border={BB_COLORS.rebound} onPress={() => rebound('def', picker.btnId)} />
         </View>
       </CenterChooser>
     );
   };
+
+  // layout
+  const BTN = 58;
+  const GAP = 10;
+  const COLS = 2;
+  const leftWidth = COLS * BTN + (COLS - 1) * GAP;
+  const rightWidth = COLS * BTN + (COLS - 1) * GAP;
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
@@ -537,9 +499,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
             right: insets.right + 12,
             alignItems: 'center',
             opacity: toastOpacity,
-            transform: [
-              { translateY: toastOpacity.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) },
-            ],
+            transform: [{ translateY: toastOpacity.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
           }}
         >
           <View
@@ -569,16 +529,16 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
         }}
       >
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
-          {leftButtons.map((b) => (
+          {LEFT_BTNS.map((b) => (
             <CircleButton
               key={b.id}
               label={b.label}
               subLabel={b.sub}
-              ringColor={b.color}
+              ringColor={b.ringColor}
               disabled={disableTaps}
               lit={litId === b.id}
               onPress={() => {
-                if (b.key === 'rebound') return openReboundPicker(b.id);
+                if (b.action === 'rebound') return openReboundPicker(b.id);
                 logSimple(b);
               }}
             />
@@ -599,18 +559,18 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
         }}
       >
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP, justifyContent: 'flex-end' }}>
-          {rightButtons.map((b) => (
+          {RIGHT_BTNS.map((b) => (
             <CircleButton
               key={b.id}
               label={b.label}
               subLabel={b.sub}
-              ringColor={b.color}
+              ringColor={b.ringColor}
               disabled={disableTaps}
               lit={litId === b.id}
               onPress={() => {
-                if (b.key === 'shot2') return openShotPicker('2PT', b.id);
-                if (b.key === 'shot3') return openShotPicker('3PT', b.id);
-                if (b.key === 'ft') return openShotPicker('FT', b.id);
+                if (b.action === 'shot2') return openShotPicker('2PT', b.id);
+                if (b.action === 'shot3') return openShotPicker('3PT', b.id);
+                if (b.action === 'ft') return openShotPicker('FT', b.id);
                 logSimple(b);
               }}
             />
