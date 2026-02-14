@@ -19,10 +19,26 @@ import {
 import './sportLibraryBitsInit';
 import { buildSportLibraryBits } from './sportLibraryStyleRegistry';
 
-const ATHLETES_KEY = 'athletes:list';
+// ✅ IMPORTANT: use the same UID-scoped athlete list as Athletes tab
+import { ensureAnonymous } from '../firebase';
+
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
-type Athlete = { id: string; name: string; photoUri?: string | null };
+function athletesKey(uid: string) {
+  return `athletes:list:${uid}`;
+}
+
+// NOTE: keep this flexible so modal can display photos no matter which field exists
+type Athlete = {
+  id: string;
+  name: string;
+  photoUri?: string | null;
+  photoLocalUri?: string | null;
+  photoUrl?: string | null;
+  photoKey?: string | null;
+  photoUpdatedAt?: number | null;
+};
+
 type Row = LibraryRow;
 
 // ----- bounded concurrency helper -----
@@ -88,7 +104,8 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
   // ✅ final edge/highlight selection:
   // - prefer sportBits (baseball pitching K green, etc)
   // - fall back to existing scoreBits (keeps wrestling/W/L behavior)
-  const finalEdgeColor = (sportBits.edgeColor ?? null) ?? (scoreBits.edgeColor ?? null);
+  const finalEdgeColor =
+    (sportBits.edgeColor ?? null) ?? (scoreBits.edgeColor ?? null);
 
   const finalHighlightGold =
     typeof sportBits.highlightGold === 'boolean'
@@ -124,7 +141,11 @@ async function buildRow(meta: IndexMeta, eagerThumb: boolean): Promise<Row | nul
     libraryStyle: {
       edgeColor: finalEdgeColor,
       badgeText: sportBits.badgeText ?? null,
-      badgeColor: sportBits.badgeColor ?? sportBits.edgeColor ?? finalEdgeColor ?? null,
+      badgeColor:
+        sportBits.badgeColor ??
+        sportBits.edgeColor ??
+        finalEdgeColor ??
+        null,
     },
 
     // ✅ sport cards can use these
@@ -154,10 +175,11 @@ export async function buildLibraryRows(): Promise<{
   const rows = rowsBuilt.filter(Boolean) as Row[];
   rows.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
 
-  // 3) athletes list
+  // 3) athletes list (✅ UID-scoped key)
   let athleteList: Athlete[] = [];
   try {
-    const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+    const u = await ensureAnonymous();
+    const raw = await AsyncStorage.getItem(athletesKey(u.uid));
     athleteList = raw ? (JSON.parse(raw) as Athlete[]) : [];
   } catch {
     athleteList = [];

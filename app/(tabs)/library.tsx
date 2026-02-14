@@ -50,11 +50,27 @@ import {
 // ✅ move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
 import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
 
-const ATHLETES_KEY = 'athletes:list';
+// ✅ IMPORTANT: use same UID-scoped athletes key as Athletes tab
+import { ensureAnonymous } from '../../lib/firebase';
+
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
+function athletesKey(uid: string) {
+  return `athletes:list:${uid}`;
+}
+
 type Row = LibraryRow;
-type Athlete = { id: string; name: string; photoUri?: string | null };
+
+// Make this flexible so we can display photos from local or cloud fields
+type Athlete = {
+  id: string;
+  name: string;
+  photoUri?: string | null;       // legacy
+  photoLocalUri?: string | null;  // your current local saved photo
+  photoUrl?: string | null;       // cloud URL
+  photoKey?: string | null;
+  photoUpdatedAt?: number | null;
+};
 
 // ----- bounded concurrency helper (still used for lazy thumbs + legacy fallback load) -----
 async function mapLimit<T, R>(
@@ -187,8 +203,10 @@ export default function LibraryScreen() {
     filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
     setRows(filtered);
 
+    // ✅ FIX: load athletes from UID-scoped key
     try {
-      const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+      const u = await ensureAnonymous();
+      const raw = await AsyncStorage.getItem(athletesKey(u.uid));
       setAthleteList(raw ? (JSON.parse(raw) as Athlete[]) : []);
     } catch {
       setAthleteList([]);
@@ -422,8 +440,17 @@ export default function LibraryScreen() {
     };
   }, [sourceRows]);
 
+  // ✅ FIX: prefer local photo, then cloud photoUrl, then legacy photoUri
   const photoFor = useCallback(
-    (name: string) => athleteList.find((a) => a.name === name)?.photoUri ?? null,
+    (name: string) => {
+      const a = athleteList.find((x) => x.name === name);
+      return (
+        a?.photoLocalUri ??
+        a?.photoUrl ??
+        a?.photoUri ??
+        null
+      );
+    },
     [athleteList],
   );
 
@@ -498,13 +525,19 @@ export default function LibraryScreen() {
         return;
       }
 
-      const exists = athleteList.some((a) => a.name.toLowerCase() === trimmed.toLowerCase());
+      const exists = athleteList.some(
+        (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+
       if (!exists) {
         const newEntry: Athlete = { id: `${Date.now()}`, name: trimmed };
         const nextList = [newEntry, ...athleteList];
         setAthleteList(nextList);
+
+        // ✅ FIX: persist to UID-scoped key (same as Athletes tab)
         try {
-          await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(nextList));
+          const u = await ensureAnonymous();
+          await AsyncStorage.setItem(athletesKey(u.uid), JSON.stringify(nextList));
         } catch {}
       }
 
@@ -645,7 +678,7 @@ export default function LibraryScreen() {
       <EditAthleteModal
         visible={!!athletePickerOpen}
         row={athletePickerOpen}
-        athleteList={athleteList}
+        athleteList={athleteList as any}
         onClose={closeAthleteModal}
         onSelectExisting={handleSelectExistingAthlete}
         onSubmitNewAthlete={handleSubmitNewAthlete}
