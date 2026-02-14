@@ -1,16 +1,9 @@
 // lib/firebase.ts
-
-console.log("FIREBASE KEY =", process.env.EXPO_PUBLIC_FIREBASE_API_KEY);
-console.log("FIREBASE PROJECT =", process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
-// ✅ Firestore
-import { getFirestore } from 'firebase/firestore';
-
-// Typed imports you need:
 import {
   getAuth,
   initializeAuth,
@@ -18,38 +11,46 @@ import {
   type User,
 } from 'firebase/auth';
 
-// Namespace import to access getReactNativePersistence at runtime
+// Namespace import so we can call getReactNativePersistence at runtime
 import * as AuthNS from 'firebase/auth';
 
+function requireEnv(name: string) {
+  const v = process.env[name];
+  if (!v) {
+    // Crash early in dev if env isn't set (prevents weird auth behavior)
+    throw new Error(`Missing env var: ${name}`);
+  }
+  return v;
+}
+
 const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY!,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN!,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID!,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET!,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID!,
+  apiKey: requireEnv('EXPO_PUBLIC_FIREBASE_API_KEY'),
+  authDomain: requireEnv('EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN'),
+  projectId: requireEnv('EXPO_PUBLIC_FIREBASE_PROJECT_ID'),
+  storageBucket: requireEnv('EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requireEnv('EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: requireEnv('EXPO_PUBLIC_FIREBASE_APP_ID'),
 };
 
-// Initialize Firebase app once
+// ✅ Initialize Firebase app ONCE
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// Use React Native persistence so the anon user survives app restarts
-const auth = (() => {
-  try {
-    return initializeAuth(app, {
-      // TS workaround; function exists at runtime on Firebase v12+
-      persistence: (AuthNS as any).getReactNativePersistence(AsyncStorage),
-    });
-  } catch {
-    // If already initialized elsewhere, fall back
-    return getAuth(app);
-  }
-})();
+// ✅ Initialize Auth ONCE with React Native persistence
+// This is what keeps users logged in across app restarts (TestFlight + production)
+let auth: ReturnType<typeof getAuth>;
 
-const storage = getStorage(app);
+try {
+  auth = initializeAuth(app, {
+    // getReactNativePersistence exists at runtime; TS can be annoying depending on versions
+    persistence: (AuthNS as any).getReactNativePersistence(AsyncStorage),
+  });
+} catch (e: any) {
+  // If Auth was already initialized (Fast Refresh / reload), reuse it
+  auth = getAuth(app);
+}
 
-// ✅ Firestore instance
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 export async function ensureAnonymous(): Promise<User> {
   if (!auth.currentUser) {
@@ -60,4 +61,3 @@ export async function ensureAnonymous(): Promise<User> {
 }
 
 export { app, auth, db, storage };
-
