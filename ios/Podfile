@@ -1,4 +1,4 @@
-# 🚩 CRITICAL FIX: Tell ffmpeg-kit-react-native which package to use
+# 🚩 Tell ffmpeg-kit-react-native which package to use
 ENV['FFMPEG_KIT_PACKAGE'] = 'full'
 
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
@@ -7,7 +7,8 @@ require File.join(File.dirname(`node --print "require.resolve('react-native/pack
 require 'json'
 podfile_properties = JSON.parse(File.read(File.join(__dir__, 'Podfile.properties.json'))) rescue {}
 
-ENV['RCT_NEW_ARCH_ENABLED'] = '0' if podfile_properties['newArchEnabled'] == 'false'
+# ✅ FORCE legacy arch
+ENV['RCT_NEW_ARCH_ENABLED'] = '0'
 ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
 
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
@@ -17,16 +18,17 @@ install! 'cocoapods',
 
 prepare_react_native_project!
 
+project 'sportapp.xcodeproj'
+
 target 'sportapp' do
   use_expo_modules!
 
-  # ✅ 1) Your custom FULL iOS podspec (KEEP THIS)
+  # ✅ Your custom FULL iOS podspec (KEEP THIS)
   pod 'ffmpeg-kit-ios-full',
       :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
 
-  # ✅ 2) Force the RN wrapper to use FULL (prevents it from trying https/gpl variants)
-  # IMPORTANT: This only works correctly if autolinking does NOT also add ffmpeg-kit-react-native.
-  pod 'ffmpeg-kit-react-native', :path => '../node_modules/ffmpeg-kit-react-native', :subspecs => ['full']
+  # ✅ RN wrapper (this is what imports NativeModules.FFmpegKit…)
+  pod 'ffmpeg-kit-react-native', :path => '../node_modules/ffmpeg-kit-react-native'
 
   # ---- Expo / RN autolinking ----
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
@@ -57,6 +59,13 @@ target 'sportapp' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
+
+    # ✅ CRITICAL: replace any ffmpeg-kit-ios-* pods the wrapper tries to pull
+    installer.pod_targets.each do |t|
+      if t.name.start_with?('ffmpeg-kit-ios-') && t.name != 'ffmpeg-kit-ios-full'
+        puts "🚫 Removing unwanted pod target: #{t.name}"
+      end
+    end
 
     # Xcode signs resource bundles by default for devices; disable for pods.
     installer.target_installation_results.pod_target_installation_results.each do |_, result|

@@ -31,10 +31,7 @@ import { getRecordingOverlay } from '../../components/overlays/RecordingOverlayR
 import type { Actor, MatchEvent } from '../../lib/recording/finalizeRecording';
 
 // ✅ segmented recording manager
-import {
-  startNewSegment,
-  stopCurrentSegment,
-} from '../../lib/recording/segmentManager';
+import { startNewSegment, stopCurrentSegment } from '../../lib/recording/segmentManager';
 
 const CURRENT_ATHLETE_KEY = 'currentAthleteName';
 
@@ -96,6 +93,10 @@ export default function CameraScreen() {
   const [isPaused, setIsPaused] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // ✅ NEW: prevent overlapping stop/start which can hard-crash iOS camera
+  const segmentTransitionRef = useRef(false);
+  const [segmentTransition, setSegmentTransition] = useState(false);
+
   const [startMs, setStartMs] = useState<number | null>(null);
   const pauseStartedAtRef = useRef<number | null>(null);
   const totalPausedMsRef = useRef(0);
@@ -120,6 +121,11 @@ export default function CameraScreen() {
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
+  };
+
+  const setSegBusy = (v: boolean) => {
+    segmentTransitionRef.current = v;
+    setSegmentTransition(v);
   };
 
   // --- athlete initial state
@@ -165,6 +171,7 @@ export default function CameraScreen() {
       setCameraReady(false);
       setShouldRenderCamera(false);
       camOpacity.setValue(0);
+      setSegBusy(false);
     } else if (isFocused && permission?.granted) {
       const timer = setTimeout(() => setShouldRenderCamera(true), 150);
       return () => clearTimeout(timer);
@@ -180,6 +187,7 @@ export default function CameraScreen() {
       setIsRecording(false);
       setIsPaused(false);
       segmentActiveRef.current = false;
+      setSegBusy(false);
     }
   }, [isFocused, isRecording]);
 
@@ -264,7 +272,7 @@ export default function CameraScreen() {
   };
 
   const handleStart = async () => {
-    if (isRecording || isProcessing) return;
+    if (isRecording || isProcessing || segmentTransitionRef.current) return;
     if (!cameraReady || !cameraRef.current) {
       Alert.alert('Camera not ready', 'Give it a moment, then tap Start.');
       return;
@@ -294,50 +302,79 @@ export default function CameraScreen() {
       await AsyncStorage.setItem(CURRENT_ATHLETE_KEY, (athlete || 'Unassigned').trim());
     } catch {}
 
-    await startNewSegment(cameraRef, cameraReady, segmentsRef, segmentActiveRef, recordPromiseRef);
+    setSegBusy(true);
+    try {
+      await startNewSegment(cameraRef, cameraReady, segmentsRef, segmentActiveRef, recordPromiseRef);
+    } finally {
+      setSegBusy(false);
+    }
   };
 
   const handlePause = async () => {
-    if (!isRecording || isPaused) return;
+    if (!isRecording || isPaused || isProcessing) return;
+    if (segmentTransitionRef.current) return;
+
     pauseStartedAtRef.current = Date.now();
     setIsPaused(true);
-    await stopCurrentSegment(cameraRef, segmentActiveRef);
+
+    setSegBusy(true);
+    try {
+      await stopCurrentSegment(cameraRef, segmentActiveRef);
+    } finally {
+      setSegBusy(false);
+    }
   };
 
   const handleResume = async () => {
-    if (!isRecording || !isPaused) return;
-    if (pauseStartedAtRef.current) {
-      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    if (!isRecording || !isPaused || isProcessing) return;
+    if (segmentTransitionRef.current) return;
+
+    // If the stop is still finishing, wait for it.
+    setSegBusy(true);
+    try {
+      await stopCurrentSegment(cameraRef, segmentActiveRef);
+      if (pauseStartedAtRef.current) {
+        totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+      }
+      pauseStartedAtRef.current = null;
+      setIsPaused(false);
+
+      await startNewSegment(cameraRef, cameraReady, segmentsRef, segmentActiveRef, recordPromiseRef);
+    } finally {
+      setSegBusy(false);
     }
-    pauseStartedAtRef.current = null;
-    setIsPaused(false);
-    await startNewSegment(cameraRef, cameraReady, segmentsRef, segmentActiveRef, recordPromiseRef);
   };
 
   const handleStop = async () => {
     if (!isRecording || isProcessing) return;
+    if (segmentTransitionRef.current) return;
 
-    if (isPaused && pauseStartedAtRef.current) {
-      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
-    }
-    pauseStartedAtRef.current = null;
-
-    await stopCurrentSegment(cameraRef, segmentActiveRef);
-
-    const segmentsToProcess = segmentsRef.current;
-    const chosenAthlete = (athlete || '').trim() || 'Unassigned';
-    const currentMarkers = [...markers];
-    const currentEvents = [...eventsRef.current];
-    const finalScore = { ...scoreRef.current };
-
-    setIsRecording(false);
-    setIsPaused(false);
     setIsProcessing(true);
 
     try {
-      // ✅ Lazy-load finalizeRecording so CameraScreen doesn't load ffmpeg/native modules on mount
-      const mod = await import('../../lib/recording/finalizeRecording');
+      // ensure any pending stop finishes
+      setSegBusy(true);
+      try {
+        await stopCurrentSegment(cameraRef, segmentActiveRef);
+      } finally {
+        setSegBusy(false);
+      }
 
+      if (isPaused && pauseStartedAtRef.current) {
+        totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+      }
+      pauseStartedAtRef.current = null;
+
+      const segmentsToProcess = segmentsRef.current;
+      const chosenAthlete = (athlete || '').trim() || 'Unassigned';
+      const currentMarkers = [...markers];
+      const currentEvents = [...eventsRef.current];
+      const finalScore = { ...scoreRef.current };
+
+      setIsRecording(false);
+      setIsPaused(false);
+
+      const mod = await import('../../lib/recording/finalizeRecording');
       await mod.finalizeRecording(
         segmentsToProcess,
         chosenAthlete,
@@ -354,11 +391,12 @@ export default function CameraScreen() {
       segmentsRef.current = [];
       setMarkers([]);
       setCameraReady(true);
+      setSegBusy(false);
     }
   };
 
   const addHighlight = () => {
-    if (!isRecording || isPaused) return;
+    if (!isRecording || isPaused || isProcessing) return;
 
     const t = Math.max(
       0,
@@ -581,9 +619,9 @@ export default function CameraScreen() {
           <>
             <TouchableOpacity
               onPress={handleStart}
-              disabled={!cameraReady || isProcessing}
+              disabled={!cameraReady || isProcessing || segmentTransition}
               style={{
-                opacity: cameraReady && !isProcessing ? 1 : 0.5,
+                opacity: cameraReady && !isProcessing && !segmentTransition ? 1 : 0.5,
                 paddingVertical: 12,
                 paddingHorizontal: 20,
                 backgroundColor: 'red',
@@ -602,8 +640,9 @@ export default function CameraScreen() {
             {!isPaused ? (
               <TouchableOpacity
                 onPress={handlePause}
-                disabled={isProcessing}
+                disabled={isProcessing || segmentTransition}
                 style={{
+                  opacity: !isProcessing && !segmentTransition ? 1 : 0.5,
                   paddingVertical: 12,
                   paddingHorizontal: 16,
                   backgroundColor: 'rgba(255,255,255,0.12)',
@@ -617,8 +656,9 @@ export default function CameraScreen() {
             ) : (
               <TouchableOpacity
                 onPress={handleResume}
-                disabled={isProcessing}
+                disabled={isProcessing || segmentTransition}
                 style={{
+                  opacity: !isProcessing && !segmentTransition ? 1 : 0.5,
                   paddingVertical: 12,
                   paddingHorizontal: 16,
                   backgroundColor: 'white',
@@ -631,8 +671,9 @@ export default function CameraScreen() {
 
             <TouchableOpacity
               onPress={handleStop}
-              disabled={isProcessing}
+              disabled={isProcessing || segmentTransition}
               style={{
+                opacity: !isProcessing && !segmentTransition ? 1 : 0.5,
                 paddingVertical: 12,
                 paddingHorizontal: 20,
                 backgroundColor: 'white',
@@ -645,7 +686,7 @@ export default function CameraScreen() {
             <View style={{ marginLeft: 6 }}>
               <HighlightButton
                 onPress={addHighlight}
-                disabled={isPaused || isProcessing}
+                disabled={isPaused || isProcessing || segmentTransition}
                 count={markers.length}
               />
             </View>
