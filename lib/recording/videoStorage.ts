@@ -1,9 +1,13 @@
 // lib/recording/videoStorage.ts
 // Handles saving full videos + building highlight clips and sidecars.
+//
+// IMPORTANT:
+// - We lazy-load ffmpeg-kit so importing this module won't crash iOS at startup.
+// - Saving the full match does NOT require ffmpeg.
+// - Highlights DO require ffmpeg; if ffmpeg is unavailable, highlights just won't be created.
 
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
 import { Alert } from 'react-native';
 
 const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
@@ -16,7 +20,7 @@ const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   } catch {
-    // ignore "already exists" and similar
+    // ignore
   }
 };
 
@@ -37,6 +41,12 @@ const tsStamp = () => {
 };
 
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
+
+// Lazy loader to avoid iOS NativeEventEmitter crash on import
+async function getFFmpeg() {
+  const mod = await import('ffmpeg-kit-react-native');
+  return { FFmpegKit: mod.FFmpegKit, ReturnCode: mod.ReturnCode };
+}
 
 // ---------- index & album helpers ----------
 
@@ -77,11 +87,7 @@ async function appendVideoIndex(entry: VideoMeta) {
   await writeIndexAtomic(list);
 }
 
-async function importToPhotosAndAlbums(
-  fileUri: string,
-  athlete: string,
-  sport: string,
-) {
+async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: string) {
   try {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted) return undefined;
@@ -119,10 +125,7 @@ export const saveToAppStorage = async (
 ) => {
   if (!srcUri) {
     Alert.alert('No video URI', 'Recording did not return a file path.');
-    return {
-      appUri: null as string | null,
-      assetId: undefined as string | undefined,
-    };
+    return { appUri: null as string | null, assetId: undefined as string | undefined };
   }
 
   const athlete = (athleteRaw || '').trim() || 'Unassigned';
@@ -156,12 +159,7 @@ export const saveToAppStorage = async (
 
 // ---------- exported: highlights & sidecars ----------
 
-async function writeHighlightSidecar(
-  clipUri: string,
-  athlete: string,
-  fromT: number,
-  duration: number,
-) {
+async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: number, duration: number) {
   try {
     const jsonUri = clipUri.replace(/\.[^/.]+$/, '') + '.json';
     await FileSystem.writeAsStringAsync(
@@ -179,11 +177,7 @@ async function writeHighlightSidecar(
 
 async function addClipToIndexAndAlbums(clipUri: string, athlete: string) {
   const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
-  const assetId = await importToPhotosAndAlbums(
-    clipUri,
-    athlete,
-    HIGHLIGHTS_SPORT,
-  );
+  const assetId = await importToPhotosAndAlbums(clipUri, athlete, HIGHLIGHTS_SPORT);
 
   await appendVideoIndex({
     uri: clipUri,
@@ -209,6 +203,19 @@ export const processHighlights = async (
 ) => {
   if (!markers.length) return [];
 
+  // If ffmpeg isn't linked correctly, this is where it will fail.
+  // We'll just skip highlights instead of crashing the whole save.
+  let FFmpegKit: any;
+  let ReturnCode: any;
+  try {
+    const m = await getFFmpeg();
+    FFmpegKit = m.FFmpegKit;
+    ReturnCode = m.ReturnCode;
+  } catch (e) {
+    console.log('[highlights] ffmpeg unavailable, skipping highlights', e);
+    return [];
+  }
+
   const destDir = await destForHighlight(athleteName);
   const results: { url: string; markerTime: number }[] = [];
 
@@ -217,9 +224,7 @@ export const processHighlights = async (
     const outPath = `${destDir}clip_${i + 1}_${tsStamp()}.mp4`;
 
     // first attempt: stream copy
-    let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(
-      videoUri,
-    )} -c copy ${q(outPath)}`;
+    let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c copy ${q(outPath)}`;
     let s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
@@ -230,11 +235,7 @@ export const processHighlights = async (
     }
 
     // fallback: re-encode
-    cmd = `-y -ss ${start} -t ${durationSec} -i ${q(
-      videoUri,
-    )} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(
-      outPath,
-    )}`;
+    cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(outPath)}`;
     s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {

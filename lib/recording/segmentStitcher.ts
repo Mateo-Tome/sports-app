@@ -1,10 +1,13 @@
 // lib/recording/segmentStitcher.ts
 // Handles stitching multiple video segments together,
-// with a safe Android fallback so we don't lose recordings.
+// with a safe fallback so we don't lose recordings.
+//
+// IMPORTANT:
+// - We lazy-load ffmpeg-kit so importing this module won't crash iOS at startup.
+// - If FFmpeg is not available or concat fails, we fall back to the first segment.
+//   (You still keep the recording, but you may lose the "paused" segments merge.)
 
 import * as FileSystem from 'expo-file-system';
-import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
-import { Platform } from 'react-native';
 
 const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
 
@@ -12,7 +15,7 @@ const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   } catch {
-    // ignore "already exists" and similar
+    // ignore
   }
 };
 
@@ -27,71 +30,75 @@ const tsStamp = () => {
 
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
 
+// Lazy loader to avoid iOS NativeEventEmitter crash on import
+async function getFFmpeg() {
+  const mod = await import('ffmpeg-kit-react-native');
+  return { FFmpegKit: mod.FFmpegKit, ReturnCode: mod.ReturnCode };
+}
+
 // Low-level concat using FFmpeg
 async function concatSegmentsInternal(
   segments: string[],
   outPath: string,
-): Promise<boolean> {
-  if (!segments.length) return false;
+): Promise<{ ok: boolean; error?: any }> {
+  if (!segments.length) return { ok: false };
 
   await ensureDir(SEG_DIR);
 
   const listTxt = segments
     .map((p) => `file '${String(p).replace(/'/g, "'\\''")}'`)
     .join('\n');
-  const listPath = SEG_DIR + `list_${tsStamp()}.txt`;
 
+  const listPath = SEG_DIR + `list_${tsStamp()}.txt`;
   await FileSystem.writeAsStringAsync(listPath, listTxt);
 
-  const cmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
-  const sess = await FFmpegKit.execute(cmd);
-  const ok = ReturnCode.isSuccess(await sess.getReturnCode());
+  try {
+    const { FFmpegKit, ReturnCode } = await getFFmpeg();
 
-  if (!ok) {
-    console.log(
-      '[segmentStitcher] concat failed, logs:\n',
-      await sess.getAllLogsAsString(),
-    );
+    const cmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
+    const sess = await FFmpegKit.execute(cmd);
+    const ok = ReturnCode.isSuccess(await sess.getReturnCode());
+
+    if (!ok) {
+      console.log(
+        '[segmentStitcher] concat failed, logs:\n',
+        await sess.getAllLogsAsString(),
+      );
+    }
+
+    return { ok };
+  } catch (e) {
+    console.log('[segmentStitcher] ffmpeg not available / failed to execute', e);
+    return { ok: false, error: e };
   }
-
-  return ok;
 }
 
 /**
- * High-level stitcher with platform-aware fallback.
+ * High-level stitcher with safe fallback.
  *
  * - 0 segments  → { ok: false, finalPath: null }
  * - 1 segment   → { ok: true,  finalPath: that segment }
  * - ≥2 segments → try FFmpeg concat
  *      - success → stitched file path
- *      - fail on ANDROID → fall back to first segment (ok: true)
- *      - fail on iOS/other → ok: false, finalPath: null
+ *      - fail     → fall back to first segment (ok: true)
+ *
+ * NOTE: fallback means you keep the recording, but you lose merged pauses.
  */
 export async function stitchSegmentsWithFallback(
   segments: string[],
-): Promise<{ ok: boolean; finalPath: string | null }> {
-  if (!segments.length) {
-    return { ok: false, finalPath: null };
-  }
+): Promise<{ ok: boolean; finalPath: string | null; usedFallback?: boolean }> {
+  if (!segments.length) return { ok: false, finalPath: null };
 
-  if (segments.length === 1) {
-    return { ok: true, finalPath: segments[0] };
-  }
+  if (segments.length === 1) return { ok: true, finalPath: segments[0] };
 
   const stitchedPath = SEG_DIR + `final_${tsStamp()}.mp4`;
-  const ok = await concatSegmentsInternal(segments, stitchedPath);
+  const res = await concatSegmentsInternal(segments, stitchedPath);
 
-  if (ok) {
-    return { ok: true, finalPath: stitchedPath };
+  if (res.ok) {
+    return { ok: true, finalPath: stitchedPath, usedFallback: false };
   }
 
-  if (Platform.OS === 'android') {
-    console.warn(
-      '[segmentStitcher] concat failed on Android, falling back to first segment',
-    );
-    return { ok: true, finalPath: segments[0] };
-  }
-
-  // iOS + other platforms: report failure so caller can show an error
-  return { ok: false, finalPath: null };
+  // ✅ Safe fallback on ALL platforms to avoid losing recordings
+  console.warn('[segmentStitcher] concat failed, falling back to first segment');
+  return { ok: true, finalPath: segments[0], usedFallback: true };
 }
