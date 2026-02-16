@@ -2,6 +2,7 @@
 import { subscribeAccess, type AccessState } from '@/lib/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -15,15 +16,22 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { ensureAnonymous } from '../../lib/firebase';
 
 const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Volleyball', 'BJJ'] as const;
 
-type Athlete = { id: string; name: string; photoUri?: string | null };
-const ATHLETES_KEY = 'athletes:list';
+type Athlete = {
+  id: string;
+  name: string;
+  // your index flow may store these; we support them without breaking UI
+  photoUri?: string | null;
+  photoLocalUri?: string | null;
+  photoUrl?: string | null;
+};
+
+const ATHLETES_KEY_PREFIX = 'athletes:list';
 
 const paramToStr = (v: unknown, fallback = '') =>
   Array.isArray(v) ? String(v[0] ?? fallback) : v == null ? fallback : String(v);
@@ -62,6 +70,15 @@ function sportKeyToNiceLabel(key: string) {
   }
 }
 
+async function getActiveUid(): Promise<string> {
+  const u = await ensureAnonymous();
+  return u.uid;
+}
+
+function athletesKey(uid: string) {
+  return `${ATHLETES_KEY_PREFIX}:${uid}`;
+}
+
 export default function RecordingScreen() {
   const params = useLocalSearchParams<{ athlete?: string | string[] }>();
   const insets = useSafeAreaInsets();
@@ -70,7 +87,7 @@ export default function RecordingScreen() {
   const initialAthlete = useMemo(
     () => paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned',
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [],
   );
 
   const [athlete, setAthlete] = useState<string>(initialAthlete);
@@ -102,18 +119,44 @@ export default function RecordingScreen() {
 
   const loadAthletes = useCallback(async () => {
     try {
-      const raw = await AsyncStorage.getItem(ATHLETES_KEY);
+      const uid = await getActiveUid();
+      const key = athletesKey(uid);
+
+      const raw = await AsyncStorage.getItem(key);
       const list = raw ? JSON.parse(raw) : [];
-      setAthletes(Array.isArray(list) ? list : []);
-    } catch {
+
+      const normalized: Athlete[] = Array.isArray(list)
+        ? list
+            .map((a: any) => ({
+              id: String(a?.id ?? '').trim(),
+              name: String(a?.name ?? '').trim(),
+              photoUri: (a?.photoUri ?? null) as any,
+              photoLocalUri: (a?.photoLocalUri ?? null) as any,
+              photoUrl: (a?.photoUrl ?? null) as any,
+            }))
+            .filter((a) => a.id && a.name)
+        : [];
+
+      setAthletes(normalized);
+    } catch (e) {
+      console.log('[recordingScreen] loadAthletes failed:', e);
       setAthletes([]);
     }
   }, []);
 
+  // Initial load
   useEffect(() => {
     loadAthletes();
   }, [loadAthletes]);
 
+  // Refresh whenever this tab/screen is focused (so it’s always current)
+  useFocusEffect(
+    useCallback(() => {
+      loadAthletes();
+    }, [loadAthletes]),
+  );
+
+  // If picker opens, quick refresh too (keeps it feeling instant)
   useEffect(() => {
     if (!pickerOpen) return;
     const id = setTimeout(() => loadAthletes(), 50);
@@ -172,7 +215,7 @@ export default function RecordingScreen() {
         Alert.alert(
           'Sport locked',
           `Your free account is locked to ${sportKeyToNiceLabel(access.allowedSport)}.\n\nUpgrade to unlock all sports.`,
-          [{ text: 'OK' }, { text: 'Upgrade', onPress: goToPaywall }]
+          [{ text: 'OK' }, { text: 'Upgrade', onPress: goToPaywall }],
         );
         return;
       }
@@ -213,6 +256,10 @@ export default function RecordingScreen() {
 
   const AthleteCard = () => {
     const current = athletes.find((a) => a.name === athlete);
+
+    const photo =
+      current?.photoLocalUri || current?.photoUri || current?.photoUrl || null;
+
     return (
       <View
         style={{
@@ -229,9 +276,9 @@ export default function RecordingScreen() {
         </Text>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-          {current?.photoUri ? (
+          {photo ? (
             <Image
-              source={{ uri: current.photoUri }}
+              source={{ uri: photo }}
               style={{
                 width: 48,
                 height: 48,
@@ -289,6 +336,7 @@ export default function RecordingScreen() {
 
   const AthletePickerOverlay = () => {
     if (!pickerOpen) return null;
+
     return (
       <View
         pointerEvents="auto"
@@ -308,6 +356,7 @@ export default function RecordingScreen() {
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
           onPress={() => setPickerOpen(false)}
         />
+
         <View
           style={{
             backgroundColor: '#121212',
@@ -315,6 +364,7 @@ export default function RecordingScreen() {
             padding: 16,
             borderWidth: 1,
             borderColor: 'rgba(255,255,255,0.15)',
+            maxHeight: '85%',
           }}
         >
           <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Choose Athlete</Text>
@@ -331,51 +381,61 @@ export default function RecordingScreen() {
             </Text>
           </Pressable>
 
-          {athletes.map((a) => (
-            <Pressable
-              key={a.id}
-              onPress={() => {
-                applyAthlete(a.name);
-                setPickerOpen(false);
-              }}
-              style={{ paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}
-            >
-              {a.photoUri ? (
-                <Image
-                  source={{ uri: a.photoUri }}
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                    marginRight: 8,
-                  }}
-                />
-              ) : (
-                <View
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginRight: 8,
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
-                    {initials(a.name)}
-                  </Text>
-                </View>
-              )}
-              <Text
-                style={{ color: 'white', fontWeight: athlete === a.name ? '900' : '600' }}
-                numberOfLines={1}
-              >
-                {a.name}
-              </Text>
-            </Pressable>
-          ))}
+          {/* Scrollable athlete list */}
+          <View style={{ maxHeight: 360 }}>
+            <ScrollView showsVerticalScrollIndicator>
+              {athletes.map((a) => {
+                const photo = a.photoLocalUri || a.photoUri || a.photoUrl || null;
+
+                return (
+                  <Pressable
+                    key={a.id}
+                    onPress={() => {
+                      applyAthlete(a.name);
+                      setPickerOpen(false);
+                    }}
+                    style={{ paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}
+                  >
+                    {photo ? (
+                      <Image
+                        source={{ uri: photo }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          backgroundColor: 'rgba(255,255,255,0.15)',
+                          marginRight: 8,
+                        }}
+                      />
+                    ) : (
+                      <View
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          backgroundColor: 'rgba(255,255,255,0.15)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 8,
+                        }}
+                      >
+                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
+                          {initials(a.name)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <Text
+                      style={{ color: 'white', fontWeight: athlete === a.name ? '900' : '600' }}
+                      numberOfLines={1}
+                    >
+                      {a.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 12 }} />
 
@@ -394,6 +454,7 @@ export default function RecordingScreen() {
               paddingVertical: 8,
             }}
           />
+
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
             <TouchableOpacity
               onPress={() => setPickerOpen(false)}
@@ -406,18 +467,27 @@ export default function RecordingScreen() {
             >
               <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               onPress={async () => {
                 const n = newName.trim();
                 if (!n) return;
-                const next = [{ id: `${Date.now()}`, name: n }, ...athletes];
+
+                // Add locally into the SAME uid-scoped key the Index page uses
                 try {
-                  await AsyncStorage.setItem(ATHLETES_KEY, JSON.stringify(next));
-                } catch {}
-                setAthletes(next);
-                applyAthlete(n);
-                setNewName('');
-                setPickerOpen(false);
+                  const uid = await getActiveUid();
+                  const key = athletesKey(uid);
+
+                  const next: Athlete[] = [{ id: `${Date.now()}`, name: n }, ...athletes];
+                  await AsyncStorage.setItem(key, JSON.stringify(next));
+                  setAthletes(next);
+
+                  applyAthlete(n);
+                  setNewName('');
+                  setPickerOpen(false);
+                } catch (e) {
+                  console.log('[recordingScreen] add athlete failed:', e);
+                }
               }}
               style={{
                 paddingVertical: 8,
@@ -468,7 +538,7 @@ export default function RecordingScreen() {
     </View>
   );
 
-  // This is the key fix: ensure scroll content clears the bottom tab bar + gesture inset
+  // ensure scroll content clears the bottom tab bar + gesture inset
   const bottomPad = Math.max(24, insets.bottom + 12) + tabBarHeight;
 
   return (
