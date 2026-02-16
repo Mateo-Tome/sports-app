@@ -1,10 +1,10 @@
 // app/(auth)/paywall.tsx
 import { subscribeAccess, type AccessState } from '@/lib/access';
-import { getMonthlyPackage, purchaseMonthly, restorePurchases } from '@/lib/purchases';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Pressable,
   ScrollView,
@@ -13,6 +13,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// ✅ RevenueCat kill-switch (OFF unless you explicitly enable it)
+// Set EXPO_PUBLIC_ENABLE_REVENUECAT=1 when you’re ready later.
+const RC_ENABLED = process.env.EXPO_PUBLIC_ENABLE_REVENUECAT === '1';
+
+// TODO: paste real URLs (must be reachable on the web)
+const TERMS_URL = 'https://example.com/terms';
+const PRIVACY_URL = 'https://example.com/privacy';
 
 const FEATURES: Array<{
   title: string;
@@ -87,10 +95,6 @@ function IconX() {
   );
 }
 
-// TODO: paste real URLs (must be reachable on the web)
-const TERMS_URL = 'https://example.com/terms';
-const PRIVACY_URL = 'https://example.com/privacy';
-
 export default function PaywallScreen() {
   const insets = useSafeAreaInsets();
 
@@ -104,8 +108,9 @@ export default function PaywallScreen() {
     isPro: false,
   });
 
-  const [pkgLoading, setPkgLoading] = useState(true);
-  const [priceText, setPriceText] = useState<string>('…');
+  // ✅ keep UI stable even when RevenueCat is disabled
+  const [pkgLoading, setPkgLoading] = useState(false);
+  const [priceText, setPriceText] = useState<string>('$10.99'); // just a placeholder for now
   const [buying, setBuying] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -115,23 +120,36 @@ export default function PaywallScreen() {
     return unsub;
   }, []);
 
+  // ✅ Only fetch offerings/price if RC is enabled
   useEffect(() => {
+    if (!RC_ENABLED) {
+      setPkgLoading(false);
+      setErr(null);
+      // keep placeholder priceText
+      return;
+    }
+
     let alive = true;
     (async () => {
       setPkgLoading(true);
       setErr(null);
       try {
+        // Lazy import so TestFlight build never even touches RC code paths unless enabled
+        const { getMonthlyPackage } = await import('@/lib/purchases');
         const p = await getMonthlyPackage();
         if (!alive) return;
         setPriceText(p?.product?.priceString ?? '$10.99');
       } catch (e: any) {
         if (!alive) return;
+        // Don’t show scary errors in UI; keep it quiet unless you're actively testing RC.
         setPriceText('$10.99');
-        setErr(e?.message ?? null);
+        setErr(null);
+        console.log('[Paywall] RevenueCat price fetch skipped/failed (non-fatal):', e?.message ?? e);
       } finally {
         if (alive) setPkgLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
@@ -161,7 +179,6 @@ export default function PaywallScreen() {
   if (access.isPro) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
-        {/* background */}
         <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
         <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
           <View
@@ -190,7 +207,6 @@ export default function PaywallScreen() {
           />
         </View>
 
-        {/* Top bar */}
         <View
           style={{
             paddingTop: 8,
@@ -317,8 +333,15 @@ export default function PaywallScreen() {
 
   const onBuy = async () => {
     setErr(null);
+
+    if (!RC_ENABLED) {
+      Alert.alert('Coming soon', 'Purchases are temporarily disabled in this test build.');
+      return;
+    }
+
     setBuying(true);
     try {
+      const { purchaseMonthly } = await import('@/lib/purchases');
       await purchaseMonthly();
     } catch (e: any) {
       const msg = String(e?.message ?? '');
@@ -330,8 +353,15 @@ export default function PaywallScreen() {
 
   const onRestore = async () => {
     setErr(null);
+
+    if (!RC_ENABLED) {
+      Alert.alert('Coming soon', 'Restore purchases is temporarily disabled in this test build.');
+      return;
+    }
+
     setRestoring(true);
     try {
+      const { restorePurchases } = await import('@/lib/purchases');
       await restorePurchases();
     } catch (e: any) {
       setErr(String(e?.message ?? 'Restore failed.'));
@@ -340,9 +370,12 @@ export default function PaywallScreen() {
     }
   };
 
+  const purchasesDisabledNote = !RC_ENABLED
+    ? 'Purchases are disabled in this test build. (RevenueCat on hold)'
+    : null;
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
-      {/* background */}
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
         <View
@@ -371,7 +404,6 @@ export default function PaywallScreen() {
         />
       </View>
 
-      {/* Top bar */}
       <View
         style={{
           paddingTop: 8,
@@ -407,7 +439,6 @@ export default function PaywallScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero */}
         <View style={{ marginTop: 12, marginBottom: 24 }}>
           <View
             style={{
@@ -448,9 +479,26 @@ export default function PaywallScreen() {
               </Text>
             </View>
           )}
+
+          {!!purchasesDisabledNote && (
+            <View
+              style={{
+                marginTop: 12,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.10)',
+              }}
+            >
+              <Text style={{ color: 'rgba(255,255,255,0.70)', fontSize: 12, fontWeight: '700' }}>
+                {purchasesDisabledNote}
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* Compare */}
         <View
           style={{
             borderRadius: 20,
@@ -534,7 +582,6 @@ export default function PaywallScreen() {
           </View>
         </View>
 
-        {/* Price */}
         <View
           style={{
             borderRadius: 20,
@@ -578,24 +625,29 @@ export default function PaywallScreen() {
           </View>
         </View>
 
-        {/* CTA */}
         <TouchableOpacity
           onPress={onBuy}
-          disabled={buying || pkgLoading}
+          disabled={buying || pkgLoading || !RC_ENABLED}
           activeOpacity={0.88}
           style={{
             borderRadius: 18,
             paddingVertical: 18,
             alignItems: 'center',
-            backgroundColor: buying || pkgLoading ? 'rgba(239,68,68,0.55)' : '#ef4444',
+            backgroundColor:
+              buying || pkgLoading
+                ? 'rgba(239,68,68,0.55)'
+                : !RC_ENABLED
+                  ? 'rgba(239,68,68,0.35)'
+                  : '#ef4444',
             borderWidth: 1,
             borderColor: 'rgba(255,255,255,0.15)',
             shadowColor: '#ef4444',
-            shadowOpacity: buying || pkgLoading ? 0 : 0.5,
+            shadowOpacity: buying || pkgLoading || !RC_ENABLED ? 0 : 0.5,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 8 },
-            elevation: buying || pkgLoading ? 0 : 10,
+            elevation: buying || pkgLoading || !RC_ENABLED ? 0 : 10,
             marginBottom: 14,
+            opacity: !RC_ENABLED ? 0.75 : 1,
           }}
         >
           {buying ? (
@@ -603,10 +655,10 @@ export default function PaywallScreen() {
           ) : (
             <>
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, letterSpacing: 0.3 }}>
-                Start Pro — {priceText}/month
+                {RC_ENABLED ? `Start Pro — ${priceText}/month` : 'Start Pro — Coming soon'}
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 6 }}>
-                Instant unlock • Sync everywhere
+                {RC_ENABLED ? 'Instant unlock • Sync everywhere' : 'Purchases disabled for this test build'}
               </Text>
             </>
           )}
@@ -614,8 +666,8 @@ export default function PaywallScreen() {
 
         <TouchableOpacity
           onPress={onRestore}
-          disabled={restoring}
-          style={{ paddingVertical: 16, alignItems: 'center', opacity: restoring ? 0.6 : 1 }}
+          disabled={restoring || !RC_ENABLED}
+          style={{ paddingVertical: 16, alignItems: 'center', opacity: restoring || !RC_ENABLED ? 0.6 : 1 }}
           activeOpacity={0.7}
         >
           {restoring ? (
@@ -627,7 +679,6 @@ export default function PaywallScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Legal */}
         <View style={{ marginTop: 8, paddingHorizontal: 12 }}>
           <Text style={{ color: 'rgba(255,255,255,0.40)', fontSize: 11, textAlign: 'center', lineHeight: 16 }}>
             Subscription auto-renews unless canceled at least 24 hours before the end of the current period.

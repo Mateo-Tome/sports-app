@@ -2,39 +2,55 @@
 import type { CustomerInfo, PurchasesPackage } from 'react-native-purchases';
 import { getPurchases } from './revenuecat';
 
-export const ENTITLEMENT_ID = 'pro'; // must match RevenueCat entitlement id
-export const OFFERING_ID = 'default'; // optional: your offering id in RevenueCat dashboard
+export const ENTITLEMENT_ID = 'pro';
+export const OFFERING_ID = 'default';
 
 export async function getMonthlyPackage(): Promise<PurchasesPackage | null> {
-  const Purchases = await getPurchases();
+  try {
+    const Purchases = await getPurchases();
+    if (!Purchases) return null; // RC disabled/unavailable
 
-  const offerings = await Purchases.getOfferings();
-  const offering = offerings.all[OFFERING_ID] ?? offerings.current;
-  if (!offering) return null;
+    const offerings = await Purchases.getOfferings();
+    const offering = offerings?.all?.[OFFERING_ID] ?? offerings?.current;
+    if (!offering) return null;
 
-  const monthly =
-    offering.monthly ??
-    offering.availablePackages.find((p: PurchasesPackage) => p.packageType === 'MONTHLY') ??
-    offering.availablePackages[0];
+    const monthly =
+      offering.monthly ??
+      offering.availablePackages?.find((p: PurchasesPackage) => p.packageType === 'MONTHLY') ??
+      offering.availablePackages?.[0];
 
-  return monthly ?? null;
+    return monthly ?? null;
+  } catch (e) {
+    // non-fatal: just means purchases are not ready yet
+    console.log('[Purchases] getMonthlyPackage unavailable (expected while RC paused)', e);
+    return null;
+  }
 }
 
-export async function purchaseMonthly(): Promise<CustomerInfo> {
-  const Purchases = await getPurchases();
+export async function purchaseMonthly(): Promise<CustomerInfo | null> {
+  try {
+    const Purchases = await getPurchases();
+    if (!Purchases) return null;
 
-  const pkg = await getMonthlyPackage();
-  if (!pkg) throw new Error('No subscription package available.');
+    const pkg = await getMonthlyPackage();
+    if (!pkg) return null;
 
-  const { customerInfo } = await Purchases.purchasePackage(pkg);
-
-  const active = !!customerInfo.entitlements.active[ENTITLEMENT_ID];
-  if (!active) throw new Error('Purchase completed, but entitlement not active.');
-
-  return customerInfo;
+    const { customerInfo } = await Purchases.purchasePackage(pkg);
+    return customerInfo ?? null;
+  } catch (e) {
+    console.log('[Purchases] purchaseMonthly failed (non-fatal while RC paused)', e);
+    return null;
+  }
 }
 
-export async function restorePurchases(): Promise<CustomerInfo> {
-  const Purchases = await getPurchases();
-  return Purchases.restorePurchases();
+export async function restorePurchases(): Promise<CustomerInfo | null> {
+  try {
+    const Purchases = await getPurchases();
+    if (!Purchases) return null;
+
+    return await Purchases.restorePurchases();
+  } catch (e) {
+    console.log('[Purchases] restorePurchases failed (non-fatal while RC paused)', e);
+    return null;
+  }
 }

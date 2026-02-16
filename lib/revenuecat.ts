@@ -10,8 +10,8 @@ const ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY;
 
 /**
  * Safety switch:
- * - In RELEASE/TestFlight: RevenueCat is OFF by default unless EXPO_PUBLIC_ENABLE_REVENUECAT=1
- * - In DEV: RevenueCat can run (if keys exist)
+ * - RevenueCat is OFF unless EXPO_PUBLIC_ENABLE_REVENUECAT=1
+ *   (this keeps dev + TestFlight clean while you’re not ready)
  */
 const RC_ENABLED = process.env.EXPO_PUBLIC_ENABLE_REVENUECAT === '1';
 
@@ -20,9 +20,8 @@ export function isNativePlatform() {
 }
 
 function isRcAllowedRightNow() {
-  // In dev, allow.
-  // In release, only allow if explicitly enabled.
-  return __DEV__ || RC_ENABLED;
+  // OFF by default everywhere unless explicitly enabled
+  return RC_ENABLED;
 }
 
 function getPlatformApiKey() {
@@ -61,16 +60,10 @@ async function safeGetPurchases(): Promise<any | null> {
 
 /**
  * Exported for other modules (like lib/purchases.ts).
- * Throws a friendly error if RC is disabled/unavailable, instead of crashing with undefined.
+ * ✅ IMPORTANT: returns null when disabled/unavailable (does NOT throw)
  */
-export async function getPurchases(): Promise<any> {
-  const P = await safeGetPurchases();
-  if (!P) {
-    throw new Error(
-      '[RevenueCat] Purchases is disabled/unavailable (release disabled unless EXPO_PUBLIC_ENABLE_REVENUECAT=1).'
-    );
-  }
-  return P;
+export async function getPurchases(): Promise<any | null> {
+  return await safeGetPurchases();
 }
 
 /**
@@ -82,7 +75,7 @@ export async function configureRevenueCat(appUserId?: string | null) {
     if (!isNativePlatform()) return;
 
     if (!isRcAllowedRightNow()) {
-      console.log('[RevenueCat] Disabled in release (set EXPO_PUBLIC_ENABLE_REVENUECAT=1 to enable).');
+      // keep quiet while disabled
       return;
     }
 
@@ -97,9 +90,9 @@ export async function configureRevenueCat(appUserId?: string | null) {
     const P = await safeGetPurchases();
     if (!P) return;
 
-    // Debug logs in dev only
+    // Debug logs only when you explicitly enable RC
     try {
-      if (__DEV__ && P?.LOG_LEVEL?.DEBUG) {
+      if (P?.LOG_LEVEL?.DEBUG) {
         P.setLogLevel(P.LOG_LEVEL.DEBUG);
       }
     } catch {}
