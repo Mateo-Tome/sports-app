@@ -2,8 +2,8 @@
   "expo": {
     "name": "QuickClip",
     "slug": "sport-app",
-    "jsEngine": "jsc",
-    "version": "1.0.1",
+    "jsEngine": "hermes",
+    "version": "1.0.2",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "quickclip",
@@ -25,7 +25,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
-      "buildNumber": "11",
+      "buildNumber": "16",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
