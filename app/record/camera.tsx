@@ -2,7 +2,7 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, type CameraView as CameraViewRef } from 'expo-camera';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -35,15 +35,20 @@ export default function CameraScreen() {
   
   const sportParam = params.sport || 'wrestling';
   const styleParam = params.style || 'folkstyle';
+  const athleteName = params.athlete || 'Unassigned';
 
   const [permission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [remountKey] = useState(0);
 
-  // --- Optimized Zoom State ---
+  // --- Animations ---
+  const pulseAnim = useRef(new Animated.Value(0.4)).current;
+  const camOpacity = useRef(new Animated.Value(0)).current;
+
+  // --- Zoom State ---
   const [zoom, setZoom] = useState(0);
-  const baseZoomRef = useRef(0); // Tracks zoom level between pinches
+  const baseZoomRef = useRef(0);
 
   // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false);
@@ -59,28 +64,33 @@ export default function CameraScreen() {
   const segmentsRef = useRef<string[]>([]);
   const segmentActiveRef = useRef(false);
   const recordPromiseRef = useRef<Promise<any> | null>(null);
-  const camOpacity = useRef(new Animated.Value(0)).current;
 
   const startMs = useRef<number | null>(null);
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
 
-  // --- Zoom Logic: Smooth & Cinematic ---
+  // Pulse effect for the "Ready" indicator
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    if (cameraReady && !isRecording) pulse.start();
+    return () => pulse.stop();
+  }, [cameraReady, isRecording]);
+
+  // --- Zoom Logic ---
   const onPinchGestureEvent = (event: PinchGestureHandlerGestureEvent) => {
-    // Multiplier changed to 0.2 for slower, more precise zooming
     let newZoom = baseZoomRef.current + (event.nativeEvent.scale - 1) * 0.2;
-    
-    // Clamp between 0 (wide) and 1 (max telephoto)
     newZoom = Math.max(0, Math.min(newZoom, 1));
-    
-    // Only update state if change is meaningful to prevent CPU overload
     if (Math.abs(newZoom - zoom) > 0.002) {
       setZoom(newZoom);
     }
   };
 
   const onPinchStateChange = (event: any) => {
-    // When fingers are lifted, lock in the current zoom as the new baseline
     if (event.nativeEvent.oldState === State.ACTIVE) {
       baseZoomRef.current = zoom;
     }
@@ -168,12 +178,11 @@ export default function CameraScreen() {
     setIsTransitioning(true);
     try {
       await stopCurrentSegment(cameraRef, segmentActiveRef);
-      // Wait for hardware to release the final file segment
       await new Promise(r => setTimeout(r, 600));
       const mod = await import('../../lib/recording/finalizeRecording');
       await mod.finalizeRecording(
         segmentsRef.current,
-        'Athlete',
+        athleteName,
         `${sportParam}:${styleParam}`,
         markers,
         eventsRef.current,
@@ -214,10 +223,34 @@ export default function CameraScreen() {
             <View style={styles.centered}><ActivityIndicator color="white" /></View>
           )}
 
-          {/* Zoom Indicator - Solid background stops iOS warnings */}
+          {/* Top-Left Close Button */}
+          {!isRecording && (
+            <TouchableOpacity 
+              style={[styles.backBtn, { top: insets.top + 10 }]} 
+              onPress={() => navigation.goBack()}
+            >
+              <Text style={styles.backBtnText}>✕ CLOSE</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Combined Athlete & Status Pill (Dead Center) */}
+          {cameraReady && !isRecording && (
+            <View style={styles.centerHudContainer} pointerEvents="none">
+              <View style={styles.hudPill}>
+                <Text style={styles.hudAthleteName}>{athleteName.toUpperCase()}</Text>
+                <View style={styles.hudDivider} />
+                <View style={styles.hudStatusRow}>
+                  <Animated.View style={[styles.hudPulseDot, { opacity: pulseAnim }]} />
+                  <Text style={styles.hudStatusText}>READY TO RECORD</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Zoom Indicator */}
           {zoom > 0 && (
-            <View style={styles.zoomIndicator}>
-              <Text style={styles.zoomText}>{Math.round(zoom * 100)}%</Text>
+            <View style={[styles.zoomIndicator, { top: insets.top + 10 }]}>
+              <Text style={styles.zoomText}>{Math.round(zoom * 100)}% ZOOM</Text>
             </View>
           )}
 
@@ -247,12 +280,12 @@ export default function CameraScreen() {
           {isProcessing && (
             <View style={styles.overlayLoader}>
               <ActivityIndicator size="large" color="#FFF" />
-              <Text style={styles.loaderText}>Processing Movie...</Text>
+              <Text style={styles.loaderText}>SAVING VIDEO...</Text>
             </View>
           )}
 
           {/* Controls Bar */}
-          <View style={[styles.controls, { bottom: insets.bottom + 30 }]}>
+          <View style={[styles.controls, { bottom: insets.bottom + 40 }]}>
             {!isRecording ? (
               <TouchableOpacity 
                 style={styles.recordBtnOuter} 
@@ -295,31 +328,92 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  // Close Button
+  backBtn: { 
+    position: 'absolute', 
+    left: 20, 
+    backgroundColor: 'rgba(0,0,0,0.6)', 
+    paddingHorizontal: 16, 
+    paddingVertical: 10, 
+    borderRadius: 25, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255,255,255,0.2)',
+    zIndex: 100 
+  },
+  backBtnText: { color: 'white', fontWeight: '900', fontSize: 11, letterSpacing: 1 },
+  // Central HUD Pill
+  centerHudContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  hudPill: {
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 40,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  hudAthleteName: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  hudDivider: {
+    width: 40,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginVertical: 6,
+  },
+  hudStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  hudPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4ADE80',
+    marginRight: 8,
+  },
+  hudStatusText: {
+    color: '#4ADE80',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+  },
+  // Zoom Indicator
   zoomIndicator: { 
     position: 'absolute', 
-    top: 100, 
     right: 20, 
-    backgroundColor: 'rgba(20,20,20,0.8)', 
+    backgroundColor: 'rgba(0,0,0,0.6)', 
     paddingHorizontal: 12,
-    paddingVertical: 6, 
+    paddingVertical: 8, 
     borderRadius: 20,
     zIndex: 50
   },
-  zoomText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
+  zoomText: { color: 'white', fontWeight: 'bold', fontSize: 10, letterSpacing: 1 },
+  // Loader
   overlayLoader: { 
     ...StyleSheet.absoluteFillObject, 
-    backgroundColor: 'rgba(0,0,0,0.85)', 
+    backgroundColor: 'rgba(0,0,0,0.9)', 
     justifyContent: 'center', 
     alignItems: 'center', 
     zIndex: 1000 
   },
-  loaderText: { color: 'white', marginTop: 15, fontWeight: 'bold' },
+  loaderText: { color: 'white', marginTop: 15, fontWeight: '900', letterSpacing: 2 },
+  // Controls
   controls: { position: 'absolute', width: '100%', alignItems: 'center', zIndex: 10 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 40 },
-  recordBtnOuter: { width: 75, height: 75, borderRadius: 40, borderWidth: 4, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
-  recordBtnInner: { width: 55, height: 55, borderRadius: 30, backgroundColor: '#FF3B30' },
-  stopIcon: { width: 28, height: 28, backgroundColor: 'white', borderRadius: 4 },
-  controlBtn: { padding: 10, minWidth: 80, alignItems: 'center' },
+  recordBtnOuter: { width: 80, height: 80, borderRadius: 40, borderWidth: 5, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
+  recordBtnInner: { width: 58, height: 58, borderRadius: 30, backgroundColor: '#FF3B30' },
+  stopIcon: { width: 30, height: 30, backgroundColor: 'white', borderRadius: 4 },
+  controlBtn: { padding: 10, minWidth: 90, alignItems: 'center' },
   stopBtn: { padding: 10 },
-  controlLabel: { color: 'white', fontWeight: 'bold', fontSize: 14 }
+  controlLabel: { color: 'white', fontWeight: '900', fontSize: 13, letterSpacing: 1 }
 });
