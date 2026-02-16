@@ -13,8 +13,7 @@ ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWO
 
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
 
-install! 'cocoapods',
-  :deterministic_uuids => false
+install! 'cocoapods', :deterministic_uuids => false
 
 prepare_react_native_project!
 
@@ -23,51 +22,39 @@ project 'sportapp.xcodeproj'
 target 'sportapp' do
   use_expo_modules!
 
-  # ✅ Your custom FULL iOS podspec (KEEP THIS)
-  pod 'ffmpeg-kit-ios-full',
-      :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
+  # ✅ Use your mirror for the main package
+  pod 'ffmpeg-kit-ios-full', :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
 
-  # ✅ RN wrapper (this is what imports NativeModules.FFmpegKit…)
+  # ✅ The RN wrapper
   pod 'ffmpeg-kit-react-native', :path => '../node_modules/ffmpeg-kit-react-native'
 
   # ---- Expo / RN autolinking ----
-  if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
-    config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"]
-  else
-    config_command = [
-      'npx', 'expo-modules-autolinking', 'react-native-config',
-      '--json', '--platform', 'ios'
-    ]
-  end
-
+  config_command = ['npx', 'expo-modules-autolinking', 'react-native-config', '--json', '--platform', 'ios']
   config = use_native_modules!(config_command)
 
   use_frameworks! :linkage => podfile_properties['ios.useFrameworks'].to_sym if podfile_properties['ios.useFrameworks']
-  use_frameworks! :linkage => ENV['USE_FRAMEWORKS'].to_sym if ENV['USE_FRAMEWORKS']
-
+  
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'].nil? || podfile_properties['expo.jsEngine'] == 'hermes',
     :app_path => "#{Pod::Config.instance.installation_root}/..",
-    :privacy_file_aggregation_enabled => podfile_properties['apple.privacyManifestAggregationEnabled'] != 'false',
   )
 
-  post_install do |installer|
-    react_native_post_install(
-      installer,
-      config[:reactNativePath],
-      :mac_catalyst_enabled => false,
-      :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
-    )
-
-    # ✅ CRITICAL: replace any ffmpeg-kit-ios-* pods the wrapper tries to pull
-    installer.pod_targets.each do |t|
-      if t.name.start_with?('ffmpeg-kit-ios-') && t.name != 'ffmpeg-kit-ios-full'
-        puts "🚫 Removing unwanted pod target: #{t.name}"
+  # 🔥 THE FIX: This force-redirects any sub-dependencies to use the FULL package
+  pre_install do |installer|
+    installer.aggregate_targets.each do |target|
+      target.pod_targets.each do |pod_target|
+        if pod_target.pod_name.start_with?('ffmpeg-kit-ios-') && pod_target.pod_name != 'ffmpeg-kit-ios-full'
+          # This tells the project: "If you want https or video, just use full instead"
+          pod_target.instance_variable_set(:@pod_name, 'ffmpeg-kit-ios-full')
+        end
       end
     end
+  end
 
-    # Xcode signs resource bundles by default for devices; disable for pods.
+  post_install do |installer|
+    react_native_post_install(installer, config[:reactNativePath])
+    
     installer.target_installation_results.pod_target_installation_results.each do |_, result|
       result.resource_bundle_targets.each do |rb|
         rb.build_configurations.each { |cfg| cfg.build_settings['CODE_SIGNING_ALLOWED'] = 'NO' }

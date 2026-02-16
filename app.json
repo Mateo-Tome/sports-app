@@ -3,7 +3,7 @@
     "name": "QuickClip",
     "slug": "sport-app",
     "jsEngine": "hermes",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "quickclip",
@@ -21,11 +21,18 @@
         }
       ],
       "expo-video",
-      "sentry-expo"
+      "sentry-expo",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow QuickClip to access your camera to record matches.",
+          "microphonePermission": "Allow QuickClip to access your microphone to record match audio."
+        }
+      ]
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
-      "buildNumber": "16",
+      "buildNumber": "17",
       "infoPlist": {
         "NSCameraUsageDescription": "This app records matches.",
         "NSMicrophoneUsageDescription": "This app records match audio.",
@@ -56,4 +63,5 @@
       }
     }
   }
+  
 }

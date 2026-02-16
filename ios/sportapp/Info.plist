@@ -7,7 +7,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>sport-app</string>
+    <string>QuickClip</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -19,7 +19,7 @@
     <key>CFBundlePackageType</key>
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.3</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleURLTypes</key>
@@ -27,7 +27,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>sportapp</string>
+          <string>quickclip</string>
           <string>com.mateotome2133.sportapp</string>
         </array>
       </dict>
@@ -39,7 +39,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>17</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
@@ -52,9 +52,9 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>This app records matches.</string>
+    <string>Allow QuickClip to access your camera to record matches.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>This app records match audio.</string>
+    <string>Allow QuickClip to access your microphone to record match audio.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>We add your videos to albums for organization.</string>
     <key>NSPhotoLibraryUsageDescription</key>
