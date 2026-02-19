@@ -10,6 +10,11 @@ import { Platform } from 'react-native';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
+  // ✅ TESTING LOG: This will appear in your terminal (not on the phone screen)
+  console.log("--- ENVIRONMENT CHECK ---");
+  console.log("Firebase Project ID:", process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
+  console.log("-------------------------");
+
   return (
     <Tabs
       screenOptions={{

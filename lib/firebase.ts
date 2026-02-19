@@ -14,34 +14,29 @@ import {
 // Namespace import so we can call getReactNativePersistence at runtime
 import * as AuthNS from 'firebase/auth';
 
-function requireEnv(name: string) {
-  const v = process.env[name];
-  if (!v) {
-    // Crash early in dev if env isn't set (prevents weird auth behavior)
-    throw new Error(`Missing env var: ${name}`);
-  }
-  return v;
-}
-
+// ✅ Direct assignment ensures Expo can "find and replace" these during the build
 const firebaseConfig = {
-  apiKey: requireEnv('EXPO_PUBLIC_FIREBASE_API_KEY'),
-  authDomain: requireEnv('EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN'),
-  projectId: requireEnv('EXPO_PUBLIC_FIREBASE_PROJECT_ID'),
-  storageBucket: requireEnv('EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: requireEnv('EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: requireEnv('EXPO_PUBLIC_FIREBASE_APP_ID'),
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
+
+// Optional: Log an error in dev if keys are missing without crashing the whole app
+if (__DEV__ && !firebaseConfig.apiKey) {
+  console.warn("Firebase configuration is missing. Check your .env file or EAS Secrets.");
+}
 
 // ✅ Initialize Firebase app ONCE
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 // ✅ Initialize Auth ONCE with React Native persistence
-// This is what keeps users logged in across app restarts (TestFlight + production)
 let auth: ReturnType<typeof getAuth>;
 
 try {
   auth = initializeAuth(app, {
-    // getReactNativePersistence exists at runtime; TS can be annoying depending on versions
     persistence: (AuthNS as any).getReactNativePersistence(AsyncStorage),
   });
 } catch (e: any) {
