@@ -1,4 +1,3 @@
-// app/record/camera.tsx
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, type CameraView as CameraViewRef } from 'expo-camera';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
@@ -37,7 +36,9 @@ export default function CameraScreen() {
   const styleParam = params.style || 'folkstyle';
   const athleteName = params.athlete || 'Unassigned';
 
-  const [permission] = useCameraPermissions();
+  // --- CHANGED: Added requestPermission to the hook ---
+  const [permission, requestPermission] = useCameraPermissions();
+  
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [remountKey] = useState(0);
@@ -68,6 +69,13 @@ export default function CameraScreen() {
   const startMs = useRef<number | null>(null);
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
+
+  // --- NEW: Auto-request permission on mount ---
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission]);
 
   // Pulse effect for the "Ready" indicator
   useEffect(() => {
@@ -108,7 +116,9 @@ export default function CameraScreen() {
     useCallback(() => {
       let isCancelled = false;
       const task = InteractionManager.runAfterInteractions(() => {
-        if (!isCancelled && permission?.granted) setShouldRenderCamera(true);
+        if (!isCancelled && permission?.granted) {
+          setShouldRenderCamera(true);
+        }
       });
       return () => {
         isCancelled = true;
@@ -204,6 +214,7 @@ export default function CameraScreen() {
         onHandlerStateChange={onPinchStateChange}
       >
         <View style={styles.container}>
+          {/* --- CHANGED: Improved Permission Handling in UI --- */}
           {shouldRenderCamera ? (
             <Animated.View style={{ flex: 1, opacity: camOpacity }}>
               <CameraView
@@ -220,7 +231,21 @@ export default function CameraScreen() {
               />
             </Animated.View>
           ) : (
-            <View style={styles.centered}><ActivityIndicator color="white" /></View>
+            <View style={styles.centered}>
+               {!permission?.granted ? (
+                 <View style={{ alignItems: 'center' }}>
+                   <ActivityIndicator color="white" style={{ marginBottom: 20 }} />
+                   <TouchableOpacity 
+                     style={styles.hudPill} 
+                     onPress={requestPermission}
+                   >
+                     <Text style={styles.hudStatusText}>TAP TO ENABLE CAMERA</Text>
+                   </TouchableOpacity>
+                 </View>
+               ) : (
+                 <ActivityIndicator color="white" />
+               )}
+            </View>
           )}
 
           {/* Top-Left Close Button */}
