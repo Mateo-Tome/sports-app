@@ -1,4 +1,4 @@
-# 🚩 Force ffmpeg-kit-react-native to pick the "full" package when it autolinks
+# 🚩 Force ffmpeg-kit-react-native to pick the "full" package
 ENV['FFMPEG_KIT_PACKAGE'] = 'full'
 
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
@@ -12,29 +12,25 @@ ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWO
 
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
 
-install! 'cocoapods',
-  :deterministic_uuids => false
+install! 'cocoapods', :deterministic_uuids => false
 
 prepare_react_native_project!
 
 target 'QuickClip' do
   use_expo_modules!
 
-  # ✅ Your self-hosted FULL ffmpeg-kit xcframework podspec
-  pod 'ffmpeg-kit-ios-full',
+  # ✅ 1. YOUR CUSTOM FORK (Naming must match s.name in your podspec)
+  pod 'ffmpeg-kit-ios-full', 
       :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
+
+  # ✅ 2. EXPLICIT WRAPPER LINKING
+  # This prevents the "NativeEventEmitter requires a non-null argument" crash.
+  pod 'ffmpeg-kit-react-native', :path => '../node_modules/ffmpeg-kit-react-native'
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];
   else
-    config_command = [
-      'npx',
-      'expo-modules-autolinking',
-      'react-native-config',
-      '--json',
-      '--platform',
-      'ios'
-    ]
+    config_command = ['npx', 'expo-modules-autolinking', 'react-native-config', '--json', '--platform', 'ios']
   end
 
   config = use_native_modules!(config_command)
@@ -57,12 +53,13 @@ target 'QuickClip' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
-    # Xcode 14+ signs resource bundles by default for devices; disable for pods.
+    # Xcode 14+ signing fix for pods
     installer.target_installation_results.pod_target_installation_results
       .each do |pod_name, target_installation_result|
       target_installation_result.resource_bundle_targets.each do |resource_bundle_target|
         resource_bundle_target.build_configurations.each do |cfg|
           cfg.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+          
         end
       end
     end

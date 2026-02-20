@@ -1,40 +1,30 @@
 // lib/recording/finalizeRecording.ts
 // Takes finished segments + metadata, creates the final match file,
-// runs highlights, writes the JSON payload, and cleans up.
+// writes the JSON payload, and *optionally* post-processes (Photos import, highlights).
 
 import * as FileSystem from 'expo-file-system';
 import { Alert } from 'react-native';
 
 import { stitchSegmentsWithFallback } from './segmentStitcher';
-import { processHighlights, saveToAppStorage } from './videoStorage';
+import {
+  importToPhotosAndAlbums,
+  processHighlights,
+  runPostSaveTasksSafe,
+  saveToAppStorage,
+} from './videoStorage';
 
 export type Actor = 'home' | 'opponent' | 'neutral';
 
 export type MatchEvent = {
-  // ✅ stable ID for editing later
   eventId: string;
-
-  // timestamp in seconds (current system)
   t: number;
-
-  // optional more precise timestamp later
   tsMs?: number;
-
-  // normalized event type (takedown, strike, kill, etc.)
   kind: string;
-
-  // optional friendly label (T3, E1, NF3...)
   label?: string;
-
-  // optional original key (if you want to keep both)
   key?: string;
-
   points?: number;
   actor: Actor;
-
-  // ✅ clean metadata bucket (colors, period, offender, future details...)
   meta?: Record<string, any>;
-
   scoreAfter?: { home: number; opponent: number };
 };
 
@@ -47,106 +37,124 @@ export async function finalizeRecording(
   score: { home: number; opponent: number },
 ) {
   const HILITE_DURATION_SEC = 10;
+  const t0 = Date.now();
+  const log = (msg: string) => console.log(`[finalize] ${msg} +${Date.now() - t0}ms`);
+
   let finalPath: string | null = null;
 
   if (segments.length === 0) {
-    Alert.alert(
-      'Nothing recorded',
-      'Try recording at least a second before stopping.',
-    );
+    Alert.alert('Nothing recorded', 'Try recording at least a second before stopping.');
     return;
   }
 
-  if (segments.length === 1) {
-    // Single segment: just use it
-    finalPath = segments[0];
-  } else {
-    // ✅ Use the stitcher with Android fallback
-    const { ok, finalPath: stitchedPath } =
-      await stitchSegmentsWithFallback(segments);
+  log(`begin segments=${segments.length} markers=${markers.length} events=${events.length}`);
 
-    if (!ok || !stitchedPath) {
+  // 1) Choose final path (stitch if multiple)
+  if (segments.length === 1) {
+    finalPath = segments[0];
+    log('single segment: no stitch');
+  } else {
+    const stitchRes = await stitchSegmentsWithFallback(segments);
+    log(`stitch done stage=${stitchRes.stitchStage ?? 'unknown'} usedFallback=${Boolean(stitchRes.usedFallback)}`);
+
+    if (!stitchRes.ok || !stitchRes.finalPath) {
       Alert.alert('Save error', 'Failed to stitch segments.');
       return;
     }
 
-    finalPath = stitchedPath;
+    finalPath = stitchRes.finalPath;
   }
 
-  const { appUri, assetId } = await saveToAppStorage(
-    finalPath,
-    chosenAthlete,
-    sportKey,
-  );
+  // 2) Save to app storage FAST (do NOT block on Photos)
+  const athlete = (chosenAthlete || '').trim() || 'Unassigned';
+  const sport = (sportKey || '').trim() || 'unknown';
 
-  let processedClips: { url: string; markerTime: number }[] = [];
-  if (appUri && markers.length > 0) {
-    processedClips = await processHighlights(
-      appUri,
-      markers,
-      HILITE_DURATION_SEC,
-      chosenAthlete,
-    );
-  }
+  const { appUri } = await saveToAppStorage(finalPath, athlete, sport, {
+    importToPhotos: false, // ✅ critical for instant Stop UX
+  });
 
-  // ✅ declare outside so we can log it safely after
+  log('saveToAppStorage done');
+
+  // 3) Write sidecar JSON next to appUri (fast)
   let jsonUri: string | null = null;
 
   if (appUri) {
     jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
 
     const payload = {
-      athlete: chosenAthlete,
-
-      // keep these (you already use them elsewhere)
+      athlete,
       sport: sportKey.split(':')[0],
       style: sportKey.split(':')[1],
-
       createdAt: Date.now(),
-
-      // ✅ events are now stable for editing later
       events,
-
       finalScore: score,
       homeIsAthlete: true,
-
-      highlights: markers.map((t) => ({
-        t,
-        duration: HILITE_DURATION_SEC,
-      })),
-      processedClips,
+      highlights: markers.map((t) => ({ t, duration: HILITE_DURATION_SEC })),
+      processedClips: [], // populated by post tasks later (best-effort)
     };
 
-    // Pretty print so it’s readable in logs/files while debugging
     await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload, null, 2));
-  }
-
-  // ✅ Debug readback (works because jsonUri is in scope)
-  if (jsonUri) {
-    try {
-      console.log('[sidecar jsonUri]', jsonUri);
-      const txt = await FileSystem.readAsStringAsync(jsonUri);
-      console.log('[sidecar contents]', txt);
-    } catch (e) {
-      console.log('[sidecar readback error]', e);
-    }
+    log('sidecar written');
   } else {
-    console.log('[sidecar] no appUri -> no json written');
+    console.log('[finalize] no appUri -> no json written');
   }
 
-  // clean up segments
+  // 4) Clean up original segments (best-effort)
   for (const seg of segments) {
     try {
       await FileSystem.deleteAsync(seg, { idempotent: true });
     } catch {}
   }
+  log('segments cleaned');
 
+  // ✅ SHOW QUICK CONFIRMATION (fast)
   Alert.alert(
     'Recording saved',
-    `Athlete: ${chosenAthlete}\nSegments: ${
-      segments.length
-    }\nHighlights: ${processedClips.length} of ${
-      markers.length
-    }\nPhotos: ${assetId ? 'imported ✔︎' : 'not imported'}`,
+    `Athlete: ${athlete}\nSegments: ${segments.length}\nHighlights queued: ${markers.length}`,
   );
+
+  // 5) Post-processing (safe fire-and-forget)
+  // - Photos import for full match (optional)
+  // - Highlights generation (optional)
+  //
+  // We do this AFTER returning, so Stop feels instant.
+  if (appUri) {
+    const sportName = sportKey; // keep your current convention
+
+    runPostSaveTasksSafe([
+      async () => {
+        log('post: photos import begin');
+        const assetId = await importToPhotosAndAlbums(appUri, athlete, sportName);
+        log(`post: photos import done assetId=${assetId ? 'yes' : 'no'}`);
+      },
+      async () => {
+        if (!markers.length) return;
+        log('post: highlights begin');
+
+        // Highlights are stored in app storage either way.
+        // We keep Photos import OFF for highlights to avoid stalls.
+        const clips = await processHighlights(appUri, markers, HILITE_DURATION_SEC, athlete, {
+          importHighlightsToPhotos: false,
+          maxClips: 12, // safety cap; raise if you want
+        });
+
+        log(`post: highlights done clips=${clips.length}`);
+
+        // Optional: patch sidecar with processedClips list (best-effort)
+        if (jsonUri) {
+          try {
+            const txt = await FileSystem.readAsStringAsync(jsonUri);
+            const parsed = JSON.parse(txt);
+            parsed.processedClips = clips.map((c: any) => ({ url: c.url, markerTime: c.markerTime }));
+            await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(parsed, null, 2));
+            log('post: sidecar updated with clips');
+          } catch (e) {
+            console.log('[finalize] post sidecar update failed', e);
+          }
+        }
+      },
+    ]);
+  }
+
+  log('return');
 }

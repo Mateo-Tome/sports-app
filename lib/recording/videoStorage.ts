@@ -1,14 +1,14 @@
 // lib/recording/videoStorage.ts
 // Handles saving full videos + building highlight clips and sidecars.
 //
-// IMPORTANT:
-// - We lazy-load ffmpeg-kit so importing this module won't crash iOS at startup.
-// - Saving the full match does NOT require ffmpeg.
-// - Highlights DO require ffmpeg; if ffmpeg is unavailable, highlights just won't be created.
+// Goals:
+// ✅ Stop/save should be FAST (move when possible, do not block on Photos / highlights)
+// ✅ No startup crash: ffmpeg-kit is always lazy-loaded
+// ✅ Post-processing never crashes the app: fully guarded fire-and-forget
 
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { Alert } from 'react-native';
+import { Alert, InteractionManager } from 'react-native';
 
 const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = VIDEOS_DIR + 'index.json';
@@ -87,7 +87,8 @@ async function appendVideoIndex(entry: VideoMeta) {
   await writeIndexAtomic(list);
 }
 
-async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: string) {
+// Exported so finalizeRecording can defer Photos import without blocking Stop.
+export async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: string) {
   try {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
     if (!granted) return undefined;
@@ -116,12 +117,16 @@ async function importToPhotosAndAlbums(fileUri: string, athlete: string, sport: 
   }
 }
 
-// ---------- exported: save full match video ----------
+// ---------- exported: save full match video (FAST) ----------
 
 export const saveToAppStorage = async (
   srcUri?: string | null,
   athleteRaw?: string,
   sportRaw?: string,
+  opts?: {
+    // default: false (so Stop is fast). You can flip true in some flows if you want.
+    importToPhotos?: boolean;
+  }
 ) => {
   if (!srcUri) {
     Alert.alert('No video URI', 'Recording did not return a file path.');
@@ -137,22 +142,46 @@ export const saveToAppStorage = async (
   const filename = `match_${tsStamp()}.${ext}`;
   const destUri = dir + filename;
 
-  await FileSystem.copyAsync({ from: srcUri, to: destUri });
+  // ✅ FAST PATH: move first (instant if same volume), copy fallback.
   try {
-    await FileSystem.deleteAsync(srcUri, { idempotent: true });
-  } catch {}
+    await FileSystem.moveAsync({ from: srcUri, to: destUri });
+  } catch {
+    await FileSystem.copyAsync({ from: srcUri, to: destUri });
+    try {
+      await FileSystem.deleteAsync(srcUri, { idempotent: true });
+    } catch {}
+  }
 
   const displayName = `${athlete} - ${sport} - ${new Date().toLocaleString()}`;
-  const assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
 
+  // Write index immediately (fast) so the match appears right away.
   await appendVideoIndex({
     uri: destUri,
     displayName,
     athlete,
     sport,
     createdAt: Date.now(),
-    assetId,
+    assetId: undefined,
   });
+
+  let assetId: string | undefined;
+
+  // Optional: Photos import. Default OFF so Stop is fast.
+  if (opts?.importToPhotos) {
+    assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
+
+    // Update index entry with assetId if we got it (best-effort).
+    if (assetId) {
+      try {
+        const list = await readIndex();
+        const idx = list.findIndex((x) => x.uri === destUri);
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], assetId };
+          await writeIndexAtomic(list);
+        }
+      } catch {}
+    }
+  }
 
   return { appUri: destUri, assetId };
 };
@@ -175,9 +204,13 @@ async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: nu
   } catch {}
 }
 
-async function addClipToIndexAndAlbums(clipUri: string, athlete: string) {
+async function addClipToIndexAndAlbums(clipUri: string, athlete: string, importToPhotos: boolean) {
   const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
-  const assetId = await importToPhotosAndAlbums(clipUri, athlete, HIGHLIGHTS_SPORT);
+
+  let assetId: string | undefined;
+  if (importToPhotos) {
+    assetId = await importToPhotosAndAlbums(clipUri, athlete, HIGHLIGHTS_SPORT);
+  }
 
   await appendVideoIndex({
     uri: clipUri,
@@ -200,8 +233,17 @@ export const processHighlights = async (
   markers: number[],
   durationSec: number,
   athleteName: string,
+  opts?: {
+    // default: false so Stop doesn’t block on Photos
+    importHighlightsToPhotos?: boolean;
+    // optional: cap highlight work to avoid huge stalls if someone taps 30 times
+    maxClips?: number;
+  }
 ) => {
   if (!markers.length) return [];
+
+  const importToPhotos = Boolean(opts?.importHighlightsToPhotos);
+  const maxClips = typeof opts?.maxClips === 'number' ? opts!.maxClips! : markers.length;
 
   // If ffmpeg isn't linked correctly, this is where it will fail.
   // We'll just skip highlights instead of crashing the whole save.
@@ -219,27 +261,29 @@ export const processHighlights = async (
   const destDir = await destForHighlight(athleteName);
   const results: { url: string; markerTime: number }[] = [];
 
-  for (let i = 0; i < markers.length; i++) {
-    const start = Math.max(0, markers[i]);
+  const markersToProcess = markers.slice(0, Math.max(0, maxClips));
+
+  for (let i = 0; i < markersToProcess.length; i++) {
+    const start = Math.max(0, markersToProcess[i]);
     const outPath = `${destDir}clip_${i + 1}_${tsStamp()}.mp4`;
 
-    // first attempt: stream copy
+    // first attempt: stream copy (fast)
     let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c copy ${q(outPath)}`;
     let s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName);
+      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos);
       await writeHighlightSidecar(outPath, athleteName, start, durationSec);
       results.push({ url: outPath, markerTime: start });
       continue;
     }
 
-    // fallback: re-encode
+    // fallback: re-encode (still guarded)
     cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(outPath)}`;
     s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName);
+      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos);
       await writeHighlightSidecar(outPath, athleteName, start, durationSec);
       results.push({ url: outPath, markerTime: start });
     }
@@ -247,3 +291,19 @@ export const processHighlights = async (
 
   return results;
 };
+
+// ---------- exported: safe fire-and-forget post processing ----------
+
+export function runPostSaveTasksSafe(tasks: Array<() => Promise<void>>) {
+  // run after nav/animations so we don't compete with UI thread
+  InteractionManager.runAfterInteractions(() => {
+    setTimeout(() => {
+      for (const t of tasks) {
+        // fire and forget, never throw
+        Promise.resolve()
+          .then(() => t())
+          .catch((e) => console.log('[postSaveTask error]', e));
+      }
+    }, 0);
+  });
+}

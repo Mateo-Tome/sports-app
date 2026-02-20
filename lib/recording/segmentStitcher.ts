@@ -4,8 +4,8 @@ import * as FileSystem from 'expo-file-system';
 const SEG_DIR = (FileSystem.cacheDirectory || 'file:///tmp/') + 'segments/';
 const FAILSAFE_DIR = (FileSystem.documentDirectory || 'file:///tmp/') + 'failed_stitches/';
 
-const MIN_SEG_BYTES = 1024;       // segment must not be empty
-const MIN_OUT_BYTES = 50 * 1024;  // stitched output must look real
+const MIN_SEG_BYTES = 1024;
+const MIN_OUT_BYTES = 50 * 1024;
 
 const ensureDir = async (dir: string) => {
   try {
@@ -23,7 +23,6 @@ const tsStamp = () => {
   );
 };
 
-// FFmpeg concat demuxer list wants POSIX paths, not file:// URIs
 function uriToPosixPath(input: string) {
   const s = String(input || '').trim();
   const stripped =
@@ -33,10 +32,7 @@ function uriToPosixPath(input: string) {
   return stripped.startsWith('file://') ? stripped.replace(/^file:\/\//, '') : stripped;
 }
 
-// Quote for FFmpeg CLI args
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
-
-// Escape single quotes inside concat list lines: file '...'
 const escSingleForConcat = (p: string) => String(p).replace(/'/g, "'\\''");
 
 async function getFFmpeg() {
@@ -72,27 +68,24 @@ async function writeStringAtomic(uri: string, content: string) {
   await FileSystem.moveAsync({ from: tmp, to: uri });
 }
 
-// COPY stage “unsafe” signals (we use these to decide when to re-encode)
+// In practice: don’t bail from copy unless we see “real” failure / corruption signals.
 function looksUnsafeForCopy(logs: string) {
   return (
-    /Unknown:\s*none/i.test(logs) ||
-    /Could not find codec parameters/i.test(logs) ||
     /Non-monotonous DTS/i.test(logs) ||
     /Invalid data found/i.test(logs) ||
     /moov atom not found/i.test(logs) ||
-    /Impossible to open/i.test(logs)
+    /Impossible to open/i.test(logs) ||
+    /Conversion failed/i.test(logs)
   );
 }
 
-// SAFE stage “hard fail” signals (much stricter; warnings are ok if output validates)
 function looksHardFailedForSafe(logs: string) {
   return (
     /Impossible to open/i.test(logs) ||
     /No such file or directory/i.test(logs) ||
     /Invalid data found/i.test(logs) ||
     /moov atom not found/i.test(logs) ||
-    /Conversion failed/i.test(logs) ||
-    /Error/i.test(logs)
+    /Conversion failed/i.test(logs)
   );
 }
 
@@ -142,10 +135,17 @@ async function concatSegmentsInternal(
   try {
     if (!opts?.forceReencode) {
       // 1) FAST: stream copy
-      const copyCmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
+      // IMPORTANT: map v/a only to drop weird extra streams that trigger warnings.
+      const copyCmd =
+        `-y -f concat -safe 0 -i ${q(listPath)} ` +
+        `-map 0:v:0 -map 0:a:0? -c copy ${q(outPath)}`;
+
       const copyRes = await runFFmpeg(copyCmd);
 
-      // If copy produced a valid file AND logs look clean, accept
+      // Accept if:
+      // - ReturnCode success
+      // - output looks real
+      // - no strong corruption signals
       if (
         copyRes.ok &&
         !looksUnsafeForCopy(copyRes.logs) &&
@@ -154,12 +154,10 @@ async function concatSegmentsInternal(
         return { ok: true, stage: 'copy', logs: copyRes.logs };
       }
 
-      // Otherwise, delete and fall through to safe encode
       try { await FileSystem.deleteAsync(outUri, { idempotent: true }); } catch {}
     }
 
     // 2) SAFE: re-encode using VideoToolbox
-    // (also fixes DTS issues + drops unknown stream by mapping only v/a)
     const safeCmd =
       `-y -f concat -safe 0 -i ${q(listPath)} ` +
       `-map 0:v:0 -map 0:a:0? ` +
@@ -170,9 +168,6 @@ async function concatSegmentsInternal(
 
     const safeRes = await runFFmpeg(safeCmd);
 
-    // IMPORTANT: safe logs can still contain “Could not find codec parameters for stream 2”
-    // even though mapping drops it. So we trust:
-    //   ReturnCode success + output size sanity + no obvious hard-fail log lines.
     if (
       safeRes.ok &&
       !looksHardFailedForSafe(safeRes.logs) &&
@@ -190,19 +185,16 @@ async function concatSegmentsInternal(
   }
 }
 
-// Drop-in compatible return shape (+ extras)
 export async function stitchSegmentsWithFallback(
   segments: string[],
   opts?: {
     preserveSegmentsOnFailure?: boolean;
-    // If you want “stitch quality > speed” and fewer weird copy issues, set true:
     forceReencode?: boolean;
   },
 ): Promise<{
   ok: boolean;
-  finalPath: string | null; // URI (file://...)
+  finalPath: string | null;
   usedFallback?: boolean;
-  // extras (safe to ignore)
   stitchStage?: 'copy' | 'safe';
   segmentPaths?: string[];
   preservedDir?: string;
@@ -230,9 +222,6 @@ export async function stitchSegmentsWithFallback(
     };
   }
 
-  // Stitch truly failed → preserve segments if requested, but DO NOT break old callers.
-  // We return finalPath = first segment like your old behavior,
-  // and also attach segmentPaths/preservedCopies so you can save/upload all segments later.
   let preservedDir: string | undefined;
   let preservedCopies: string[] | undefined;
 
@@ -242,8 +231,9 @@ export async function stitchSegmentsWithFallback(
     preservedCopies = preserved.copied;
   }
 
+  // Keep old behavior: return first segment so caller doesn't break
   return {
-    ok: true, // keep old behavior so upload flow doesn't break
+    ok: true,
     finalPath: segs[0],
     usedFallback: true,
     segmentPaths: segs,
