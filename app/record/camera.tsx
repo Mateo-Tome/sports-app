@@ -31,14 +31,13 @@ export default function CameraScreen() {
   const params = useLocalSearchParams<{ athlete?: string; sport?: string; style?: string }>();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  
+
   const sportParam = params.sport || 'wrestling';
   const styleParam = params.style || 'folkstyle';
   const athleteName = params.athlete || 'Unassigned';
 
-  // --- CHANGED: Added requestPermission to the hook ---
   const [permission, requestPermission] = useCameraPermissions();
-  
+
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [remountKey] = useState(0);
@@ -70,12 +69,12 @@ export default function CameraScreen() {
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
 
-  // --- NEW: Auto-request permission on mount ---
+  // Auto-request permission on mount
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
       requestPermission();
     }
-  }, [permission]);
+  }, [permission, requestPermission]);
 
   // Pulse effect for the "Ready" indicator
   useEffect(() => {
@@ -87,59 +86,78 @@ export default function CameraScreen() {
     );
     if (cameraReady && !isRecording) pulse.start();
     return () => pulse.stop();
-  }, [cameraReady, isRecording]);
+  }, [cameraReady, isRecording, pulseAnim]);
 
   // --- Zoom Logic ---
   const onPinchGestureEvent = (event: PinchGestureHandlerGestureEvent) => {
     let newZoom = baseZoomRef.current + (event.nativeEvent.scale - 1) * 0.2;
     newZoom = Math.max(0, Math.min(newZoom, 1));
-    if (Math.abs(newZoom - zoom) > 0.002) {
-      setZoom(newZoom);
-    }
+    if (Math.abs(newZoom - zoom) > 0.002) setZoom(newZoom);
   };
 
   const onPinchStateChange = (event: any) => {
-    if (event.nativeEvent.oldState === State.ACTIVE) {
-      baseZoomRef.current = zoom;
-    }
+    if (event.nativeEvent.oldState === State.ACTIVE) baseZoomRef.current = zoom;
   };
 
   const { ActiveOverlay, preRollSec } = useMemo(() => {
     let res = getRecordingOverlay(sportParam.toLowerCase(), styleParam.toLowerCase());
+
+    // NOTE: If you want zero sport-specific logic in CameraScreen,
+    // move this fallback into the RecordingOverlayRegistry instead.
     if (!res.Overlay && sportParam.toLowerCase() === 'baseball') {
       res = getRecordingOverlay('baseball', 'hitting');
     }
+
     return { ActiveOverlay: res.Overlay, preRollSec: res.preRollSec || 3 };
   }, [sportParam, styleParam]);
 
   useFocusEffect(
     useCallback(() => {
       let isCancelled = false;
+
       const task = InteractionManager.runAfterInteractions(() => {
         if (!isCancelled && permission?.granted) {
           setShouldRenderCamera(true);
         }
       });
+
       return () => {
         isCancelled = true;
         task.cancel();
+
         setShouldRenderCamera(false);
         setCameraReady(false);
-        if (segmentActiveRef.current) stopCurrentSegment(cameraRef, segmentActiveRef);
+
+        // Reset fade state so next mount is consistent
+        camOpacity.setValue(0);
+
+        if (segmentActiveRef.current) {
+          stopCurrentSegment(cameraRef, segmentActiveRef);
+        }
       };
-    }, [permission])
+    }, [permission, camOpacity])
   );
 
   const getCurrentTSec = useCallback(() => {
     if (!startMs.current) return 0;
-    const pausedNow = isPaused && pauseStartedAtRef.current ? Date.now() - pauseStartedAtRef.current : 0;
+    const pausedNow =
+      isPaused && pauseStartedAtRef.current ? Date.now() - pauseStartedAtRef.current : 0;
     const elapsed = Date.now() - startMs.current - totalPausedMsRef.current - pausedNow;
     return Math.max(0, Math.round(elapsed / 1000 - preRollSec));
   }, [isPaused, preRollSec]);
 
   const handleStart = async () => {
+    if (!permission?.granted) {
+      Alert.alert('Camera permission', 'Please enable camera access to record.');
+      return;
+    }
     if (!cameraReady || isTransitioning) return;
+
     setIsTransitioning(true);
+
+    // Small warm-up: reduces first-frame issues / startRecording flakiness on some phones
+    await new Promise((r) => setTimeout(r, 300));
+
     eventsRef.current = [];
     scoreRef.current = { home: 0, opponent: 0 };
     setScore({ home: 0, opponent: 0 });
@@ -147,11 +165,14 @@ export default function CameraScreen() {
     segmentsRef.current = [];
     startMs.current = Date.now();
     totalPausedMsRef.current = 0;
+    pauseStartedAtRef.current = null;
+
     try {
       await startNewSegment(cameraRef, true, segmentsRef, segmentActiveRef, recordPromiseRef);
       setIsRecording(true);
+      setIsPaused(false);
     } catch (e) {
-      Alert.alert("Error", "Could not start camera hardware.");
+      Alert.alert('Error', 'Could not start camera hardware.');
     } finally {
       setIsTransitioning(false);
     }
@@ -172,8 +193,11 @@ export default function CameraScreen() {
   const handleResume = async () => {
     if (!isPaused || isTransitioning) return;
     setIsTransitioning(true);
-    if (pauseStartedAtRef.current) totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    if (pauseStartedAtRef.current) {
+      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+    }
     pauseStartedAtRef.current = null;
+
     try {
       await startNewSegment(cameraRef, true, segmentsRef, segmentActiveRef, recordPromiseRef);
       setIsPaused(false);
@@ -184,11 +208,16 @@ export default function CameraScreen() {
 
   const handleStop = async () => {
     if (isProcessing || isTransitioning) return;
+
     setIsProcessing(true);
     setIsTransitioning(true);
+
     try {
       await stopCurrentSegment(cameraRef, segmentActiveRef);
-      await new Promise(r => setTimeout(r, 600));
+
+      // Buffer so mp4 header + file move completes on slower phones
+      await new Promise((r) => setTimeout(r, 800));
+
       const mod = await import('../../lib/recording/finalizeRecording');
       await mod.finalizeRecording(
         segmentsRef.current,
@@ -198,6 +227,7 @@ export default function CameraScreen() {
         eventsRef.current,
         scoreRef.current
       );
+
       navigation.goBack();
     } catch (error) {
       Alert.alert('Save failed', 'The recording was interrupted.');
@@ -209,12 +239,8 @@ export default function CameraScreen() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PinchGestureHandler 
-        onGestureEvent={onPinchGestureEvent}
-        onHandlerStateChange={onPinchStateChange}
-      >
+      <PinchGestureHandler onGestureEvent={onPinchGestureEvent} onHandlerStateChange={onPinchStateChange}>
         <View style={styles.container}>
-          {/* --- CHANGED: Improved Permission Handling in UI --- */}
           {shouldRenderCamera ? (
             <Animated.View style={{ flex: 1, opacity: camOpacity }}>
               <CameraView
@@ -226,39 +252,35 @@ export default function CameraScreen() {
                 zoom={zoom}
                 onCameraReady={() => {
                   setCameraReady(true);
-                  Animated.timing(camOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+                  Animated.timing(camOpacity, {
+                    toValue: 1,
+                    duration: 250,
+                    useNativeDriver: true
+                  }).start();
                 }}
               />
             </Animated.View>
           ) : (
             <View style={styles.centered}>
-               {!permission?.granted ? (
-                 <View style={{ alignItems: 'center' }}>
-                   <ActivityIndicator color="white" style={{ marginBottom: 20 }} />
-                   <TouchableOpacity 
-                     style={styles.hudPill} 
-                     onPress={requestPermission}
-                   >
-                     <Text style={styles.hudStatusText}>TAP TO ENABLE CAMERA</Text>
-                   </TouchableOpacity>
-                 </View>
-               ) : (
-                 <ActivityIndicator color="white" />
-               )}
+              {!permission?.granted ? (
+                <View style={{ alignItems: 'center' }}>
+                  <ActivityIndicator color="white" style={{ marginBottom: 20 }} />
+                  <TouchableOpacity style={styles.hudPill} onPress={requestPermission}>
+                    <Text style={styles.hudStatusText}>TAP TO ENABLE CAMERA</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <ActivityIndicator color="white" />
+              )}
             </View>
           )}
 
-          {/* Top-Left Close Button */}
           {!isRecording && (
-            <TouchableOpacity 
-              style={[styles.backBtn, { top: insets.top + 10 }]} 
-              onPress={() => navigation.goBack()}
-            >
+            <TouchableOpacity style={[styles.backBtn, { top: insets.top + 10 }]} onPress={() => navigation.goBack()}>
               <Text style={styles.backBtnText}>✕ CLOSE</Text>
             </TouchableOpacity>
           )}
 
-          {/* Combined Athlete & Status Pill (Dead Center) */}
           {cameraReady && !isRecording && (
             <View style={styles.centerHudContainer} pointerEvents="none">
               <View style={styles.hudPill}>
@@ -272,26 +294,26 @@ export default function CameraScreen() {
             </View>
           )}
 
-          {/* Zoom Indicator */}
           {zoom > 0 && (
             <View style={[styles.zoomIndicator, { top: insets.top + 10 }]}>
               <Text style={styles.zoomText}>{Math.round(zoom * 100)}% ZOOM</Text>
             </View>
           )}
 
-          {/* Overlays */}
           {cameraReady && ActiveOverlay && !isProcessing && (
-            <View style={StyleSheet.absoluteFill} pointerEvents={isPaused ? "none" : "box-none"}>
+            <View style={StyleSheet.absoluteFill} pointerEvents={isPaused ? 'none' : 'box-none'}>
               <ActiveOverlay
                 isRecording={isRecording}
                 onEvent={(evt: any) => {
                   if (!isRecording || isPaused) return;
                   const t = getCurrentTSec();
+
                   if (evt.value) {
                     if (evt.actor === 'home') scoreRef.current.home += evt.value;
                     if (evt.actor === 'opponent') scoreRef.current.opponent += evt.value;
                     setScore({ ...scoreRef.current });
                   }
+
                   eventsRef.current.push({ ...evt, t, scoreAfter: { ...scoreRef.current } });
                 }}
                 getCurrentTSec={getCurrentTSec}
@@ -309,38 +331,26 @@ export default function CameraScreen() {
             </View>
           )}
 
-          {/* Controls Bar */}
           <View style={[styles.controls, { bottom: insets.bottom + 40 }]}>
             {!isRecording ? (
-              <TouchableOpacity 
-                style={styles.recordBtnOuter} 
-                onPress={handleStart} 
-                disabled={!cameraReady || isTransitioning}
-              >
+              <TouchableOpacity style={styles.recordBtnOuter} onPress={handleStart} disabled={!cameraReady || isTransitioning}>
                 <View style={styles.recordBtnInner} />
               </TouchableOpacity>
             ) : (
               <View style={styles.row}>
-                <TouchableOpacity 
-                   style={styles.controlBtn}
-                   onPress={isPaused ? handleResume : handlePause} 
-                   disabled={isTransitioning}
+                <TouchableOpacity
+                  style={styles.controlBtn}
+                  onPress={isPaused ? handleResume : handlePause}
+                  disabled={isTransitioning}
                 >
                   <Text style={styles.controlLabel}>{isPaused ? 'RESUME' : 'PAUSE'}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.stopBtn}
-                  onPress={handleStop} 
-                  disabled={isTransitioning}
-                >
+                <TouchableOpacity style={styles.stopBtn} onPress={handleStop} disabled={isTransitioning}>
                   <View style={styles.stopIcon} />
                 </TouchableOpacity>
 
-                <HighlightButton 
-                  count={markers.length} 
-                  onPress={() => setMarkers(p => [...p, getCurrentTSec()])} 
-                />
+                <HighlightButton count={markers.length} onPress={() => setMarkers((p) => [...p, getCurrentTSec()])} />
               </View>
             )}
           </View>
@@ -353,25 +363,25 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  // Close Button
-  backBtn: { 
-    position: 'absolute', 
-    left: 20, 
-    backgroundColor: 'rgba(0,0,0,0.6)', 
-    paddingHorizontal: 16, 
-    paddingVertical: 10, 
-    borderRadius: 25, 
-    borderWidth: 1, 
+
+  backBtn: {
+    position: 'absolute',
+    left: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 25,
+    borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
-    zIndex: 100 
+    zIndex: 100
   },
   backBtnText: { color: 'white', fontWeight: '900', fontSize: 11, letterSpacing: 1 },
-  // Central HUD Pill
+
   centerHudContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 10
   },
   hudPill: {
     backgroundColor: 'rgba(0,0,0,0.75)',
@@ -380,62 +390,67 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(255,255,255,0.15)'
   },
   hudAthleteName: {
     color: 'white',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: 2,
-    marginBottom: 4,
+    marginBottom: 4
   },
   hudDivider: {
     width: 40,
     height: 1,
     backgroundColor: 'rgba(255,255,255,0.3)',
-    marginVertical: 6,
+    marginVertical: 6
   },
-  hudStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+  hudStatusRow: { flexDirection: 'row', alignItems: 'center' },
   hudPulseDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#4ADE80',
-    marginRight: 8,
+    marginRight: 8
   },
   hudStatusText: {
     color: '#4ADE80',
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 1.5,
+    letterSpacing: 1.5
   },
-  // Zoom Indicator
-  zoomIndicator: { 
-    position: 'absolute', 
-    right: 20, 
-    backgroundColor: 'rgba(0,0,0,0.6)', 
+
+  zoomIndicator: {
+    position: 'absolute',
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     paddingHorizontal: 12,
-    paddingVertical: 8, 
+    paddingVertical: 8,
     borderRadius: 20,
     zIndex: 50
   },
   zoomText: { color: 'white', fontWeight: 'bold', fontSize: 10, letterSpacing: 1 },
-  // Loader
-  overlayLoader: { 
-    ...StyleSheet.absoluteFillObject, 
-    backgroundColor: 'rgba(0,0,0,0.9)', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    zIndex: 1000 
+
+  overlayLoader: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000
   },
   loaderText: { color: 'white', marginTop: 15, fontWeight: '900', letterSpacing: 2 },
-  // Controls
+
   controls: { position: 'absolute', width: '100%', alignItems: 'center', zIndex: 10 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 40 },
-  recordBtnOuter: { width: 80, height: 80, borderRadius: 40, borderWidth: 5, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
+  recordBtnOuter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 5,
+    borderColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
   recordBtnInner: { width: 58, height: 58, borderRadius: 30, backgroundColor: '#FF3B30' },
   stopIcon: { width: 30, height: 30, backgroundColor: 'white', borderRadius: 4 },
   controlBtn: { padding: 10, minWidth: 90, alignItems: 'center' },

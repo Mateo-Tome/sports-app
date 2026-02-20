@@ -1,22 +1,13 @@
 // lib/recording/segmentStitcher.ts
-// Handles stitching multiple video segments together,
-// with a safe fallback so we don't lose recordings.
-//
-// IMPORTANT:
-// - We lazy-load ffmpeg-kit so importing this module won't crash iOS at startup.
-// - If FFmpeg is not available or concat fails, we fall back to the first segment.
-//   (You still keep the recording, but you may lose the "paused" segments merge.)
-
 import * as FileSystem from 'expo-file-system';
 
 const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
 
 const ensureDir = async (dir: string) => {
   try {
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  } catch {
-    // ignore
-  }
+    const info = await FileSystem.getInfoAsync(dir);
+    if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  } catch {}
 };
 
 const tsStamp = () => {
@@ -30,13 +21,20 @@ const tsStamp = () => {
 
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
 
-// Lazy loader to avoid iOS NativeEventEmitter crash on import
 async function getFFmpeg() {
   const mod = await import('ffmpeg-kit-react-native');
   return { FFmpegKit: mod.FFmpegKit, ReturnCode: mod.ReturnCode };
 }
 
-// Low-level concat using FFmpeg
+async function runFFmpeg(cmd: string) {
+  const { FFmpegKit, ReturnCode } = await getFFmpeg();
+  const sess = await FFmpegKit.execute(cmd);
+  const rc = await sess.getReturnCode();
+  const ok = ReturnCode.isSuccess(rc);
+  const logs = await sess.getAllLogsAsString();
+  return { ok, logs };
+}
+
 async function concatSegmentsInternal(
   segments: string[],
   outPath: string,
@@ -44,6 +42,11 @@ async function concatSegmentsInternal(
   if (!segments.length) return { ok: false };
 
   await ensureDir(SEG_DIR);
+
+  for (const seg of segments) {
+    const info = await FileSystem.getInfoAsync(seg);
+    if (!info.exists) return { ok: false, error: new Error(`Missing segment: ${seg}`) };
+  }
 
   const listTxt = segments
     .map((p) => `file '${String(p).replace(/'/g, "'\\''")}'`)
@@ -53,52 +56,56 @@ async function concatSegmentsInternal(
   await FileSystem.writeAsStringAsync(listPath, listTxt);
 
   try {
-    const { FFmpegKit, ReturnCode } = await getFFmpeg();
+    // 1) FAST: concat stream copy
+    const copyCmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
+    const copyRes = await runFFmpeg(copyCmd);
 
-    const cmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
-    const sess = await FFmpegKit.execute(cmd);
-    const ok = ReturnCode.isSuccess(await sess.getReturnCode());
+    const looksUnsafe =
+      /Unknown:\s*none/i.test(copyRes.logs) ||
+      /Could not find codec parameters/i.test(copyRes.logs) ||
+      /Non-monotonous DTS/i.test(copyRes.logs);
 
-    if (!ok) {
-      console.log(
-        '[segmentStitcher] concat failed, logs:\n',
-        await sess.getAllLogsAsString(),
-      );
+    if (copyRes.ok && !looksUnsafe) return { ok: true };
+
+    console.log('[segmentStitcher] copy-concat unsafe/failed, retrying with iOS-safe re-encode');
+
+    // 2) SAFE: re-encode using VideoToolbox (works on iOS builds without libx264)
+    // Also: map only V:0 and A:0 to DROP the weird "stream 2: Unknown"
+    const safeCmd =
+      `-y -f concat -safe 0 -i ${q(listPath)} ` +
+      `-map 0:v:0 -map 0:a:0? ` +
+      `-fflags +genpts -avoid_negative_ts make_zero ` +
+      `-c:v h264_videotoolbox -b:v 6000k ` + // adjust bitrate if you want
+      `-c:a aac -b:a 128k -ar 44100 ` +
+      `${q(outPath)}`;
+
+    const safeRes = await runFFmpeg(safeCmd);
+    if (!safeRes.ok) {
+      console.log('[segmentStitcher] videotoolbox re-encode failed logs:\n', safeRes.logs);
     }
 
-    return { ok };
+    return { ok: safeRes.ok };
   } catch (e) {
-    console.log('[segmentStitcher] ffmpeg not available / failed to execute', e);
     return { ok: false, error: e };
+  } finally {
+    try {
+      await FileSystem.deleteAsync(listPath, { idempotent: true });
+    } catch {}
   }
 }
 
-/**
- * High-level stitcher with safe fallback.
- *
- * - 0 segments  → { ok: false, finalPath: null }
- * - 1 segment   → { ok: true,  finalPath: that segment }
- * - ≥2 segments → try FFmpeg concat
- *      - success → stitched file path
- *      - fail     → fall back to first segment (ok: true)
- *
- * NOTE: fallback means you keep the recording, but you lose merged pauses.
- */
 export async function stitchSegmentsWithFallback(
   segments: string[],
 ): Promise<{ ok: boolean; finalPath: string | null; usedFallback?: boolean }> {
   if (!segments.length) return { ok: false, finalPath: null };
 
-  if (segments.length === 1) return { ok: true, finalPath: segments[0] };
+  if (segments.length === 1) return { ok: true, finalPath: segments[0], usedFallback: false };
 
   const stitchedPath = SEG_DIR + `final_${tsStamp()}.mp4`;
   const res = await concatSegmentsInternal(segments, stitchedPath);
 
-  if (res.ok) {
-    return { ok: true, finalPath: stitchedPath, usedFallback: false };
-  }
+  if (res.ok) return { ok: true, finalPath: stitchedPath, usedFallback: false };
 
-  // ✅ Safe fallback on ALL platforms to avoid losing recordings
   console.warn('[segmentStitcher] concat failed, falling back to first segment');
   return { ok: true, finalPath: segments[0], usedFallback: true };
 }

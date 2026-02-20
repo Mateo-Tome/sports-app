@@ -1,7 +1,4 @@
 // lib/recording/segmentManager.ts
-// Handles segmented recording start/stop for CameraView, with shared
-// logic for both startRecording and recordAsync paths.
-
 import type { CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
 import type { MutableRefObject, RefObject } from 'react';
@@ -11,10 +8,12 @@ const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
 
 const ensureDir = async (dir: string) => {
   try {
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    const info = await FileSystem.getInfoAsync(dir);
+    if (!info.exists) {
+      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    }
   } catch {
-    // directory already exists or cannot be created: ignore here,
-    // camera error flows will still surface if this truly breaks.
+    // ignore — downstream file ops will surface errors if truly broken
   }
 };
 
@@ -27,16 +26,38 @@ const tsStamp = () => {
   );
 };
 
-async function waitFor(
-  pred: () => boolean,
-  timeoutMs: number,
-  pollMs = 40,
-) {
+async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
   const start = Date.now();
   while (!pred()) {
     await new Promise((r) => setTimeout(r, pollMs));
     if (Date.now() - start > timeoutMs) break;
   }
+}
+
+async function finalizeSegmentFile(uri: string, segmentsRef: MutableRefObject<string[]>) {
+  const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
+
+  // Prefer moveAsync: faster and avoids FS lag on large files
+  try {
+    await FileSystem.moveAsync({ from: uri, to: dest });
+    segmentsRef.current.push(dest);
+    return;
+  } catch (e) {
+    console.warn('[segment] moveAsync failed, falling back to copyAsync', e);
+  }
+
+  try {
+    await FileSystem.copyAsync({ from: uri, to: dest });
+  } catch (e) {
+    console.warn('[segment] copyAsync failed', e);
+    return;
+  }
+
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch {}
+
+  segmentsRef.current.push(dest);
 }
 
 export async function startNewSegment(
@@ -56,60 +77,36 @@ export async function startNewSegment(
   segmentActiveRef.current = true;
   recordPromiseRef.current = null;
 
+  const onFinished = async (res: any) => {
+    const uri = typeof res === 'string' ? res : res?.uri;
+    try {
+      if (uri) await finalizeSegmentFile(uri, segmentsRef);
+    } finally {
+      segmentActiveRef.current = false;
+    }
+  };
+
+  const onError = (e: any) => {
+    console.warn('[segment error]', e);
+    segmentActiveRef.current = false;
+    Alert.alert(
+      'Recording error',
+      (e && (e.message || e.toString())) || 'Unknown camera error',
+    );
+  };
+
   try {
     if (typeof cam.startRecording === 'function') {
-      // CameraView.startRecording path
       cam.startRecording({
         mute: false,
-        onRecordingFinished: async (res: any) => {
-          const uri = typeof res === 'string' ? res : res?.uri;
-          if (uri) {
-            const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
-            try {
-              await FileSystem.copyAsync({ from: uri, to: dest });
-            } catch {}
-            try {
-              await FileSystem.deleteAsync(uri, { idempotent: true });
-            } catch {}
-            segmentsRef.current.push(dest);
-          }
-          segmentActiveRef.current = false;
-        },
-        onRecordingError: (e: any) => {
-          console.warn('[segment error startRecording]', e);
-          segmentActiveRef.current = false;
-          Alert.alert(
-            'Recording error',
-            (e && (e.message || e.toString())) || 'Unknown camera error',
-          );
-        },
+        onRecordingFinished: onFinished,
+        onRecordingError: onError,
       });
     } else if (typeof cam.recordAsync === 'function') {
-      // recordAsync path
       recordPromiseRef.current = cam
         .recordAsync({ mute: false })
-        .then(async (res: any) => {
-          const uri = typeof res === 'string' ? res : res?.uri;
-          if (uri) {
-            const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
-            try {
-              await FileSystem.copyAsync({ from: uri, to: dest });
-            } catch {}
-            try {
-              await FileSystem.deleteAsync(uri, { idempotent: true });
-            } catch {}
-            segmentsRef.current.push(dest);
-          }
-          segmentActiveRef.current = false;
-        })
-        .catch((e: any) => {
-          console.warn('[segment error recordAsync]', e);
-          segmentActiveRef.current = false;
-          Alert.alert(
-            'Recording error',
-            (e && (e.message || e.toString())) || 'Unknown camera error',
-          );
-        });
+        .then(onFinished)
+        .catch(onError);
     } else {
       throw new Error('No recording API found on CameraView');
     }
@@ -129,5 +126,6 @@ export async function stopCurrentSegment(
     cam?.stopRecording?.();
   } catch {}
 
-  await waitFor(() => !segmentActiveRef.current, 2500);
+  // Longer timeout to cover slower devices + iOS mp4 finalization
+  await waitFor(() => !segmentActiveRef.current, 3500);
 }
