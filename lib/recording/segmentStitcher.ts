@@ -1,7 +1,11 @@
 // lib/recording/segmentStitcher.ts
 import * as FileSystem from 'expo-file-system';
 
-const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
+const SEG_DIR = (FileSystem.cacheDirectory || 'file:///tmp/') + 'segments/';
+const FAILSAFE_DIR = (FileSystem.documentDirectory || 'file:///tmp/') + 'failed_stitches/';
+
+const MIN_SEG_BYTES = 1024;       // segment must not be empty
+const MIN_OUT_BYTES = 50 * 1024;  // stitched output must look real
 
 const ensureDir = async (dir: string) => {
   try {
@@ -19,7 +23,21 @@ const tsStamp = () => {
   );
 };
 
+// FFmpeg concat demuxer list wants POSIX paths, not file:// URIs
+function uriToPosixPath(input: string) {
+  const s = String(input || '').trim();
+  const stripped =
+    (s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))
+      ? s.slice(1, -1)
+      : s;
+  return stripped.startsWith('file://') ? stripped.replace(/^file:\/\//, '') : stripped;
+}
+
+// Quote for FFmpeg CLI args
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
+
+// Escape single quotes inside concat list lines: file '...'
+const escSingleForConcat = (p: string) => String(p).replace(/'/g, "'\\''");
 
 async function getFFmpeg() {
   const mod = await import('ffmpeg-kit-react-native');
@@ -35,77 +53,202 @@ async function runFFmpeg(cmd: string) {
   return { ok, logs };
 }
 
+async function fileLooksValid(uri: string, minBytes: number) {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    const size = (info as any)?.size ?? 0;
+    return Boolean(info.exists && size >= minBytes);
+  } catch {
+    return false;
+  }
+}
+
+async function writeStringAtomic(uri: string, content: string) {
+  const tmp = uri + '.tmp';
+  await FileSystem.writeAsStringAsync(tmp, content);
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch {}
+  await FileSystem.moveAsync({ from: tmp, to: uri });
+}
+
+// COPY stage “unsafe” signals (we use these to decide when to re-encode)
+function looksUnsafeForCopy(logs: string) {
+  return (
+    /Unknown:\s*none/i.test(logs) ||
+    /Could not find codec parameters/i.test(logs) ||
+    /Non-monotonous DTS/i.test(logs) ||
+    /Invalid data found/i.test(logs) ||
+    /moov atom not found/i.test(logs) ||
+    /Impossible to open/i.test(logs)
+  );
+}
+
+// SAFE stage “hard fail” signals (much stricter; warnings are ok if output validates)
+function looksHardFailedForSafe(logs: string) {
+  return (
+    /Impossible to open/i.test(logs) ||
+    /No such file or directory/i.test(logs) ||
+    /Invalid data found/i.test(logs) ||
+    /moov atom not found/i.test(logs) ||
+    /Conversion failed/i.test(logs) ||
+    /Error/i.test(logs)
+  );
+}
+
+async function preserveAllSegments(segments: string[]) {
+  await ensureDir(FAILSAFE_DIR);
+  const destDir = FAILSAFE_DIR + `segments_${tsStamp()}/`;
+  await ensureDir(destDir);
+
+  const copied: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const src = segments[i];
+    const ext = src.split('.').pop()?.split('?')[0] || 'mp4';
+    const dest = `${destDir}seg_${String(i + 1).padStart(3, '0')}.${ext}`;
+    try {
+      await FileSystem.copyAsync({ from: src, to: dest });
+      copied.push(dest);
+    } catch {}
+  }
+  return { destDir, copied };
+}
+
 async function concatSegmentsInternal(
   segments: string[],
-  outPath: string,
-): Promise<{ ok: boolean; error?: any }> {
-  if (!segments.length) return { ok: false };
-
+  outUri: string,
+  opts?: { forceReencode?: boolean },
+): Promise<{ ok: boolean; stage?: 'copy' | 'safe'; logs: string; error?: any }> {
   await ensureDir(SEG_DIR);
 
-  for (const seg of segments) {
-    const info = await FileSystem.getInfoAsync(seg);
-    if (!info.exists) return { ok: false, error: new Error(`Missing segment: ${seg}`) };
+  for (const segUri of segments) {
+    const info = await FileSystem.getInfoAsync(segUri);
+    const size = (info as any)?.size ?? 0;
+    if (!info.exists || size < MIN_SEG_BYTES) {
+      return { ok: false, logs: '', error: new Error(`Missing/empty segment: ${segUri}`) };
+    }
   }
 
   const listTxt = segments
-    .map((p) => `file '${String(p).replace(/'/g, "'\\''")}'`)
+    .map((segUri) => `file '${escSingleForConcat(uriToPosixPath(segUri))}'`)
     .join('\n');
 
-  const listPath = SEG_DIR + `list_${tsStamp()}.txt`;
-  await FileSystem.writeAsStringAsync(listPath, listTxt);
+  const listUri = SEG_DIR + `list_${tsStamp()}.txt`;
+  await writeStringAtomic(listUri, listTxt);
+
+  const listPath = uriToPosixPath(listUri);
+  const outPath = uriToPosixPath(outUri);
 
   try {
-    // 1) FAST: concat stream copy
-    const copyCmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
-    const copyRes = await runFFmpeg(copyCmd);
+    if (!opts?.forceReencode) {
+      // 1) FAST: stream copy
+      const copyCmd = `-y -f concat -safe 0 -i ${q(listPath)} -c copy ${q(outPath)}`;
+      const copyRes = await runFFmpeg(copyCmd);
 
-    const looksUnsafe =
-      /Unknown:\s*none/i.test(copyRes.logs) ||
-      /Could not find codec parameters/i.test(copyRes.logs) ||
-      /Non-monotonous DTS/i.test(copyRes.logs);
+      // If copy produced a valid file AND logs look clean, accept
+      if (
+        copyRes.ok &&
+        !looksUnsafeForCopy(copyRes.logs) &&
+        (await fileLooksValid(outUri, MIN_OUT_BYTES))
+      ) {
+        return { ok: true, stage: 'copy', logs: copyRes.logs };
+      }
 
-    if (copyRes.ok && !looksUnsafe) return { ok: true };
+      // Otherwise, delete and fall through to safe encode
+      try { await FileSystem.deleteAsync(outUri, { idempotent: true }); } catch {}
+    }
 
-    console.log('[segmentStitcher] copy-concat unsafe/failed, retrying with iOS-safe re-encode');
-
-    // 2) SAFE: re-encode using VideoToolbox (works on iOS builds without libx264)
-    // Also: map only V:0 and A:0 to DROP the weird "stream 2: Unknown"
+    // 2) SAFE: re-encode using VideoToolbox
+    // (also fixes DTS issues + drops unknown stream by mapping only v/a)
     const safeCmd =
       `-y -f concat -safe 0 -i ${q(listPath)} ` +
       `-map 0:v:0 -map 0:a:0? ` +
       `-fflags +genpts -avoid_negative_ts make_zero ` +
-      `-c:v h264_videotoolbox -b:v 6000k ` + // adjust bitrate if you want
+      `-c:v h264_videotoolbox -b:v 6000k ` +
       `-c:a aac -b:a 128k -ar 44100 ` +
       `${q(outPath)}`;
 
     const safeRes = await runFFmpeg(safeCmd);
-    if (!safeRes.ok) {
-      console.log('[segmentStitcher] videotoolbox re-encode failed logs:\n', safeRes.logs);
+
+    // IMPORTANT: safe logs can still contain “Could not find codec parameters for stream 2”
+    // even though mapping drops it. So we trust:
+    //   ReturnCode success + output size sanity + no obvious hard-fail log lines.
+    if (
+      safeRes.ok &&
+      !looksHardFailedForSafe(safeRes.logs) &&
+      (await fileLooksValid(outUri, MIN_OUT_BYTES))
+    ) {
+      return { ok: true, stage: 'safe', logs: safeRes.logs };
     }
 
-    return { ok: safeRes.ok };
+    try { await FileSystem.deleteAsync(outUri, { idempotent: true }); } catch {}
+    return { ok: false, stage: 'safe', logs: safeRes.logs };
   } catch (e) {
-    return { ok: false, error: e };
+    return { ok: false, logs: '', error: e };
   } finally {
-    try {
-      await FileSystem.deleteAsync(listPath, { idempotent: true });
-    } catch {}
+    try { await FileSystem.deleteAsync(listUri, { idempotent: true }); } catch {}
   }
 }
 
+// Drop-in compatible return shape (+ extras)
 export async function stitchSegmentsWithFallback(
   segments: string[],
-): Promise<{ ok: boolean; finalPath: string | null; usedFallback?: boolean }> {
-  if (!segments.length) return { ok: false, finalPath: null };
+  opts?: {
+    preserveSegmentsOnFailure?: boolean;
+    // If you want “stitch quality > speed” and fewer weird copy issues, set true:
+    forceReencode?: boolean;
+  },
+): Promise<{
+  ok: boolean;
+  finalPath: string | null; // URI (file://...)
+  usedFallback?: boolean;
+  // extras (safe to ignore)
+  stitchStage?: 'copy' | 'safe';
+  segmentPaths?: string[];
+  preservedDir?: string;
+  preservedCopies?: string[];
+  logs?: string;
+}> {
+  const segs = (segments || []).filter(Boolean).map(String);
 
-  if (segments.length === 1) return { ok: true, finalPath: segments[0], usedFallback: false };
+  if (!segs.length) return { ok: false, finalPath: null };
 
-  const stitchedPath = SEG_DIR + `final_${tsStamp()}.mp4`;
-  const res = await concatSegmentsInternal(segments, stitchedPath);
+  if (segs.length === 1) {
+    return { ok: true, finalPath: segs[0], usedFallback: false };
+  }
 
-  if (res.ok) return { ok: true, finalPath: stitchedPath, usedFallback: false };
+  const stitchedUri = SEG_DIR + `final_${tsStamp()}.mp4`;
+  const res = await concatSegmentsInternal(segs, stitchedUri, { forceReencode: opts?.forceReencode });
 
-  console.warn('[segmentStitcher] concat failed, falling back to first segment');
-  return { ok: true, finalPath: segments[0], usedFallback: true };
+  if (res.ok) {
+    return {
+      ok: true,
+      finalPath: stitchedUri,
+      usedFallback: false,
+      stitchStage: res.stage,
+      logs: res.logs,
+    };
+  }
+
+  // Stitch truly failed → preserve segments if requested, but DO NOT break old callers.
+  // We return finalPath = first segment like your old behavior,
+  // and also attach segmentPaths/preservedCopies so you can save/upload all segments later.
+  let preservedDir: string | undefined;
+  let preservedCopies: string[] | undefined;
+
+  if (opts?.preserveSegmentsOnFailure) {
+    const preserved = await preserveAllSegments(segs);
+    preservedDir = preserved.destDir;
+    preservedCopies = preserved.copied;
+  }
+
+  return {
+    ok: true, // keep old behavior so upload flow doesn't break
+    finalPath: segs[0],
+    usedFallback: true,
+    segmentPaths: segs,
+    preservedDir,
+    preservedCopies,
+    logs: res.logs,
+  };
 }
