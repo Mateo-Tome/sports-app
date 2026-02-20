@@ -84,6 +84,7 @@ export default function RecordingScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
 
+  // Keep initial for first render fallback only
   const initialAthlete = useMemo(
     () => paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned',
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,11 +112,21 @@ export default function RecordingScreen() {
     return unsub;
   }, []);
 
+  // ✅ Param always wins when present (fixes: Home → Record not switching athlete)
+  const athleteParam = useMemo(() => {
+    const v = paramToStr(params.athlete, '').trim();
+    return v.length ? v : null;
+  }, [params.athlete]);
+
   useEffect(() => {
-    if (!controlledByParam) return;
-    const fromParam = paramToStr(params.athlete, initialAthlete).trim() || 'Unassigned';
-    if (fromParam !== athlete) setAthlete(fromParam);
-  }, [params.athlete, controlledByParam, athlete, initialAthlete]);
+    if (!athleteParam) return;
+
+    // If navigation provides an athlete, we ALWAYS switch to it.
+    setAthlete(athleteParam);
+
+    // Reset this so future navigations keep working even after manual changes.
+    setControlledByParam(true);
+  }, [athleteParam]);
 
   const loadAthletes = useCallback(async () => {
     try {
@@ -249,16 +260,27 @@ export default function RecordingScreen() {
       .map((s) => s[0]?.toUpperCase() ?? '')
       .join('') || 'U';
 
+  // ✅ When user changes athlete here, keep URL params in sync.
+  // This prevents stale params + makes behavior consistent.
   const applyAthlete = (name: string) => {
+    const clean = (name || '').trim() || 'Unassigned';
+
     if (controlledByParam) setControlledByParam(false);
-    setAthlete(name);
+    setAthlete(clean);
+
+    // Keep the route param aligned with local state.
+    // (If expo-router ever reuses this screen instance, you won't get "stuck" athletes.)
+    try {
+      router.setParams({ athlete: clean });
+    } catch {
+      // If setParams isn't available in some environments, ignore.
+    }
   };
 
   const AthleteCard = () => {
     const current = athletes.find((a) => a.name === athlete);
 
-    const photo =
-      current?.photoLocalUri || current?.photoUri || current?.photoUrl || null;
+    const photo = current?.photoLocalUri || current?.photoUri || current?.photoUrl || null;
 
     return (
       <View
@@ -317,7 +339,9 @@ export default function RecordingScreen() {
           <TouchableOpacity
             onPress={() => setPickerOpen(true)}
             onLongPress={() =>
-              applyAthlete(athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned')
+              applyAthlete(
+                athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned',
+              )
             }
             style={{
               paddingVertical: 8,
