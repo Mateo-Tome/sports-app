@@ -10,9 +10,9 @@ export type BaseballPitchingStats = {
 
     // Outcomes
     walk: number;
-    hitAllowed: number;
+    hitAllowed: number; // non-HR hits
     homerunAllowed: number;
-    outRecorded: number;
+    outRecorded: number; // ONLY "out" events (kept for backward compat)
     strikeout: number;
 
     // Optional detail by type (if you store meta.type)
@@ -20,6 +20,34 @@ export type BaseballPitchingStats = {
     outTypes: Record<string, number>;
     strikeoutTypes: { swinging: number; looking: number; unknown: number };
   };
+
+  // ✅ NEW: derived pitching metrics (safe/backward compatible)
+  derived?: {
+    totalPitches: number;
+    strikesTotal: number; // strikes + fouls
+    balls: number;
+
+    outsRecordedTotal: number; // outRecorded + strikeout
+    inningsPitchedOuts: number;
+    inningsPitchedText: string; // e.g. "2.1" means 2 and 1/3 innings
+
+    battersFaced: number;
+
+    hitsTotalAllowed: number; // hitAllowed + homerunAllowed
+    baserunners: number; // hitsTotalAllowed + walks
+
+    strikePctText: string;
+    ballPctText: string;
+    kPctText: string;
+    bbPctText: string;
+    kbbText: string;
+
+    whipText: string;
+
+    pitchesPerBFText: string;
+    pitchesPerInningText: string;
+  };
+
   lastUpdatedAt: number;
 };
 
@@ -30,6 +58,23 @@ function clamp0(n: any) {
 
 function readKey(e: any) {
   return String(e?.key ?? e?.kind ?? '').trim().toLowerCase();
+}
+
+function pctText(num: number, den: number) {
+  if (!den) return '0%';
+  return `${Math.round((num / den) * 100)}%`;
+}
+
+function fixedText(num: number, digits = 2) {
+  if (!Number.isFinite(num)) return '0.00';
+  return num.toFixed(digits);
+}
+
+function inningsTextFromOuts(outs: number) {
+  const o = Math.max(0, Math.floor(outs || 0));
+  const whole = Math.floor(o / 3);
+  const rem = o % 3; // 0,1,2 outs
+  return `${whole}.${rem}`;
 }
 
 export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingStats {
@@ -92,6 +137,68 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
       }
     }
   }
+
+  // -------------------------
+  // ✅ Derived metrics (safe)
+  // -------------------------
+  const balls = base.counts.ball;
+  const strikes = base.counts.strike;
+  const fouls = base.counts.foul;
+
+  const totalPitches = balls + strikes + fouls;
+  const strikesTotal = strikes + fouls;
+
+  // ✅ IMPORTANT: strikeouts are outs too for IP/BF/WHIP
+  const outsRecordedTotal = base.counts.outRecorded + base.counts.strikeout;
+
+  const hitsTotalAllowed = base.counts.hitAllowed + base.counts.homerunAllowed;
+
+  // BF approximation based on what you actually log as plate appearance outcomes
+  const battersFaced = outsRecordedTotal + hitsTotalAllowed + base.counts.walk;
+
+  const inningsPitchedOuts = outsRecordedTotal;
+  const inningsPitchedText = inningsTextFromOuts(inningsPitchedOuts);
+
+  const baserunners = hitsTotalAllowed + base.counts.walk;
+
+  const whip =
+    inningsPitchedOuts > 0 ? baserunners / (inningsPitchedOuts / 3) : 0;
+
+  const pitchesPerBF = battersFaced > 0 ? totalPitches / battersFaced : 0;
+  const pitchesPerInning =
+    inningsPitchedOuts > 0 ? totalPitches / (inningsPitchedOuts / 3) : 0;
+
+  const kPct = battersFaced > 0 ? base.counts.strikeout / battersFaced : 0;
+  const bbPct = battersFaced > 0 ? base.counts.walk / battersFaced : 0;
+
+  const kbb =
+    base.counts.walk > 0 ? base.counts.strikeout / base.counts.walk : Infinity;
+
+  base.derived = {
+    totalPitches,
+    strikesTotal,
+    balls,
+
+    outsRecordedTotal,
+    inningsPitchedOuts,
+    inningsPitchedText,
+
+    battersFaced,
+
+    hitsTotalAllowed,
+    baserunners,
+
+    strikePctText: pctText(strikesTotal, totalPitches),
+    ballPctText: pctText(balls, totalPitches),
+    kPctText: pctText(base.counts.strikeout, battersFaced),
+    bbPctText: pctText(base.counts.walk, battersFaced),
+    kbbText: kbb === Infinity ? '∞' : fixedText(kbb, 2),
+
+    whipText: inningsPitchedOuts > 0 ? fixedText(whip, 2) : '0.00',
+
+    pitchesPerBFText: fixedText(pitchesPerBF, 1),
+    pitchesPerInningText: inningsPitchedOuts > 0 ? fixedText(pitchesPerInning, 1) : '0.0',
+  };
 
   return base;
 }

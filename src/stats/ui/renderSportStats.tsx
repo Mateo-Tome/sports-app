@@ -1,4 +1,3 @@
-// src/stats/ui/renderSportStats.tsx
 import React from 'react';
 import { Text, View } from 'react-native';
 import { sportTitle } from '../sportMeta';
@@ -69,6 +68,10 @@ function Chip({ label, value }: { label: string; value: string | number }) {
 function clamp0(n: any) {
   const x = typeof n === 'number' ? n : Number(n);
   return Number.isFinite(x) ? Math.max(0, x) : 0;
+}
+
+function safeStr(v: any, fallback = '') {
+  return typeof v === 'string' ? v : fallback;
 }
 
 // -----------------------------
@@ -172,27 +175,72 @@ function normalizeBaseballHitting(b: any) {
 }
 
 function normalizeBaseballPitching(p: any) {
+  const balls = clamp0(p?.counts?.ball);
+  const strikes = clamp0(p?.counts?.strike);
+  const fouls = clamp0(p?.counts?.foul);
+
+  // Prefer reducer-derived metrics if present
+  const ipText = safeStr(p?.derived?.inningsPitchedText, '');
+  const bf = p?.derived?.battersFaced != null ? clamp0(p?.derived?.battersFaced) : 0;
+  const pitches = p?.derived?.totalPitches != null ? clamp0(p?.derived?.totalPitches) : (balls + strikes + fouls);
+
+  const strikePct = safeStr(p?.derived?.strikePctText, '');
+  const ballPct = safeStr(p?.derived?.ballPctText, '');
+  const kPct = safeStr(p?.derived?.kPctText, '');
+  const bbPct = safeStr(p?.derived?.bbPctText, '');
+  const kbb = safeStr(p?.derived?.kbbText, '');
+  const whip = safeStr(p?.derived?.whipText, '');
+  const pPerBF = safeStr(p?.derived?.pitchesPerBFText, '');
+  const pPerInning = safeStr(p?.derived?.pitchesPerInningText, '');
+
+  const hitsAllowed = clamp0(p?.counts?.hitAllowed);
+  const hrAllowed = clamp0(p?.counts?.homerunAllowed);
+  const hitsTotalAllowed =
+    p?.derived?.hitsTotalAllowed != null ? clamp0(p?.derived?.hitsTotalAllowed) : (hitsAllowed + hrAllowed);
+
+  const walksIssued = clamp0(p?.counts?.walk);
+  const strikeouts = clamp0(p?.counts?.strikeout);
+
+  // Outs recorded: prefer derived "outsRecordedTotal" (includes K)
+  const outsRecordedTotal =
+    p?.derived?.outsRecordedTotal != null
+      ? clamp0(p?.derived?.outsRecordedTotal)
+      : clamp0(p?.counts?.outRecorded) + strikeouts;
+
   return {
     clips: clamp0(p?.totals?.clips),
     events: clamp0(p?.totals?.events),
 
-    balls: clamp0(p?.counts?.ball),
-    strikes: clamp0(p?.counts?.strike),
-    fouls: clamp0(p?.counts?.foul),
+    balls,
+    strikes,
+    fouls,
 
-    walksIssued: clamp0(p?.counts?.walk),
-    strikeouts: clamp0(p?.counts?.strikeout),
+    walksIssued,
+    strikeouts,
 
-    hitsAllowed: clamp0(p?.counts?.hitAllowed),
+    hitsAllowed,
+    hitsTotalAllowed,
 
     singleAllowed: clamp0(p?.counts?.hitTypes?.single),
     doubleAllowed: clamp0(p?.counts?.hitTypes?.double),
     tripleAllowed: clamp0(p?.counts?.hitTypes?.triple),
     buntAllowed: clamp0(p?.counts?.hitTypes?.bunt),
 
-    hrAllowed: clamp0(p?.counts?.homerunAllowed),
+    hrAllowed,
 
-    outsRecorded: clamp0(p?.counts?.outRecorded),
+    outsRecordedTotal,
+    ipText,
+    bf,
+    pitches,
+
+    strikePct,
+    ballPct,
+    kPct,
+    bbPct,
+    kbb,
+    whip,
+    pPerBF,
+    pPerInning,
   };
 }
 
@@ -301,10 +349,19 @@ export function renderSportStatsCard(
   }
 
   // -----------------------------
-  // Baseball: Pitching
+  // Baseball: Pitching (enhanced)
   // -----------------------------
   if (sportKey === 'baseball:pitching') {
     const p = normalizeBaseballPitching(sportStats);
+
+    const hasDerived =
+      !!p.ipText ||
+      p.bf > 0 ||
+      p.pitches > 0 ||
+      !!p.whip ||
+      !!p.kPct ||
+      !!p.bbPct;
+
     return (
       <CardShell title={sportTitle(sportKey)}>
         <Text
@@ -321,21 +378,38 @@ export function renderSportStatsCard(
           <Chip label="Clips" value={p.clips} />
           <Chip label="Events" value={p.events} />
 
+          {hasDerived ? <Chip label="IP" value={p.ipText || '0.0'} /> : null}
+          {hasDerived ? <Chip label="BF" value={p.bf || 0} /> : null}
+          {hasDerived ? <Chip label="Pitches" value={p.pitches || 0} /> : null}
+
           <Chip label="Balls" value={p.balls} />
           <Chip label="Strikes" value={p.strikes} />
           <Chip label="Fouls" value={p.fouls} />
 
+          {hasDerived && p.strikePct ? <Chip label="Strike %" value={p.strikePct} /> : null}
+          {hasDerived && p.ballPct ? <Chip label="Ball %" value={p.ballPct} /> : null}
+
           <Chip label="Walks Issued" value={p.walksIssued} />
           <Chip label="Strikeouts" value={p.strikeouts} />
 
-          <Chip label="Hits Allowed" value={p.hitsAllowed} />
+          {hasDerived && p.kPct ? <Chip label="K%" value={p.kPct} /> : null}
+          {hasDerived && p.bbPct ? <Chip label="BB%" value={p.bbPct} /> : null}
+          {hasDerived && p.kbb ? <Chip label="K/BB" value={p.kbb} /> : null}
+
+          <Chip label="Hits Allowed (non-HR)" value={p.hitsAllowed} />
+          <Chip label="Hits Allowed (total)" value={p.hitsTotalAllowed} />
+
           <Chip label="1B Allowed" value={p.singleAllowed} />
           <Chip label="2B Allowed" value={p.doubleAllowed} />
           <Chip label="3B Allowed" value={p.tripleAllowed} />
           <Chip label="HR Allowed" value={p.hrAllowed} />
           <Chip label="Bunt Allowed" value={p.buntAllowed} />
 
-          <Chip label="Outs Recorded" value={p.outsRecorded} />
+          {hasDerived && p.whip ? <Chip label="WHIP" value={p.whip} /> : null}
+          {hasDerived && p.pPerBF ? <Chip label="Pitches/BF" value={p.pPerBF} /> : null}
+          {hasDerived && p.pPerInning ? <Chip label="Pitches/Inning" value={p.pPerInning} /> : null}
+
+          <Chip label="Outs Recorded" value={p.outsRecordedTotal} />
         </View>
       </CardShell>
     );
@@ -465,10 +539,7 @@ export function renderSportStatsCard(
           <Chip label="Points" value={b.points} />
 
           <Chip label="FG" value={`${b.fgM}/${b.fgA} (${pct(b.fgM, b.fgA)})`} />
-          <Chip
-            label="3PT"
-            value={`${b.t3M}/${b.t3A} (${pct(b.t3M, b.t3A)})`}
-          />
+          <Chip label="3PT" value={`${b.t3M}/${b.t3A} (${pct(b.t3M, b.t3A)})`} />
           <Chip label="FT" value={`${b.ftM}/${b.ftA} (${pct(b.ftM, b.ftA)})`} />
 
           <Chip label="AST" value={b.ast} />
@@ -507,9 +578,7 @@ export function renderSportStatsCard(
         {g.clips != null ? <Chip label="Clips" value={g.clips} /> : null}
         {g.events != null ? <Chip label="Events" value={g.events} /> : null}
         {g.myPoints != null ? <Chip label="My Points" value={g.myPoints} /> : null}
-        {g.oppPoints != null ? (
-          <Chip label="Opp Points" value={g.oppPoints} />
-        ) : null}
+        {g.oppPoints != null ? <Chip label="Opp Points" value={g.oppPoints} /> : null}
       </View>
 
       <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 10 }}>
