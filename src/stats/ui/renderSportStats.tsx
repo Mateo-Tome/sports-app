@@ -293,6 +293,45 @@ function normalizeBasketballDefault(b: any) {
   };
 }
 
+// ✅ Volleyball normalization (matches reducer shape above)
+function normalizeVolleyballDefault(v: any) {
+  return {
+    clips: clamp0(v?.totals?.clips),
+    events: clamp0(v?.totals?.events),
+
+    attack: clamp0(v?.counts?.attack),
+    kill: clamp0(v?.counts?.kill),
+    killPct: safeStr(v?.derived?.killPctText, '0%'),
+
+    serveIn: clamp0(v?.counts?.serveIn),
+    ace: clamp0(v?.counts?.ace),
+    serveError: clamp0(v?.counts?.serveError),
+    acePct: safeStr(v?.derived?.acePctText, '0%'),
+    serveInPct: safeStr(v?.derived?.serveInPctText, '0%'),
+    serveErrorPct: safeStr(v?.derived?.serveErrorPctText, '0%'),
+
+    block: clamp0(v?.counts?.block),
+    dig: clamp0(v?.counts?.dig),
+
+    pass3: clamp0(v?.counts?.pass3),
+    pass2: clamp0(v?.counts?.pass2),
+    pass1: clamp0(v?.counts?.pass1),
+    pass0: clamp0(v?.counts?.pass0),
+    passAvg: safeStr(v?.derived?.passAvgText, '0.00'),
+    pass3Pct: safeStr(v?.derived?.pass3PctText, '0%'),
+    pass2Pct: safeStr(v?.derived?.pass2PctText, '0%'),
+    pass1Pct: safeStr(v?.derived?.pass1PctText, '0%'),
+    pass0Pct: safeStr(v?.derived?.pass0PctText, '0%'),
+
+    error: clamp0(v?.counts?.error),
+    net: clamp0(v?.counts?.net),
+
+    touch: clamp0(v?.counts?.touch),
+    firstBall: clamp0(v?.counts?.firstBall),
+    bump: clamp0(v?.counts?.bump),
+  };
+}
+
 function pct(m: number, a: number) {
   if (!a) return '0%';
   return `${Math.round((m / a) * 100)}%`;
@@ -410,6 +449,61 @@ export function renderSportStatsCard(
           {hasDerived && p.pPerInning ? <Chip label="Pitches/Inning" value={p.pPerInning} /> : null}
 
           <Chip label="Outs Recorded" value={p.outsRecordedTotal} />
+        </View>
+      </CardShell>
+    );
+  }
+
+  // -----------------------------
+  // ✅ Volleyball: Default (NEW)
+  // -----------------------------
+  if (sportKey === 'volleyball:default') {
+    const v = normalizeVolleyballDefault(sportStats);
+    const serveTotal = v.serveIn + v.ace + v.serveError;
+    const passTotal = v.pass3 + v.pass2 + v.pass1 + v.pass0;
+
+    return (
+      <CardShell title={sportTitle(sportKey)}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
+          Athlete: {athleteName}
+        </Text>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={v.clips} />
+          <Chip label="Events" value={v.events} />
+
+          <Chip label="Kills" value={v.kill} />
+          <Chip label="Attacks" value={v.attack + v.kill} />
+          <Chip label="Kill %" value={v.killPct} />
+
+          <Chip label="Serve Total" value={serveTotal} />
+          <Chip label="Aces" value={v.ace} />
+          <Chip label="Ace %" value={v.acePct} />
+          <Chip label="Serve In %" value={v.serveInPct} />
+          <Chip label="Serve Err %" value={v.serveErrorPct} />
+
+          <Chip label="Blocks" value={v.block} />
+          <Chip label="Digs" value={v.dig} />
+
+          <Chip label="Pass Total" value={passTotal} />
+          <Chip label="Pass Avg" value={v.passAvg} />
+          <Chip label="3s" value={`${v.pass3} (${v.pass3Pct})`} />
+          <Chip label="2s" value={`${v.pass2} (${v.pass2Pct})`} />
+          <Chip label="1s" value={`${v.pass1} (${v.pass1Pct})`} />
+          <Chip label="0s" value={`${v.pass0} (${v.pass0Pct})`} />
+
+          <Chip label="Errors" value={v.error} />
+          <Chip label="Net" value={v.net} />
+
+          <Chip label="Touch" value={v.touch} />
+          <Chip label="1st Ball" value={v.firstBall} />
+          <Chip label="Bump" value={v.bump} />
         </View>
       </CardShell>
     );
