@@ -24,8 +24,10 @@ export type VolleyballDefaultStats = {
     pass0: number;
 
     // Errors
-    error: number;
+    attackError: number;
     net: number;
+    ballHandlingError: number;
+    error: number;
 
     // Other (neutral buttons you already have)
     touch: number;
@@ -83,8 +85,10 @@ export function reduceVolleyballDefault(clips: ClipSidecar[]): VolleyballDefault
       pass1: 0,
       pass0: 0,
 
-      error: 0,
+      attackError: 0,
       net: 0,
+      ballHandlingError: 0,
+      error: 0,
 
       touch: 0,
       firstBall: 0,
@@ -115,7 +119,7 @@ export function reduceVolleyballDefault(clips: ClipSidecar[]): VolleyballDefault
       const key = readKey(e);
       const meta = (e?.meta ?? {}) as any;
 
-      // ✅ matches your overlay keys exactly:
+      // ✅ matches your overlay keys (case-insensitive via readKey)
       if (key === 'kill') base.counts.kill += 1;
       else if (key === 'attack') base.counts.attack += 1;
 
@@ -134,9 +138,13 @@ export function reduceVolleyballDefault(clips: ClipSidecar[]): VolleyballDefault
         else base.counts.pass0 += 1;
       }
 
-      else if (key === 'error') base.counts.error += 1;
+      // ✅ Errors (NEW: include the two missing ones)
+      else if (key === 'attackerror') base.counts.attackError += 1;
       else if (key === 'net') base.counts.net += 1;
+      else if (key === 'ballhandlingerror') base.counts.ballHandlingError += 1;
+      else if (key === 'error') base.counts.error += 1;
 
+      // Neutral
       else if (key === 'touch') base.counts.touch += 1;
       else if (key === 'firstball') base.counts.firstBall += 1;
       else if (key === 'bump') base.counts.bump += 1;
