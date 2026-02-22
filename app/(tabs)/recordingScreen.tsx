@@ -3,6 +3,7 @@ import { subscribeAccess, type AccessState } from '@/lib/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from '@react-navigation/native';
+import * as FileSystem from 'expo-file-system';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -25,10 +26,18 @@ const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Volleyball', 'BJJ'] as c
 type Athlete = {
   id: string;
   name: string;
-  // your index flow may store these; we support them without breaking UI
+
+  // legacy/local possibilities
   photoUri?: string | null;
   photoLocalUri?: string | null;
   photoUrl?: string | null;
+
+  // ✅ fields Home persists + AthleteCard uses to cache remote into local file
+  photoKey?: string | null;
+  photoUpdatedAt?: number | null;
+
+  // ✅ derived at load-time (not persisted)
+  cachedPhotoLocalUri?: string | null;
 };
 
 const ATHLETES_KEY_PREFIX = 'athletes:list';
@@ -77,6 +86,34 @@ async function getActiveUid(): Promise<string> {
 
 function athletesKey(uid: string) {
   return `${ATHLETES_KEY_PREFIX}:${uid}`;
+}
+
+const safeStr = (v: any): string | null => {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+};
+
+const safeNum = (v: any): number | null => {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+// MUST match AthleteCard cache logic:
+// FileSystem.documentDirectory + "athlete_photos/{athleteId}/profile_{photoUpdatedAt}.jpg"
+function cachePathForAthlete(athleteId: string, photoUpdatedAt?: number | null) {
+  const ver = safeNum(photoUpdatedAt) ?? 0;
+  return `${FileSystem.documentDirectory}athlete_photos/${athleteId}/profile_${ver || 'v0'}.jpg`;
+}
+
+async function fileExists(uri: string): Promise<boolean> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    return !!info?.exists;
+  } catch {
+    return false;
+  }
 }
 
 export default function RecordingScreen() {
@@ -136,19 +173,63 @@ export default function RecordingScreen() {
       const raw = await AsyncStorage.getItem(key);
       const list = raw ? JSON.parse(raw) : [];
 
-      const normalized: Athlete[] = Array.isArray(list)
+      const safeList: Athlete[] = Array.isArray(list)
         ? list
             .map((a: any) => ({
               id: String(a?.id ?? '').trim(),
               name: String(a?.name ?? '').trim(),
-              photoUri: (a?.photoUri ?? null) as any,
-              photoLocalUri: (a?.photoLocalUri ?? null) as any,
-              photoUrl: (a?.photoUrl ?? null) as any,
+
+              photoUri: safeStr(a?.photoUri),
+              photoLocalUri: safeStr(a?.photoLocalUri),
+              photoUrl: safeStr(a?.photoUrl),
+
+              photoKey: safeStr(a?.photoKey),
+              photoUpdatedAt: safeNum(a?.photoUpdatedAt),
             }))
             .filter((a) => a.id && a.name)
         : [];
 
-      setAthletes(normalized);
+      // 1) scrub broken local file:// photoLocalUri so we can fall back cleanly
+      let changed = false;
+      const scrubbed: Athlete[] = [];
+
+      for (const a of safeList) {
+        const uri = a.photoLocalUri;
+        if (uri && uri.startsWith('file://')) {
+          try {
+            const info = await FileSystem.getInfoAsync(uri);
+            if (!info.exists) {
+              scrubbed.push({ ...a, photoLocalUri: null });
+              changed = true;
+              continue;
+            }
+          } catch {
+            scrubbed.push({ ...a, photoLocalUri: null });
+            changed = true;
+            continue;
+          }
+        }
+        scrubbed.push(a);
+      }
+
+      if (changed) {
+        await AsyncStorage.setItem(key, JSON.stringify(scrubbed));
+      }
+
+      // 2) offline-safe: if AthleteCard already cached a remote photo locally, use it here too
+      const withCache: Athlete[] = [];
+      for (const a of scrubbed) {
+        let cachedPhotoLocalUri: string | null = null;
+
+        if (!a.photoLocalUri && a.id) {
+          const cacheUri = cachePathForAthlete(a.id, a.photoUpdatedAt);
+          if (await fileExists(cacheUri)) cachedPhotoLocalUri = cacheUri;
+        }
+
+        withCache.push({ ...a, cachedPhotoLocalUri });
+      }
+
+      setAthletes(withCache);
     } catch (e) {
       console.log('[recordingScreen] loadAthletes failed:', e);
       setAthletes([]);
@@ -247,7 +328,6 @@ export default function RecordingScreen() {
         toCam('volleyball', 'default');
         break;
       case 'BJJ':
-        // ✅ NEW: go to BJJ selection screen (Gi / No-Gi), like wrestling/baseball
         router.push({ pathname: '/screens/bjjselection', params: { athlete } });
         break;
     }
@@ -261,26 +341,27 @@ export default function RecordingScreen() {
       .map((s) => s[0]?.toUpperCase() ?? '')
       .join('') || 'U';
 
-  // ✅ When user changes athlete here, keep URL params in sync.
-  // This prevents stale params + makes behavior consistent.
   const applyAthlete = (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
 
     if (controlledByParam) setControlledByParam(false);
     setAthlete(clean);
 
-    // Keep the route param aligned with local state.
-    // (If expo-router ever reuses this screen instance, you won't get "stuck" athletes.)
     try {
       router.setParams({ athlete: clean });
     } catch {
-      // If setParams isn't available in some environments, ignore.
+      // ignore
     }
   };
 
   const AthleteCard = () => {
     const current = athletes.find((a) => a.name === athlete);
-    const photo = current?.photoLocalUri || current?.photoUri || current?.photoUrl || null;
+    const photo =
+      current?.photoLocalUri ||
+      current?.cachedPhotoLocalUri ||
+      current?.photoUri ||
+      current?.photoUrl ||
+      null;
 
     return (
       <View
@@ -403,11 +484,15 @@ export default function RecordingScreen() {
             </Text>
           </Pressable>
 
-          {/* Scrollable athlete list */}
           <View style={{ maxHeight: 360 }}>
             <ScrollView showsVerticalScrollIndicator>
               {athletes.map((a) => {
-                const photo = a.photoLocalUri || a.photoUri || a.photoUrl || null;
+                const photo =
+                  a.photoLocalUri ||
+                  a.cachedPhotoLocalUri ||
+                  a.photoUri ||
+                  a.photoUrl ||
+                  null;
 
                 return (
                   <Pressable
@@ -495,7 +580,6 @@ export default function RecordingScreen() {
                 const n = newName.trim();
                 if (!n) return;
 
-                // Add locally into the SAME uid-scoped key the Index page uses
                 try {
                   const uid = await getActiveUid();
                   const key = athletesKey(uid);
@@ -560,13 +644,11 @@ export default function RecordingScreen() {
     </View>
   );
 
-  // ensure scroll content clears the bottom tab bar + gesture inset
   const bottomPad = Math.max(24, insets.bottom + 12) + tabBarHeight;
 
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: 'black' }}
-      // keep bottom insets handled by the ScrollView padding, not SafeAreaView
       edges={['top', 'left', 'right']}
     >
       <ScrollView
