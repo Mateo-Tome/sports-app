@@ -130,7 +130,7 @@ export function OverlayModeMenu(props: {
   );
 }
 
-/* ==================== Event Belt ==================== */
+/* ==================== Event Belt helpers ==================== */
 
 function normalizeBeltToken(raw: any): string {
   let k = String(raw ?? '').toLowerCase().trim();
@@ -164,11 +164,9 @@ function toSide(v: any): 'home' | 'opponent' | null {
   const s = String(v ?? '').trim().toLowerCase();
   if (!s) return null;
 
-  // strict primary
   if (s === 'home') return 'home';
   if (s === 'opponent') return 'opponent';
 
-  // common aliases you may emit in modules / legacy data
   if (s === 'opp' || s === 'away' || s === 'visitor' || s === 'right') return 'opponent';
   if (s === 'h' || s === 'left') return 'home';
 
@@ -177,13 +175,10 @@ function toSide(v: any): 'home' | 'opponent' | null {
 
 /**
  * Resolve a side for events that are actor:'neutral' but clearly target someone.
- * Supports: meta.for, meta.offender, meta.awardedTo, meta.benefit, meta.side, meta.beltSide.
  */
 function resolveNeutralSide(e: EventRow): 'home' | 'opponent' | null {
   const m = getMetaFlat(e);
 
-  // If you ever choose to adopt this later, it becomes the cleanest standard:
-  // meta.beltSide: 'home' | 'opponent'
   const direct =
     toSide(m.beltSide) ??
     toSide(m.side) ??
@@ -196,13 +191,22 @@ function resolveNeutralSide(e: EventRow): 'home' | 'opponent' | null {
 
   if (direct) return direct;
 
-  // Some apps store offender/for nested
   if (m?.target && typeof m.target === 'object') {
     const t = m.target;
     return toSide(t.beltSide) ?? toSide(t.side) ?? toSide(t.for) ?? toSide(t.offender) ?? null;
   }
 
   return null;
+}
+
+/**
+ * ✅ Many clips store type in either `kind` or `key`.
+ * This makes playback robust across sports + older clips.
+ */
+function readEventType(e: EventRow): string {
+  const kind = String((e as any)?.kind ?? '').trim().toLowerCase();
+  const key = String((e as any)?.key ?? '').trim().toLowerCase();
+  return kind || key;
 }
 
 function displayKindForPill(e: EventRow): string {
@@ -230,6 +234,101 @@ function readPreRollSec(e: EventRow): number {
   return Math.max(0, Math.min(15, n));
 }
 
+/* ==================== Period + Choice (SAFE ADD-ON) ==================== */
+
+function readPeriodNumber(e: EventRow): number | null {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  const raw =
+    meta?.period ??
+    inner?.period ??
+    meta?.periodNumber ??
+    inner?.periodNumber ??
+    // extra safety for weird nesting
+    meta?.meta?.period ??
+    meta?.meta?.periodNumber;
+
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+
+  const label = String(meta?.label ?? inner?.label ?? (e as any)?.label ?? '').trim();
+  const m = label.match(/^p\s*(\d+)/i) || label.match(/^period\s*(\d+)/i);
+  if (m?.[1]) {
+    const pn = parseInt(m[1], 10);
+    if (!Number.isNaN(pn) && pn > 0) return pn;
+  }
+
+  const k = String((e as any)?.kind ?? '').toLowerCase();
+  const km = k.match(/^period\s*(\d+)/) || k.match(/^p\s*(\d+)/);
+  if (km?.[1]) {
+    const pn = parseInt(km[1], 10);
+    if (!Number.isNaN(pn) && pn > 0) return pn;
+  }
+
+  return null;
+}
+
+function readChoiceToken(e: EventRow): 'top' | 'bottom' | 'neutral' | 'defer' | null {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  // Prefer explicit meta.choice first, then fallback to label
+  const raw =
+    meta?.choice ??
+    inner?.choice ??
+    (e as any)?.choice ??
+    meta?.label ??
+    inner?.label ??
+    (e as any)?.label ??
+    '';
+
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return null;
+
+  if (s === 'top') return 'top';
+  if (s === 'bottom') return 'bottom';
+  if (s === 'neutral') return 'neutral';
+  if (s === 'defer' || s === 'deferred') return 'defer';
+
+  if (s.includes('top')) return 'top';
+  if (s.includes('bottom')) return 'bottom';
+  if (s.includes('neutral')) return 'neutral';
+  if (s.includes('defer')) return 'defer';
+
+  return null;
+}
+
+/**
+ * ✅ Find the LAST NON-DEFER choice event for a period.
+ * Robust to choice stored as kind OR key.
+ */
+function findLastRealChoiceForPeriod(events: EventRow[], periodNum: number): EventRow | null {
+  if (!events?.length) return null;
+
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+
+    const type = readEventType(e);
+    if (type !== 'choice') continue;
+
+    const p = readPeriodNumber(e);
+    if (p !== periodNum) continue;
+
+    const token = readChoiceToken(e);
+    if (!token) continue;
+
+    // NEVER show defer in playback
+    if (token === 'defer') continue;
+
+    return e;
+  }
+
+  return null;
+}
+
+/* ==================== Event Belt ==================== */
+
 export function EventBelt(props: {
   duration: number;
   current: number;
@@ -249,45 +348,37 @@ export function EventBelt(props: {
 
   const rowY = (lane: 'home' | 'opponent') => (lane === 'home' ? 10 : 40);
 
-  /**
-   * Lane priority (safe + future-proof):
-   * 1) Explicit baseball lane in meta (beltLane)
-   * 2) Explicit actor home/opponent
-   * 3) Neutral events that target a side via meta (for/offender/etc)
-   * 4) Fallback: opponent (preserves legacy behavior for unknowns)
-   *
-   * ✅ IMPORTANT: We DO NOT use global keyword inference (like kind includes "out"),
-   * because that causes cross-sport collisions (wrestling "out" vs baseball "out").
-   */
   const laneFor = (e: EventRow): 'home' | 'opponent' => {
-    // 1) explicit belt lane override (baseball)
     const beltLane = readBeltLaneMeta(e);
     if (beltLane === 'top') return 'home';
     if (beltLane === 'bottom') return 'opponent';
 
-    // 2) explicit actor
     const a = (e as any).actor;
     if (a === 'home') return 'home';
     if (a === 'opponent') return 'opponent';
 
-    // 3) neutral-but-targeted events
     const resolved = resolveNeutralSide(e);
     if (resolved) return resolved;
 
-    // 4) fallback
     return 'opponent';
   };
 
+  // Determines if this event is a "period marker"
   const getPeriodLabel = (e: EventRow): string | null => {
     const meta = (e as any).meta ?? {};
-    const label = String(meta?.label ?? '').trim();
+    const inner = meta?.meta ?? {};
+    const label = String(meta?.label ?? inner?.label ?? '').trim();
 
     const rawPeriod =
       typeof meta.period === 'number'
         ? meta.period
-        : typeof meta.periodNumber === 'number'
-          ? meta.periodNumber
-          : undefined;
+        : typeof inner.period === 'number'
+          ? inner.period
+          : typeof meta.periodNumber === 'number'
+            ? meta.periodNumber
+            : typeof inner.periodNumber === 'number'
+              ? inner.periodNumber
+              : undefined;
 
     if (typeof rawPeriod === 'number' && rawPeriod > 0) return `P${rawPeriod}`;
 
@@ -308,7 +399,7 @@ export function EventBelt(props: {
 
   const layout = useMemo(() => {
     const indexed = (events ?? []).map((e, i) => ({ e, i }));
-    indexed.sort((a, b) => a.e.t - b.e.t || a.i - b.i);
+    indexed.sort((a, b) => (a.e.t ?? 0) - (b.e.t ?? 0) || a.i - b.i);
 
     const lastLeft: Record<'home' | 'opponent', number> = {
       home: BASE_LEFT - PILL_W,
@@ -322,10 +413,17 @@ export function EventBelt(props: {
       c: string;
       isPeriod: boolean;
       periodLabel?: string;
+      periodText?: string;
+      periodTextColor?: string;
       displayT: number;
     }> = [];
 
     for (const { e } of indexed) {
+      const type = readEventType(e);
+
+      // ✅ hide choice pills completely so you never get 2 pills
+      if (type === 'choice') continue;
+
       const lane = laneFor(e);
 
       const periodLabel = getPeriodLabel(e);
@@ -341,6 +439,24 @@ export function EventBelt(props: {
       const placedLeft = Math.max(desiredLeft, prevLeft + PILL_W + MIN_GAP, BASE_LEFT);
       lastLeft[lane] = placedLeft;
 
+      let periodText: string | undefined;
+      let periodTextColor: string | undefined;
+
+      if (isPeriod) {
+        const pNum = readPeriodNumber(e);
+        const realChoiceEvt = pNum ? findLastRealChoiceForPeriod(events ?? [], pNum) : null;
+        const token = realChoiceEvt ? readChoiceToken(realChoiceEvt) : null;
+
+        if (pNum) {
+          periodText = `p${pNum}${token ? ` ${token}` : ''}`.toLowerCase();
+          periodTextColor = realChoiceEvt ? colorFor(realChoiceEvt) : '#111';
+        } else {
+          const numLabel = (periodLabel && periodLabel.replace(/\D/g, '')) || periodLabel;
+          periodText = `p${String(numLabel || '').trim()}`.toLowerCase();
+          periodTextColor = '#111';
+        }
+      }
+
       items.push({
         e,
         x: placedLeft + PILL_W / 2,
@@ -348,11 +464,13 @@ export function EventBelt(props: {
         c: colorFor(e),
         isPeriod,
         periodLabel: periodLabel || undefined,
+        periodText,
+        periodTextColor,
         displayT,
       });
     }
 
-    const maxCenter = items.length ? Math.max(...items.map(it => it.x)) : 0;
+    const maxCenter = items.length ? Math.max(...items.map((it) => it.x)) : 0;
     const contentW = Math.max(screenW, maxCenter + PILL_W / 2 + EDGE_PAD);
     return { items, contentW };
   }, [events, screenW, colorFor]);
@@ -439,7 +557,7 @@ export function EventBelt(props: {
 
             const handlePress = () => {
               lockUser(1200);
-              onSeek(it.e.t ?? 0); // ✅ seek to REAL event time
+              onSeek(it.e.t ?? 0);
             };
 
             const handleLong = () => {
@@ -448,9 +566,6 @@ export function EventBelt(props: {
             };
 
             if (it.isPeriod) {
-              const numLabel =
-                (it.periodLabel && it.periodLabel.replace(/\D/g, '')) || it.periodLabel;
-
               return (
                 <Pressable
                   key={`${(it.e as any)._id ?? 'period'}-${i}`}
@@ -473,8 +588,16 @@ export function EventBelt(props: {
                     opacity: isPassed ? 0.9 : 1,
                   }}
                 >
-                  <Text style={{ color: '#111', fontWeight: '900', fontSize: 14 }}>
-                    {numLabel || it.periodLabel}
+                  <Text
+                    style={{
+                      color: it.periodTextColor ?? '#111',
+                      fontWeight: '900',
+                      fontSize: 12,
+                    }}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {it.periodText ?? (it.periodLabel || '').toLowerCase()}
                   </Text>
                 </Pressable>
               );
@@ -504,10 +627,7 @@ export function EventBelt(props: {
                   opacity: isPassed ? 0.45 : 1,
                 }}
               >
-                <Text
-                  style={{ color: 'white', fontSize: 11, fontWeight: '800' }}
-                  numberOfLines={1}
-                >
+                <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
                   {`${abbrKind(pillKind)}${
                     typeof (it.e as any).points === 'number' && (it.e as any).points > 0
                       ? `+${(it.e as any).points}`
@@ -515,7 +635,6 @@ export function EventBelt(props: {
                   }`}
                 </Text>
 
-                {/* ✅ show the DISPLAY time (lead-up position) so belt matches what you see */}
                 <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>
                   {fmt(it.displayT)}
                 </Text>
@@ -545,6 +664,10 @@ export function QuickEditSheet(props: {
   const screenW = Dimensions.get('window').width;
   const BOX_W = Math.min(screenW * 0.75, 520);
 
+  // Keep this as-is (it’s “edit what you long-pressed”)
+  const kind = String((event as any)?.kind ?? '');
+  const pts = (event as any).points ? `+${(event as any).points}` : '';
+
   return (
     <View
       pointerEvents="auto"
@@ -570,8 +693,8 @@ export function QuickEditSheet(props: {
           textAlign: 'center',
         }}
       >
-        Edit {abbrKind(displayKindForPill(event))}
-        {(event as any).points ? `+${(event as any).points}` : ''} @ {fmt((event as any).t)}
+        Edit {abbrKind(kind)}
+        {pts} @ {fmt((event as any).t)}
       </Text>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
