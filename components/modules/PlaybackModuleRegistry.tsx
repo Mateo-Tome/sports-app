@@ -12,10 +12,33 @@ import WrestlingGrecoPlaybackModule from './wrestling/WrestlingGrecoPlaybackModu
 // ✅ Basketball
 import BasketballPlaybackModule from './basketball/BasketballPlaybackModule';
 
+// ✅ Volleyball
+import VolleyballPlaybackModule from './volleyball/VolleyballPlaybackModule';
+
 export function normalizeKey(sport?: string, style?: string) {
-  const s = String(sport ?? '').trim().toLowerCase();
-  const st = String(style ?? 'default').trim().toLowerCase();
-  return `${s}:${st}`;
+  // ✅ IMPORTANT:
+  // Your "sport" string sometimes looks like "volleyball:match" (or "wrestling:folkstyle", etc).
+  // The registry expects "sport:style" (two segments).
+  //
+  // So we normalize as:
+  //   sportBase = first segment before ":"   (e.g. "volleyball")
+  //   inferredStyle = second segment if present (e.g. "match")
+  //   finalStyle = explicit style param if provided, else inferredStyle, else "default"
+  //
+  // This makes ALL of these work:
+  // - sport="volleyball", style="default"     => "volleyball:default"
+  // - sport="volleyball:match", style=undef   => "volleyball:match"
+  // - sport="volleyball:match", style="default" => "volleyball:default" (explicit style wins)
+  const rawSport = String(sport ?? '').trim().toLowerCase();
+  const parts = rawSport.split(':').filter(Boolean);
+
+  const sportBase = parts[0] || '';
+  const inferredStyle = parts[1] || '';
+
+  const stRaw = String(style ?? '').trim().toLowerCase();
+  const finalStyle = stRaw || inferredStyle || 'default';
+
+  return `${sportBase}:${finalStyle}`;
 }
 
 const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
@@ -30,8 +53,12 @@ const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
 
   // Basketball
   'basketball:default': BasketballPlaybackModule,
-  // If your clips use another style, add it too (safe alias):
+  // safe aliases if you ever store basketball as basketball:pickup etc
   // 'basketball:pickup': BasketballPlaybackModule,
+
+  // Volleyball
+  'volleyball:default': VolleyballPlaybackModule,
+  'volleyball:match': VolleyballPlaybackModule, // ✅ if you store sport as volleyball:match
 
   // add new ones here later...
 };

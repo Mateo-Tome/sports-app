@@ -1,9 +1,14 @@
 // app/(whatever)/PlaybackScreen.tsx
-// (This is the full file you pasted, with ONLY the pill-color logic upgraded in a generic/modular way.)
+// PlaybackScreen (stable edit + stable seeks)
+// Key fixes vs the broken “gate” version:
+// - NEVER upper-clamp seeks when duration is unknown (prevents random snap-to-0).
+// - Remove seek-settle gate (Edit enters immediately; no “Edit did nothing”).
+// - Keep one authoritative edit timestamp: editAnchorTimeRef.
+// - Remove debug HUD overlay.
 
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,7 +20,12 @@ import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 import useWebVideoController from '../../src/hooks/useWebVideoController';
 
-import { EditModeMask, LoadingErrorOverlay, ReplayOverlay, SkipHudOverlay } from '../../components/playback/PlaybackOverlays';
+import {
+  EditModeMask,
+  LoadingErrorOverlay,
+  ReplayOverlay,
+  SkipHudOverlay,
+} from '../../components/playback/PlaybackOverlays';
 import TopScrubber from '../../components/playback/TopScrubber';
 
 import type { OverlayEvent } from '../../components/modules/types';
@@ -31,7 +41,6 @@ import {
   SAFE_MARGIN,
 } from '../../components/playback/PlaybackChrome';
 
-// ✅ centralized playback module registry
 import * as PlaybackModuleRegistry from '../../components/modules/PlaybackModuleRegistry';
 
 const GREEN = '#16a34a';
@@ -160,7 +169,6 @@ export default function PlaybackScreen() {
     return !webIsPlaying && Math.abs((webNow || 0) - dur) < 0.25;
   }, [dur, nativeAtVideoEnd, webIsPlaying, webNow]);
 
-  // ✅ Duration helper
   const getDurationSafe = useCallback(() => {
     if (isWeb) return dur || 0;
     try {
@@ -171,23 +179,51 @@ export default function PlaybackScreen() {
     }
   }, [dur, getLiveDuration]);
 
-  // ✅ Unified seek (WEB MUST NOT clamp with getLiveDuration)
-  const onSeek = useCallback(
+  // ✅ Critical: DO NOT upper-clamp when duration is unknown (D<=0).
+  const clampToDuration = useCallback(
     (sec: number) => {
       const D = getDurationSafe();
-      const clamped = Math.max(0, Math.min(D || 0, sec));
-
-      if (isWeb) {
-        webSeek(clamped);
-        return;
-      }
-
-      seekInternal(clamped);
+      const low = Math.max(0, sec);
+      if (isFinite(D) && D > 0) return Math.min(D, low);
+      return low;
     },
-    [getDurationSafe, seekInternal, webSeek],
+    [getDurationSafe],
   );
 
-  // ✅ Unified play/pause
+  // ---- time refs ----
+  const desiredTimeRef = useRef<number>(0); // latest intended time from scrub/seek
+  const lastUserSeekMsRef = useRef<number>(0);
+  const isScrubbingRef = useRef<boolean>(false);
+
+  // single source of truth for edit stamping
+  const editAnchorTimeRef = useRef<number>(0);
+
+  // unified seek (updates desired immediately)
+  const onSeek = useCallback(
+    (sec: number) => {
+      const t = clampToDuration(sec);
+      desiredTimeRef.current = t;
+      lastUserSeekMsRef.current = Date.now();
+
+      if (isWeb) {
+        webSeek(t);
+      } else {
+        seekInternal(t);
+      }
+    },
+    [clampToDuration, seekInternal, webSeek],
+  );
+
+  // preview time from scrubber drag (intent only)
+  const onPreviewTime = useCallback(
+    (sec: number) => {
+      const t = clampToDuration(sec);
+      desiredTimeRef.current = t;
+      lastUserSeekMsRef.current = Date.now();
+    },
+    [clampToDuration],
+  );
+
   const onPlayPause = useCallback(async () => {
     if (isWeb) {
       await webPlayPause();
@@ -253,21 +289,20 @@ export default function PlaybackScreen() {
   });
 
   const skipLeft5 = useCallback(() => {
-    const t = Math.max(0, (now || 0) - SKIP_SEC);
+    const t = clampToDuration((now || 0) - SKIP_SEC);
     onSeek(t);
     try {
       handleLeftTap?.();
     } catch {}
-  }, [now, onSeek, handleLeftTap]);
+  }, [clampToDuration, handleLeftTap, now, onSeek]);
 
   const skipRight5 = useCallback(() => {
-    const maxT = getDurationSafe();
-    const t = Math.min(maxT, (now || 0) + SKIP_SEC);
+    const t = clampToDuration((now || 0) + SKIP_SEC);
     onSeek(t);
     try {
       handleRightTap?.();
     } catch {}
-  }, [getDurationSafe, now, onSeek, handleRightTap]);
+  }, [clampToDuration, handleRightTap, now, onSeek]);
 
   const { leftZoneProps, rightZoneProps, skipHUD: tapSkipHUD } = useSkipTapZones({
     chromeVisible,
@@ -295,15 +330,33 @@ export default function PlaybackScreen() {
   const genId = () => Math.random().toString(36).slice(2, 9);
 
   const enterAddMode = () => {
-    setEditMode(true);
-    setEditSubmode('add');
-    setEditTargetId(null);
+    const tPlayer = clampToDuration(now || 0);
+
+    const msSinceSeek = Date.now() - (lastUserSeekMsRef.current || 0);
+    const hasRecentSeek = msSinceSeek >= 0 && msSinceSeek < 2000;
+
+    if (!hasRecentSeek) {
+      desiredTimeRef.current = tPlayer;
+    } else {
+      desiredTimeRef.current = clampToDuration(desiredTimeRef.current || tPlayer);
+    }
+
+    editAnchorTimeRef.current = desiredTimeRef.current || tPlayer;
+
+    // force player seek to anchor (no gating)
+    onSeek(editAnchorTimeRef.current);
+
+    // pause to reduce drift
     try {
       (player as any)?.pause?.();
     } catch {}
     try {
       webVideoRef.current?.pause?.();
     } catch {}
+
+    setEditMode(true);
+    setEditSubmode('add');
+    setEditTargetId(null);
   };
 
   const exitEditMode = () => {
@@ -313,6 +366,8 @@ export default function PlaybackScreen() {
     setQuickEditFor(null);
   };
 
+  // ADD stamps at frozen editAnchorTimeRef while in edit mode
+  // REPLACE keeps original pill timestamp
   const handleOverlayEventFromModule = (evt: OverlayEvent) => {
     const actor: Actor = toActor((evt as any).actor);
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
@@ -322,63 +377,65 @@ export default function PlaybackScreen() {
     const label = (evt as any).label;
     const metaForRow = { ...(label ? { label } : {}), ...baseMeta };
 
-    const tNow = Math.max(0, Math.min(getDurationSafe(), now || 0));
+    const tPlayer = clampToDuration(now || 0);
+    const tEdit = clampToDuration(editAnchorTimeRef.current || 0);
+    const tNow = editMode ? tEdit : tPlayer;
 
-    if (editSubmode === 'add') {
-      const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
-      const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
+    const addAtTime = (t: number) => {
+      const newEvt: EventRow = { _id: genId(), t, kind, points, actor, meta: metaForRow };
+      const sorted = [...events, newEvt].sort((a, b) => a.t - b.t);
+      const next: EventRow[] = accumulateEvents(sorted);
       setEvents(next);
       saveSidecar(next);
+    };
+
+    const replaceKeepingTime = (targetId: string) => {
+      const target = events.find((e) => (e as any)._id === targetId);
+      const tKeep = typeof (target as any)?.t === 'number' ? (target as any).t : tNow;
+
+      const nextBase: EventRow[] = events.map((e) => {
+        if ((e as any)._id !== targetId) return e;
+        return {
+          ...(e as any),
+          _id: (e as any)._id,
+          t: tKeep,
+          kind,
+          points,
+          actor,
+          meta: metaForRow,
+          scoreAfter: undefined,
+        } as EventRow;
+      });
+
+      const next: EventRow[] = accumulateEvents(nextBase.sort((a, b) => a.t - b.t));
+      setEvents(next);
+      saveSidecar(next);
+    };
+
+    if (editSubmode === 'add') {
+      addAtTime(tNow);
       exitEditMode();
       return;
     }
 
     if (editSubmode === 'replace' && editTargetId) {
-      const nextBase: EventRow[] = events.map(e =>
-        e._id === editTargetId ? ({ ...e, t: tNow, kind, points, actor, meta: metaForRow } as EventRow) : e,
-      );
-      const next: EventRow[] = accumulateEvents(nextBase.sort((a, b) => a.t - b.t));
-      setEvents(next);
-      saveSidecar(next);
+      replaceKeepingTime(editTargetId);
       exitEditMode();
       return;
     }
 
-    const newEvt: EventRow = { _id: genId(), t: tNow, kind, points, actor, meta: metaForRow };
-    const next: EventRow[] = accumulateEvents([...events, newEvt].sort((a, b) => a.t - b.t));
-    setEvents(next);
-    saveSidecar(next);
+    // fallback (shouldn't usually happen)
+    addAtTime(tNow);
   };
 
-  // ✅ module lookup via registry
   const { Module: ModuleCmp } =
     PlaybackModuleRegistry.getPlaybackModule?.(effectiveSport, effectiveStyle) ?? { Module: null };
-
-  /**
-   * ✅ MODULAR COLOR RESOLUTION (NOT sport-specific):
-   * - reads explicit color if present
-   * - reads athleteActor if recorded (so flips during recording still play back correctly)
-   * - reads named colors (red/blue/green) OR hex colors if modules provide them
-   * - otherwise falls back to existing legacy logic so nothing breaks
-   */
-  const isHex = (v: any) =>
-    typeof v === 'string' && /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim());
-
-  const normalizeNamed = (raw: any): 'red' | 'blue' | 'green' | null => {
-    if (!raw) return null;
-    const v = String(raw).trim().toLowerCase();
-    if (v === 'red') return 'red';
-    if (v === 'blue') return 'blue';
-    if (v === 'green') return 'green';
-    return null;
-  };
 
   const colorForPill = useCallback(
     (e: EventRow) => {
       const meta = (e.meta ?? {}) as any;
       const inner = (meta.meta ?? {}) as any;
-  
-      // 1) explicit tint wins (works for all sports)
+
       const explicit =
         meta.pillColor ??
         inner.pillColor ??
@@ -390,14 +447,12 @@ export default function PlaybackScreen() {
         inner.buttonColor ??
         meta.chipColor ??
         inner.chipColor;
-  
+
       if (typeof explicit === 'string' && explicit.trim().length > 0) return explicit;
-  
-      // Merge meta defensively (prefer top-level)
+
       const m = { ...inner, ...meta };
-  
+
       const isHex = (v: any) => typeof v === 'string' && /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim());
-  
       const normalizeNamed = (raw: any): 'red' | 'blue' | 'green' | null => {
         if (!raw) return null;
         const v = String(raw).trim().toLowerCase();
@@ -406,49 +461,39 @@ export default function PlaybackScreen() {
         if (v === 'green') return 'green';
         return null;
       };
-  
       const mapNamedToHex = (name: 'red' | 'blue' | 'green') => {
         if (name === 'green') return GREEN;
         if (name === 'red') return RED;
         return '#3b82f6';
       };
-  
-      // Legacy athlete/opponent colors (safe fallback)
+
       const colorIsGreen = effectiveHomeColorIsGreen !== false;
       const athleteColorLegacy = colorIsGreen ? GREEN : RED;
       const opponentColorLegacy = colorIsGreen ? RED : GREEN;
-  
-      // 2) Determine who "athlete" is for this clip (prefer stored mapping if present)
+
       const athleteActor: 'home' | 'opponent' | null =
         m.athleteActor === 'home' || m.athleteActor === 'opponent' ? m.athleteActor : null;
-  
+
       const myActor = effectiveHomeIsAthlete ? 'home' : 'opponent';
-      const isAthleteActor =
-        athleteActor ? e.actor === athleteActor : e.actor === myActor;
-  
-      // 3) If modules stored explicit hex colors, use them
+      const isAthleteActor = athleteActor ? e.actor === athleteActor : e.actor === myActor;
+
       if (isHex(m.athleteColor) || isHex(m.opponentColor)) {
         const aHex = isHex(m.athleteColor) ? m.athleteColor : null;
         const oHex = isHex(m.opponentColor) ? m.opponentColor : null;
-  
         if (isAthleteActor && aHex) return aHex;
         if (!isAthleteActor && oHex) return oHex;
-  
         if (aHex) return aHex;
         if (oHex) return oHex;
       }
-  
-      // 4) Named colors chosen by module (red/blue/green)
+
       const mkName = normalizeNamed(m.myKidColor);
       const okName = normalizeNamed(m.opponentColor);
-  
       if (mkName || okName) {
         const athleteColor = mkName ? mapNamedToHex(mkName) : athleteColorLegacy;
         const opponentColor = okName ? mapNamedToHex(okName) : opponentColorLegacy;
         return isAthleteActor ? athleteColor : opponentColor;
       }
-  
-      // 5) Chooser/neutral targeting: color from meta.for/offender/etc
+
       const metaSide = (v: any): 'home' | 'opponent' | null => {
         const s = String(v ?? '').trim().toLowerCase();
         if (!s) return null;
@@ -456,7 +501,7 @@ export default function PlaybackScreen() {
         if (s === 'opponent' || s === 'opp' || s === 'o') return 'opponent';
         return null;
       };
-  
+
       const targeted =
         metaSide(m.for) ??
         metaSide(m.awardedTo) ??
@@ -466,31 +511,24 @@ export default function PlaybackScreen() {
         metaSide(m.penalized) ??
         metaSide(m.calledOn) ??
         null;
-  
+
       const kind = String(e.kind || '').toLowerCase();
       const pts = typeof e.points === 'number' ? e.points : 0;
-  
+
       if (targeted) {
         const isTargetAthlete = targeted === myActor;
         const athleteColor = athleteColorLegacy;
         const opponentColor = opponentColorLegacy;
-        // If points > 0, make sure it uses the target side color
         if (pts > 0) return isTargetAthlete ? athleteColor : opponentColor;
-        // If penalty-ish/chooser, still show target side color
         if (PENALTYISH.has(kind)) return isTargetAthlete ? athleteColor : opponentColor;
       }
-  
-      // 6) Legacy fallback (keeps other sports working)
+
       if (pts > 0) return isAthleteActor ? athleteColorLegacy : opponentColorLegacy;
-  
-      // IMPORTANT: don't force penaltyish to opponent; that's what broke freestyle/greco
       if (PENALTYISH.has(kind)) return 'rgba(148,163,184,0.9)';
-  
       return 'rgba(148,163,184,0.9)';
     },
     [effectiveHomeIsAthlete, effectiveHomeColorIsGreen],
   );
-  
 
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
@@ -500,7 +538,6 @@ export default function PlaybackScreen() {
   };
 
   const shouldMountVideoView = isWeb ? isReady : true;
-
   const beltBlock = showEventBelt ? BELT_H + insets.bottom : 0;
 
   return (
@@ -518,12 +555,7 @@ export default function PlaybackScreen() {
                 playsInline
                 controls={false}
                 muted={false}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  backgroundColor: 'black',
-                }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'black' }}
                 {...(videoHandlers as any)}
               />
             </View>
@@ -544,7 +576,6 @@ export default function PlaybackScreen() {
           </View>
         )}
 
-        {/* Tap anywhere ONLY to reveal chrome when hidden (but do NOT cover the belt) */}
         <Pressable
           onPress={showChrome}
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: beltBlock }}
@@ -616,7 +647,7 @@ export default function PlaybackScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => setOverlayMenuOpen(v => !v)}
+              onPress={() => setOverlayMenuOpen((v) => !v)}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
@@ -654,9 +685,13 @@ export default function PlaybackScreen() {
                   onSeek(t);
                   showChrome();
                 }}
+                onPreviewTime={onPreviewTime}
                 insets={insets}
                 visible={true}
-                onInteracting={setIsScrubbing}
+                onInteracting={(v) => {
+                  isScrubbingRef.current = v;
+                  setIsScrubbing(v);
+                }}
               />
             )}
 
@@ -736,17 +771,24 @@ export default function PlaybackScreen() {
               onReplace={() => {
                 if (!quickEditFor) return;
                 const id = quickEditFor._id;
+                const tKeep = quickEditFor.t;
+
                 setQuickEditFor(null);
                 if (!id) return;
-                setEditMode(true);
-                setEditSubmode('replace');
-                setEditTargetId(id);
+
+                editAnchorTimeRef.current = clampToDuration(tKeep);
+                onSeek(editAnchorTimeRef.current);
+
                 try {
                   (player as any)?.pause?.();
                 } catch {}
                 try {
                   webVideoRef.current?.pause?.();
                 } catch {}
+
+                setEditMode(true);
+                setEditSubmode('replace');
+                setEditTargetId(id);
               }}
             />
           </>
@@ -774,25 +816,6 @@ export default function PlaybackScreen() {
             athleteName={displayAthlete}
           />
         ) : null}
-
-        {isWeb && chromeVisible && (
-          <View
-            style={{
-              position: 'absolute',
-              left: insets.left + SAFE_MARGIN,
-              right: insets.right + SAFE_MARGIN,
-              bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN * 2 : SAFE_MARGIN * 2),
-              alignItems: 'center',
-              opacity: 0.9,
-              zIndex: 20,
-            }}
-            pointerEvents="none"
-          >
-            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12 }}>
-              Web: double-click skips. Arrow keys also work (← / →).
-            </Text>
-          </View>
-        )}
 
         <EditModeMask visible={editMode} bottomInset={insets.bottom} onExit={exitEditMode} />
       </View>

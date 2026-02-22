@@ -3,14 +3,20 @@ import * as FileSystem from 'expo-file-system';
 import { useEffect, useRef, useState } from 'react';
 import { DeviceEventEmitter } from 'react-native';
 
-import { assignIds, deriveOutcome, EventRow, normalizeEvents, Sidecar } from '../../components/playback/playbackCore';
+import {
+  assignIds,
+  deriveOutcome,
+  EventRow,
+  normalizeEvents,
+  Sidecar,
+} from '../../components/playback/playbackCore';
 
 type SidecarMeta = { sport?: string; style?: string; createdAt?: number };
 
 function accumulate(evts: EventRow[]) {
   let h = 0,
     o = 0;
-  return evts.map(e => {
+  return evts.map((e) => {
     const pts = typeof e.points === 'number' ? e.points : 0;
     if (pts > 0) {
       if (e.actor === 'home') h += pts;
@@ -20,11 +26,112 @@ function accumulate(evts: EventRow[]) {
   });
 }
 
+/**
+ * Future-proof sport/style inference from video path.
+ *
+ * We look at the parent directory name of the video file and interpret it as:
+ *   "<sport><sep><style>"
+ *
+ * Supported separators: "-", "_", ":"
+ * We split on the *last* separator so sport names can contain separators too:
+ *   "table-tennis-default" => sport="table-tennis", style="default"
+ *   "wrestling:freestyle"  => sport="wrestling", style="freestyle"
+ *   "soccer_default"       => sport="soccer", style="default"
+ *
+ * If there is no separator: sport="<folder>", style="default"
+ */
+function parseSportStyleFromVideoPath(videoPath: string): { sport?: string; style?: string } {
+  const parts = String(videoPath).split('/').filter(Boolean);
+  const folder = parts.length >= 2 ? parts[parts.length - 2] : '';
+  const raw = String(folder || '').trim();
+  if (!raw) return {};
+
+  const name = raw.toLowerCase();
+
+  const seps = ['-', '_', ':'] as const;
+  let bestSep: (typeof seps)[number] | null = null;
+  let bestIdx = -1;
+
+  for (const sep of seps) {
+    const idx = name.lastIndexOf(sep);
+    if (idx > 0 && idx < name.length - 1 && idx > bestIdx) {
+      bestIdx = idx;
+      bestSep = sep;
+    }
+  }
+
+  if (bestIdx === -1 || !bestSep) {
+    const sport = name.trim();
+    return sport ? { sport, style: 'default' } : {};
+  }
+
+  const sport = name.slice(0, bestIdx).trim();
+  const style = name.slice(bestIdx + 1).trim();
+
+  return {
+    sport: sport || undefined,
+    style: style || 'default',
+  };
+}
+
+async function resolveSidecarPath(videoPath: string): Promise<string> {
+  const lastSlash = videoPath.lastIndexOf('/');
+  const lastDot = videoPath.lastIndexOf('.');
+  const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
+  const guess = `${base}.json`;
+
+  // 1) exact guess exists?
+  try {
+    const info = await FileSystem.getInfoAsync(guess);
+    if ((info as any)?.exists) return guess;
+  } catch {}
+
+  // 2) scan directory case-insensitive (handles odd casing / renamed file)
+  const dir = videoPath.slice(0, lastSlash + 1);
+  const baseName = base.slice(lastSlash + 1);
+
+  try {
+    // @ts-ignore
+    const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
+    const candidate = files.find((f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
+    if (candidate) return dir + candidate;
+  } catch {}
+
+  // 3) default to guess (for new sidecar writes)
+  return guess;
+}
+
+async function tryReadSidecarAt(path: string): Promise<Sidecar | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(path);
+    if (!(info as any)?.exists) return null;
+    const txt = await FileSystem.readAsStringAsync(path);
+    return JSON.parse(txt || '{}');
+  } catch {
+    return null;
+  }
+}
+
+// ✅ Ensure every event has a stable _id (supports old clips that used "id")
+function ensureEventIds(input: any[]): EventRow[] {
+  return (input || []).map((e: any) => {
+    const existing = e?._id ?? e?.id;
+    const _id =
+      typeof existing === 'string' && existing.trim().length > 0
+        ? existing.trim()
+        : Math.random().toString(36).slice(2, 9);
+
+    return { ...(e as any), _id } as EventRow;
+  });
+}
+
 export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
   const { videoPath, shareId } = args;
 
   const [events, setEvents] = useState<EventRow[]>([]);
-  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(undefined);
+  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(
+    undefined,
+  );
   const [debugMsg, setDebugMsg] = useState('');
   const [athleteName, setAthleteName] = useState('Athlete');
   const [sport, setSport] = useState<string | undefined>(undefined);
@@ -45,11 +152,24 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       const o = deriveOutcome(withScores, homeIsAthlete);
       setFinalScore(o.finalScore);
 
+      const pathGuess = videoPath ? parseSportStyleFromVideoPath(videoPath) : {};
+      const finalSport =
+        (sport ?? '').trim() ||
+        (sidecarMeta.current.sport ?? '').trim() ||
+        (pathGuess.sport ?? '').trim() ||
+        'unknown';
+
+      const finalStyle =
+        (style ?? '').trim() ||
+        (sidecarMeta.current.style ?? '').trim() ||
+        (pathGuess.style ?? '').trim() ||
+        'default';
+
       const payload: Sidecar = {
         athlete: athleteName,
-        sport: sidecarMeta.current.sport,
-        style: sidecarMeta.current.style,
-        createdAt: sidecarMeta.current.createdAt,
+        sport: finalSport,
+        style: finalStyle,
+        createdAt: sidecarMeta.current.createdAt ?? Date.now(),
         events: withScores,
         finalScore: o.finalScore,
         homeIsAthlete,
@@ -65,19 +185,22 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
 
       const tmp = `${path}.tmp`;
       await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload));
-      try {
-        DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload });
-      } catch {}
+
+      // atomic replace
       try {
         await FileSystem.deleteAsync(path, { idempotent: true });
       } catch {}
       await FileSystem.moveAsync({ from: tmp, to: path });
+
+      // emit AFTER file in place
+      try {
+        DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload });
+      } catch {}
     } catch {}
   };
 
   useEffect(() => {
     if (!videoPath) {
-      // cloud playback: no local sidecar
       if (shareId) {
         setDebugMsg('');
         setEvents([]);
@@ -98,58 +221,23 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       return;
     }
 
-    const lastSlash = videoPath.lastIndexOf('/');
-    const lastDot = videoPath.lastIndexOf('.');
-    const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
-    const guessSidecar = `${base}.json`;
-
-    const tryReadSidecar = async (p: string) => {
-      try {
-        const info = await FileSystem.getInfoAsync(p);
-        if (!(info as any)?.exists) return null;
-        const txt = await FileSystem.readAsStringAsync(p);
-        const parsed: Sidecar = JSON.parse(txt || '{}');
-        return parsed;
-      } catch {
-        return null;
-      }
-    };
-
-    const tryDirectorySearch = async () => {
-      try {
-        const dir = videoPath.slice(0, lastSlash + 1);
-        // @ts-ignore
-        const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
-        const baseName = base.slice(lastSlash + 1);
-        const candidate = files.find(f => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
-        if (!candidate) return null;
-        return await tryReadSidecar(dir + candidate);
-      } catch {
-        return null;
-      }
-    };
-
     (async () => {
       setDebugMsg('Loading sidecar…');
-      let usedPath: string | null = guessSidecar;
 
-      let parsed = await tryReadSidecar(guessSidecar);
-      if (!parsed) {
-        parsed = await tryDirectorySearch();
-        if (parsed) {
-          usedPath = `${videoPath.slice(0, lastSlash + 1)}${base.slice(lastSlash + 1)}.json`;
-        }
-      }
+      const resolvedPath = await resolveSidecarPath(videoPath);
+      sidecarPathRef.current = resolvedPath;
 
-      sidecarPathRef.current = usedPath;
+      const parsed = await tryReadSidecarAt(resolvedPath);
+
+      const fromPath = parseSportStyleFromVideoPath(videoPath);
 
       if (!parsed) {
         setEvents([]);
         setFinalScore(undefined);
-        setDebugMsg(`No sidecar found. Looked for:\n${guessSidecar}`);
-        sidecarMeta.current = {};
-        setSport(undefined);
-        setStyle(undefined);
+        setDebugMsg(`No sidecar found. Will create on save.\n${resolvedPath}`);
+        sidecarMeta.current = { sport: fromPath.sport, style: fromPath.style, createdAt: Date.now() };
+        setSport(fromPath.sport);
+        setStyle(fromPath.style);
         setHomeIsAthlete(true);
         setHomeColorIsGreen(true);
         setAthleteName('Athlete');
@@ -163,13 +251,25 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       setHomeColorIsGreen(hcG);
 
       setAthleteName(parsed.athlete?.trim() || 'Athlete');
-      sidecarMeta.current = { sport: parsed.sport, style: parsed.style, createdAt: parsed.createdAt };
-      setSport(parsed.sport);
-      setStyle(parsed.style);
+
+      const parsedSport = String(parsed.sport ?? '').trim() || fromPath.sport || 'unknown';
+      const parsedStyle = String(parsed.style ?? '').trim() || fromPath.style || 'default';
+
+      sidecarMeta.current = {
+        sport: parsedSport,
+        style: parsedStyle,
+        createdAt: parsed.createdAt ?? Date.now(),
+      };
+
+      setSport(parsedSport);
+      setStyle(parsedStyle);
 
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
       const normalized = normalizeEvents(rawEvts, hiA);
-      const withIds = assignIds(normalized);
+
+      // ✅ assignIds + ensure _id ALWAYS exists (supports legacy "id")
+      const withIds = ensureEventIds(assignIds(normalized) as any);
+
       const ordered = [...withIds].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
       setEvents(withScores);
@@ -178,6 +278,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         parsed.finalScore ??
         (withScores.length ? withScores[withScores.length - 1].scoreAfter : { home: 0, opponent: 0 });
       setFinalScore(fs);
+
       setDebugMsg(withScores.length ? '' : 'Sidecar loaded but no events.');
     })();
   }, [videoPath, shareId]);

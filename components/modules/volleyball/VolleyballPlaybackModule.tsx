@@ -1,40 +1,36 @@
-// components/overlays/volleyball/VolleyballOverlay.tsx
-
+// VolleyballPlaybackModule.tsx
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, Text, View, useWindowDimensions } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import type { OverlayEvent, OverlayProps } from '../types';
+import { Animated, Pressable, Text, View } from 'react-native';
+import type { PlaybackModuleProps } from '../types';
 
 const BORDER = 'rgba(255,255,255,0.18)';
 const TEXT_DIM = 'rgba(255,255,255,0.82)';
 
-// Unique colors per button (not blocky)
+// Same colors as your recording overlay (keep 1:1)
 const COLORS = {
   kill: '#22c55e',
   ace: '#f59e0b',
-  block: '#a855f7', // ✅ keep block purple (do NOT collide with net)
+  block: '#a855f7',
   dig: '#38bdf8',
   pass: '#14b8a6',
-  serveIn: '#60a5fa', // Serve In
-  attack: '#16a34a', // slightly different green than Kill
+  serveIn: '#60a5fa',
+  attack: '#16a34a',
 
-  // ✅ Errors: all red variants (worst = deepest red)
-  serveError: '#f87171', // light red
-  net: '#ef4444', // medium red
-  ballHandlingError: '#dc2626', // strong red
-  otherError: '#b91c1c', // deeper red (other)
-  attackError: '#991b1b', // ✅ deepest red (worst)
+  serveError: '#f87171',
+  net: '#ef4444',
+  ballHandlingError: '#dc2626',
+  otherError: '#b91c1c',
+  attackError: '#991b1b',
 
   neutral: 'rgba(148,163,184,0.92)',
 };
 
 type Btn = {
   id: string;
-  label: string; // short button label
-  sub?: string; // tiny text under label
-  action: string; // FULL word used for toast
-  key: string;
+  label: string;
+  sub?: string;
+  action: string; // toast/full word
+  key: string; // event key stored in sidecar
   color: string;
   value?: number;
   kind?: 'good' | 'bad' | 'neutral';
@@ -57,8 +53,6 @@ function CircleButton({
 }) {
   return (
     <Pressable
-      hitSlop={10}
-      pressRetentionOffset={10}
       onPress={disabled ? undefined : onPress}
       style={{
         width: 54,
@@ -95,15 +89,14 @@ function CircleButton({
   );
 }
 
-export default function VolleyballOverlay({
-  isRecording,
-  onEvent,
-  getCurrentTSec,
-}: OverlayProps) {
-  const insets = useSafeAreaInsets();
-  const dims = useWindowDimensions();
-  const isLandscape = dims.width > dims.height;
+export default function VolleyballPlaybackModule(props: PlaybackModuleProps) {
+  const { overlayOn, insets, editMode, editSubmode, onOverlayEvent, now } = props;
 
+  if (!overlayOn) return null;
+
+  const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
+
+  // pass chooser state
   const [passChooserOpen, setPassChooserOpen] = useState(false);
 
   // visual feedback states
@@ -115,38 +108,15 @@ export default function VolleyballOverlay({
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
 
-  const disableTaps = !isRecording;
-
   useEffect(() => {
-    if (!isRecording && passChooserOpen) setPassChooserOpen(false);
-  }, [isRecording, passChooserOpen]);
+    if (!showPalette && passChooserOpen) setPassChooserOpen(false);
+  }, [showPalette, passChooserOpen]);
 
-  // ✅ Move Serve In + Ace to LEFT side (top) so right side never overflows
-  const leftButtons: Btn[] = [
-    { id: 'L_SI', label: 'SI', sub: 'Serve', action: 'Serve In', key: 'serveIn', color: COLORS.serveIn, value: 0, kind: 'good' },
-    { id: 'L_A', label: 'A', sub: 'Ace', action: 'Ace', key: 'ace', color: COLORS.ace, value: 1, kind: 'good' },
-
-    { id: 'L_K', label: 'K', sub: 'Kill', action: 'Kill', key: 'kill', color: COLORS.kill, value: 0, kind: 'good' },
-    { id: 'L_D', label: 'D', sub: 'Dig', action: 'Dig', key: 'dig', color: COLORS.dig, value: 0, kind: 'good' },
-    { id: 'L_B', label: 'B', sub: 'Block', action: 'Block', key: 'block', color: COLORS.block, value: 0, kind: 'good' },
-
-    { id: 'L_TB', label: 'TB', sub: 'Touch', action: 'Touch', key: 'touch', color: COLORS.neutral, value: 0, kind: 'neutral' },
-    { id: 'L_1B', label: '1st', sub: 'Ball', action: 'First Ball', key: 'firstBall', color: COLORS.neutral, value: 0, kind: 'neutral' },
-    { id: 'L_BP', label: 'BP', sub: 'Bump', action: 'Bump Pass', key: 'bump', color: COLORS.neutral, value: 0, kind: 'neutral' },
-  ];
-
-  // ✅ Right side now fits: Pass/Attack + Errors only
-  const rightButtons: Btn[] = [
-    { id: 'R_PR', label: 'PR', sub: 'Pass', action: 'Pass…', key: 'passRating', color: COLORS.pass, value: 0, kind: 'good' },
-    { id: 'R_ATK', label: 'ATK', sub: 'Atk', action: 'Attack', key: 'attack', color: COLORS.attack, value: 0, kind: 'good' },
-
-    // ✅ Errors: each has its own button (fast taps)
-    { id: 'R_AE', label: 'AE', sub: 'Atk', action: 'Attack Error', key: 'attackError', color: COLORS.attackError, value: 0, kind: 'bad' },
-    { id: 'R_SE', label: 'SE', sub: 'Svc', action: 'Serve Error', key: 'serveError', color: COLORS.serveError, value: 0, kind: 'bad' },
-    { id: 'R_NET', label: 'NET', sub: 'Net', action: 'Net Violation', key: 'net', color: COLORS.net, value: 0, kind: 'bad' },
-    { id: 'R_BHE', label: 'BHE', sub: 'Ball', action: 'Ball Handling Error', key: 'ballHandlingError', color: COLORS.ballHandlingError, value: 0, kind: 'bad' },
-    { id: 'R_E', label: 'E', sub: 'Other', action: 'Other Error', key: 'error', color: COLORS.otherError, value: 0, kind: 'bad' },
-  ];
+  const flashButton = (id: string) => {
+    if (litTimerRef.current) clearTimeout(litTimerRef.current);
+    setLitId(id);
+    litTimerRef.current = setTimeout(() => setLitId(null), 180);
+  };
 
   const showToast = (text: string, color: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -171,12 +141,6 @@ export default function VolleyballOverlay({
     }, 900);
   };
 
-  const flashButton = (id: string) => {
-    if (litTimerRef.current) clearTimeout(litTimerRef.current);
-    setLitId(id);
-    litTimerRef.current = setTimeout(() => setLitId(null), 180);
-  };
-
   const emit = (
     key: string,
     label: string,
@@ -195,53 +159,80 @@ export default function VolleyballOverlay({
     const kind = (extraMeta as any)?.kind as 'good' | 'bad' | 'neutral' | undefined;
     const beltLane = kind === 'bad' ? 'top' : 'bottom';
 
-    const evt: OverlayEvent = {
+    onOverlayEvent?.({
       actor: 'neutral',
       key,
       value,
       label,
       meta: {
+        // color signals (existing)
         pillColor: color,
         tint: color,
         color,
         chipColor: color,
         buttonColor: color,
+
+        // ✅ lane control for EventBelt
         beltLane,
-        tSec: getCurrentTSec?.(),
+
+        // timestamp for playback edits
+        tSec: now,
+
         ...(extraMeta || {}),
       },
-    } as any;
-
-    onEvent?.(evt);
+    } as any);
   };
 
-  // layout sizes
+  // ✅ match recording overlay layout + keys
+  const leftButtons: Btn[] = [
+    { id: 'L_SI', label: 'SI', sub: 'Serve', action: 'Serve In', key: 'serveIn', color: COLORS.serveIn, value: 0, kind: 'good' },
+    { id: 'L_A', label: 'A', sub: 'Ace', action: 'Ace', key: 'ace', color: COLORS.ace, value: 1, kind: 'good' },
+
+    { id: 'L_K', label: 'K', sub: 'Kill', action: 'Kill', key: 'kill', color: COLORS.kill, value: 0, kind: 'good' },
+    { id: 'L_D', label: 'D', sub: 'Dig', action: 'Dig', key: 'dig', color: COLORS.dig, value: 0, kind: 'good' },
+    { id: 'L_B', label: 'B', sub: 'Block', action: 'Block', key: 'block', color: COLORS.block, value: 0, kind: 'good' },
+
+    { id: 'L_TB', label: 'TB', sub: 'Touch', action: 'Touch', key: 'touch', color: COLORS.neutral, value: 0, kind: 'neutral' },
+    { id: 'L_1B', label: '1st', sub: 'Ball', action: 'First Ball', key: 'firstBall', color: COLORS.neutral, value: 0, kind: 'neutral' },
+    { id: 'L_BP', label: 'BP', sub: 'Bump', action: 'Bump Pass', key: 'bump', color: COLORS.neutral, value: 0, kind: 'neutral' },
+  ];
+
+  const rightButtons: Btn[] = [
+    { id: 'R_PR', label: 'PR', sub: 'Pass', action: 'Pass…', key: 'passRating', color: COLORS.pass, value: 0, kind: 'good' },
+    { id: 'R_ATK', label: 'ATK', sub: 'Atk', action: 'Attack', key: 'attack', color: COLORS.attack, value: 0, kind: 'good' },
+
+    { id: 'R_AE', label: 'AE', sub: 'Atk', action: 'Attack Error', key: 'attackError', color: COLORS.attackError, value: 0, kind: 'bad' },
+    { id: 'R_SE', label: 'SE', sub: 'Svc', action: 'Serve Error', key: 'serveError', color: COLORS.serveError, value: 0, kind: 'bad' },
+    { id: 'R_NET', label: 'NET', sub: 'Net', action: 'Net Violation', key: 'net', color: COLORS.net, value: 0, kind: 'bad' },
+    { id: 'R_BHE', label: 'BHE', sub: 'Ball', action: 'Ball Handling Error', key: 'ballHandlingError', color: COLORS.ballHandlingError, value: 0, kind: 'bad' },
+    { id: 'R_E', label: 'E', sub: 'Other', action: 'Other Error', key: 'error', color: COLORS.otherError, value: 0, kind: 'bad' },
+  ];
+
+  // layout sizes (same as overlay)
   const BTN = 54;
   const GAP = 10;
-
   const LEFT_COLS = 2;
   const RIGHT_COLS = 2;
 
   const leftWidth = LEFT_COLS * BTN + (LEFT_COLS - 1) * GAP;
   const rightWidth = RIGHT_COLS * BTN + (RIGHT_COLS - 1) * GAP;
 
-  // keep your same placement
   const GRID_TOP = insets.top + 72;
+  const GRID_BOTTOM = insets.bottom + 90;
 
+  // =========================
+  // NOT EDITING
+  // =========================
+  if (!showPalette) {
+    return null;
+  }
+
+  // =========================
+  // EDIT MODE UI (buttons)
+  // =========================
   return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
-        zIndex: 9999,
-        elevation: 9999,
-      }}
-    >
-      {/* Last-action pill (FULL WORDS) */}
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+      {/* toast */}
       {toastText ? (
         <Animated.View
           pointerEvents="none"
@@ -260,7 +251,7 @@ export default function VolleyballOverlay({
                 }),
               },
             ],
-            zIndex: 10000,
+            zIndex: 80,
           }}
         >
           <View
@@ -273,9 +264,7 @@ export default function VolleyballOverlay({
               paddingVertical: 6,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>
-              {toastText}
-            </Text>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>{toastText}</Text>
           </View>
         </Animated.View>
       ) : null}
@@ -287,34 +276,21 @@ export default function VolleyballOverlay({
           position: 'absolute',
           left: insets.left + 12,
           top: GRID_TOP,
+          bottom: GRID_BOTTOM,
           width: leftWidth,
-          zIndex: 10001,
-
-          // ✅ KEY FIX: in landscape, parent must extend to bottom so last row can't get clipped from hit-testing
-          ...(isLandscape ? { bottom: 0 } : null),
+          zIndex: 70,
         }}
       >
-        <View
-          pointerEvents="auto"
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            gap: GAP,
-
-            // ✅ extra cushion only in landscape (doesn't change visible layout)
-            paddingBottom: isLandscape ? 40 : 0,
-          }}
-        >
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
           {leftButtons.map((b) => (
             <CircleButton
               key={b.id}
               label={b.label}
               subLabel={b.sub}
               ringColor={b.color}
-              disabled={disableTaps}
+              disabled={!showPalette}
               lit={litId === b.id}
               onPress={() => {
-                if (disableTaps) return;
                 emit(b.key, b.label, b.value, b.color, { kind: b.kind }, b.action, b.id);
               }}
             />
@@ -329,35 +305,22 @@ export default function VolleyballOverlay({
           position: 'absolute',
           right: insets.right + 12,
           top: GRID_TOP,
+          bottom: GRID_BOTTOM,
           width: rightWidth,
           alignItems: 'flex-end',
-          zIndex: 10001,
-
-          // ✅ same fix
-          ...(isLandscape ? { bottom: 0 } : null),
+          zIndex: 70,
         }}
       >
-        <View
-          pointerEvents="auto"
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            gap: GAP,
-            justifyContent: 'flex-end',
-            paddingBottom: isLandscape ? 40 : 0,
-          }}
-        >
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP, justifyContent: 'flex-end' }}>
           {rightButtons.map((b) => (
             <CircleButton
               key={b.id}
               label={b.label}
               subLabel={b.sub}
               ringColor={b.color}
-              disabled={disableTaps}
+              disabled={!showPalette}
               lit={litId === b.id}
               onPress={() => {
-                if (disableTaps) return;
-
                 if (b.key === 'passRating') {
                   flashButton(b.id);
                   showToast('Pass…', b.color);
@@ -372,7 +335,7 @@ export default function VolleyballOverlay({
         </View>
       </View>
 
-      {/* Pass rating chooser (INLINE overlay, no Modal) */}
+      {/* Pass rating chooser */}
       {passChooserOpen ? (
         <Pressable
           onPress={() => setPassChooserOpen(false)}
@@ -386,7 +349,7 @@ export default function VolleyballOverlay({
             alignItems: 'center',
             justifyContent: 'center',
             paddingHorizontal: 18,
-            zIndex: 20000,
+            zIndex: 90,
           }}
         >
           <Pressable
@@ -401,12 +364,8 @@ export default function VolleyballOverlay({
               padding: 14,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
-              Pass Rating
-            </Text>
-            <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 6 }}>
-              Tap 3 / 2 / 1 / 0
-            </Text>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>Pass Rating</Text>
+            <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 6 }}>Tap 3 / 2 / 1 / 0</Text>
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
               {[
@@ -440,12 +399,8 @@ export default function VolleyballOverlay({
                     justifyContent: 'center',
                   }}
                 >
-                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>
-                    {p.label}
-                  </Text>
-                  <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 2 }}>
-                    {p.desc}
-                  </Text>
+                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>{p.label}</Text>
+                  <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 2 }}>{p.desc}</Text>
                 </Pressable>
               ))}
             </View>

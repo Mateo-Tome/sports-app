@@ -18,6 +18,7 @@ export default function TopScrubberNative({
   insets,
   visible,
   onInteracting,
+  onPreviewTime, // ✅ NEW
 }: {
   current: number;
   duration: number;
@@ -25,6 +26,9 @@ export default function TopScrubberNative({
   insets: Insets;
   visible: boolean;
   onInteracting?: (active: boolean) => void;
+
+  // ✅ NEW: immediate time updates while dragging
+  onPreviewTime?: (sec: number) => void;
 }) {
   const screenW = Dimensions.get('window').width;
   const H_MARG = Math.max(12, Math.min(24, screenW * 0.04));
@@ -42,6 +46,7 @@ export default function TopScrubberNative({
   const getW = () => (layoutWRef.current > 0 ? layoutWRef.current : width);
 
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
   const secToX = useCallback(
     (sec: number) => {
       const w = getW();
@@ -50,6 +55,7 @@ export default function TopScrubberNative({
     },
     [duration],
   );
+
   const xToSec = useCallback(
     (x: number) => {
       const w = getW();
@@ -61,6 +67,7 @@ export default function TopScrubberNative({
 
   const pendingSecRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+
   const flushSeek = useCallback(() => {
     if (pendingSecRef.current == null) {
       rafRef.current = null;
@@ -71,6 +78,7 @@ export default function TopScrubberNative({
     onSeek(t);
     rafRef.current = null;
   }, [onSeek]);
+
   const scheduleSeek = useCallback(
     (t: number) => {
       pendingSecRef.current = t;
@@ -94,8 +102,13 @@ export default function TopScrubberNative({
     if (!(duration > 0)) return;
     const x = clamp(e.nativeEvent.x, 0, getW());
     const sec = xToSec(x);
+
+    // ✅ IMMEDIATE: update UI + tell parent “this is the intended time”
     setLocalSec(sec);
     setBubble({ x, t: sec });
+    onPreviewTime?.(sec);
+
+    // ✅ DEFERRED: actual seek stays throttled
     scheduleSeek(sec);
   };
 

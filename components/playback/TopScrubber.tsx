@@ -11,7 +11,14 @@ export default function TopScrubber(props: {
   insets: Insets;
   visible: boolean;
   onInteracting?: (active: boolean) => void;
+
+  // ✅ NEW: fires immediately while dragging (even before RAF seek flush)
+  onPreviewTime?: (sec: number) => void;
 }) {
-  if (Platform.OS === 'web') return <TopScrubberWeb {...props} />;
+  if (Platform.OS === 'web') {
+    // ✅ Don't forward onPreviewTime to avoid breaking existing TopScrubberWeb
+    const { onPreviewTime, ...webProps } = props;
+    return <TopScrubberWeb {...webProps} />;
+  }
   return <TopScrubberNative {...props} />;
 }

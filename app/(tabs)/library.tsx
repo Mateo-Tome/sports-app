@@ -40,7 +40,11 @@ import {
 } from '../../lib/library/indexStore';
 
 import retagVideo from '../../lib/library/retag';
-import { readOutcomeFor } from '../../lib/library/sidecars';
+import {
+  getSportKeyFromSidecar,
+  readOutcomeFor,
+  readSidecarForUpload,
+} from '../../lib/library/sidecars';
 import {
   getOrCreateThumb,
   sweepOrphanThumbs,
@@ -49,6 +53,10 @@ import {
 
 // ✅ move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
 import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
+
+// ✅ sport-specific library styling (basketball/volleyball/etc)
+import '../../lib/library/sportLibraryBitsInit';
+import { buildSportLibraryBits } from '../../lib/library/sportLibraryStyleRegistry';
 
 // ✅ IMPORTANT: use same UID-scoped athletes key as Athletes tab
 import { ensureAnonymous } from '../../lib/firebase';
@@ -254,33 +262,76 @@ export default function LibraryScreen() {
     }, [load]),
   );
 
-  // ----- FAST PATH: patch row when sidecarUpdated (just re-read outcome) ---
-  const patchRowFromSidecarPayload = useCallback(async (uri: string) => {
-    const b = await readOutcomeFor(uri);
+  // ----- FAST PATH: patch row when sidecarUpdated (recompute sport grading) ---
+  const patchRowFromSidecarPayload = useCallback(
+    async (uri: string, payloadSidecar?: any) => {
+      // Prefer payload from the event (avoids disk race). Fallback to disk.
+      const sidecar = payloadSidecar ?? (await readSidecarForUpload(uri));
 
-    setRows((prev) =>
-      prev.map((r) =>
-        r.uri === uri
-          ? {
-              ...r,
-              finalScore: b.finalScore,
-              homeIsAthlete: b.homeIsAthlete,
-              outcome: b.outcome ?? undefined,
-              myScore: b.myScore,
-              oppScore: b.oppScore,
-              highlightGold: b.highlightGold,
-              edgeColor: b.edgeColor,
-            }
-          : r,
-      ),
-    );
-  }, []);
+      // Baseline score bits (wrestling chips + outcome fallback)
+      const scoreBits = await readOutcomeFor(uri);
+
+      // Sport-specific grading (basketball/volleyball/baseball style overrides)
+      const effectiveSport = sidecar ? getSportKeyFromSidecar(sidecar) : '';
+      const sportBits = buildSportLibraryBits(effectiveSport || '', sidecar);
+
+      const finalEdgeColor =
+        (sportBits.edgeColor ?? null) ?? (scoreBits.edgeColor ?? null);
+
+      const finalHighlightGold =
+        typeof sportBits.highlightGold === 'boolean'
+          ? sportBits.highlightGold
+          : scoreBits.highlightGold;
+
+      // Only wrestling shows outcome/score chips in library rows
+      const sportLower = String(effectiveSport || '').toLowerCase();
+      const isWrestling = sportLower.startsWith('wrestling');
+
+      setRows((prev) =>
+        prev.map((r) =>
+          r.uri === uri
+            ? ({
+                ...r,
+
+                // Wrestling-only chips
+                finalScore: isWrestling ? scoreBits.finalScore : null,
+                homeIsAthlete: isWrestling ? scoreBits.homeIsAthlete : null,
+                outcome: isWrestling ? (scoreBits.outcome ?? undefined) : undefined,
+                myScore: isWrestling ? scoreBits.myScore : null,
+                oppScore: isWrestling ? scoreBits.oppScore : null,
+
+                // Styling driven by sport grading
+                highlightGold: finalHighlightGold,
+                edgeColor: finalEdgeColor,
+
+                // optional extra bits (safe even if LibraryRow doesn’t strictly type them)
+                libraryStyle: {
+                  edgeColor: finalEdgeColor,
+                  badgeText: sportBits.badgeText ?? null,
+                  badgeColor:
+                    sportBits.badgeColor ??
+                    sportBits.edgeColor ??
+                    finalEdgeColor ??
+                    null,
+                },
+
+                hittingLabel: sportBits.hittingLabel ?? null,
+                pitchingLabel: sportBits.pitchingLabel ?? null,
+              } as any)
+            : r,
+        ),
+      );
+    },
+    [],
+  );
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
       const uri = evt?.uri as string | undefined;
       if (!uri) return;
-      await patchRowFromSidecarPayload(uri);
+
+      // ✅ pass sidecar payload so we update instantly and correctly
+      await patchRowFromSidecarPayload(uri, evt?.sidecar);
     });
     return () => sub.remove();
   }, [patchRowFromSidecarPayload]);
@@ -444,12 +495,7 @@ export default function LibraryScreen() {
   const photoFor = useCallback(
     (name: string) => {
       const a = athleteList.find((x) => x.name === name);
-      return (
-        a?.photoLocalUri ??
-        a?.photoUrl ??
-        a?.photoUri ??
-        null
-      );
+      return a?.photoLocalUri ?? a?.photoUrl ?? a?.photoUri ?? null;
     },
     [athleteList],
   );
@@ -525,9 +571,7 @@ export default function LibraryScreen() {
         return;
       }
 
-      const exists = athleteList.some(
-        (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
-      );
+      const exists = athleteList.some((a) => a.name.toLowerCase() === trimmed.toLowerCase());
 
       if (!exists) {
         const newEntry: Athlete = { id: `${Date.now()}`, name: trimmed };
