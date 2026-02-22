@@ -12,8 +12,11 @@ import { reduceBaseballPitching } from './reducers/baseball/pitching';
 // ✅ basketball reducer (THIS IS YOUR ACTUAL FILE)
 import { reduceBasketballDefault } from './reducers/basketball/reduceBasketball';
 
-// ✅ volleyball reducer (NEW)
+// ✅ volleyball reducer
 import { reduceVolleyballDefault } from './reducers/volleyball/default';
+
+// ✅ BJJ reducer (NEW)
+import { reduceBjjDefault } from './reducers/bjj/default';
 
 // A reducer takes clips and returns a stats object
 export type SportStatsReducer = (clips: ClipSidecar[]) => any;
@@ -45,5 +48,10 @@ registerSportStats('baseball:pitching', reduceBaseballPitching);
 // ✅ Basketball
 registerSportStats('basketball:default', reduceBasketballDefault);
 
-// ✅ Volleyball (NEW)
+// ✅ Volleyball
 registerSportStats('volleyball:default', reduceVolleyballDefault);
+
+// ✅ BJJ (support multiple possible keys)
+registerSportStats('bjj:default', reduceBjjDefault);
+registerSportStats('bjj:gi', reduceBjjDefault);
+registerSportStats('bjj:nogi', reduceBjjDefault);

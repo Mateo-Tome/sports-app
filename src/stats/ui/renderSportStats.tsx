@@ -181,8 +181,12 @@ function normalizeBaseballPitching(p: any) {
 
   // Prefer reducer-derived metrics if present
   const ipText = safeStr(p?.derived?.inningsPitchedText, '');
-  const bf = p?.derived?.battersFaced != null ? clamp0(p?.derived?.battersFaced) : 0;
-  const pitches = p?.derived?.totalPitches != null ? clamp0(p?.derived?.totalPitches) : (balls + strikes + fouls);
+  const bf =
+    p?.derived?.battersFaced != null ? clamp0(p?.derived?.battersFaced) : 0;
+  const pitches =
+    p?.derived?.totalPitches != null
+      ? clamp0(p?.derived?.totalPitches)
+      : balls + strikes + fouls;
 
   const strikePct = safeStr(p?.derived?.strikePctText, '');
   const ballPct = safeStr(p?.derived?.ballPctText, '');
@@ -196,7 +200,9 @@ function normalizeBaseballPitching(p: any) {
   const hitsAllowed = clamp0(p?.counts?.hitAllowed);
   const hrAllowed = clamp0(p?.counts?.homerunAllowed);
   const hitsTotalAllowed =
-    p?.derived?.hitsTotalAllowed != null ? clamp0(p?.derived?.hitsTotalAllowed) : (hitsAllowed + hrAllowed);
+    p?.derived?.hitsTotalAllowed != null
+      ? clamp0(p?.derived?.hitsTotalAllowed)
+      : hitsAllowed + hrAllowed;
 
   const walksIssued = clamp0(p?.counts?.walk);
   const strikeouts = clamp0(p?.counts?.strikeout);
@@ -293,7 +299,7 @@ function normalizeBasketballDefault(b: any) {
   };
 }
 
-// ✅ Volleyball normalization (matches reducer shape above)
+// ✅ Volleyball normalization
 function normalizeVolleyballDefault(v: any) {
   return {
     clips: clamp0(v?.totals?.clips),
@@ -332,6 +338,29 @@ function normalizeVolleyballDefault(v: any) {
   };
 }
 
+// ✅ BJJ normalization (NEW) — matches the reducer we’re adding
+function normalizeBjjDefault(b: any) {
+  return {
+    clips: clamp0(b?.totals?.clips),
+    events: clamp0(b?.totals?.events),
+
+    takedown: clamp0(b?.counts?.takedown),
+    sweep: clamp0(b?.counts?.sweep),
+    kob: clamp0(b?.counts?.knee_on_belly),
+    pass: clamp0(b?.counts?.guard_pass),
+    mount: clamp0(b?.counts?.mount),
+    back: clamp0(b?.counts?.back_control),
+
+    advantage: clamp0(b?.counts?.advantage),
+    penalty: clamp0(b?.counts?.penalty),
+
+    finish: clamp0(b?.counts?.finish),
+
+    athletePts: safeStr(b?.derived?.scoreForAthleteText, '0 pts'),
+    oppPts: safeStr(b?.derived?.scoreForOpponentText, '0 pts'),
+  };
+}
+
 function pct(m: number, a: number) {
   if (!a) return '0%';
   return `${Math.round((m / a) * 100)}%`;
@@ -342,6 +371,47 @@ export function renderSportStatsCard(
   sportStats: any,
   athleteName: string,
 ) {
+  // -----------------------------
+  // ✅ BJJ (NEW)
+  // -----------------------------
+  if (sportKey.startsWith('bjj:')) {
+    const b = normalizeBjjDefault(sportStats);
+
+    return (
+      <CardShell title={sportTitle(sportKey)}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 10,
+          }}
+        >
+          Athlete: {athleteName}
+        </Text>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={b.clips} />
+          <Chip label="Events" value={b.events} />
+
+          <Chip label="Home pts" value={b.athletePts} />
+          <Chip label="Opp pts" value={b.oppPts} />
+
+          <Chip label="TD" value={b.takedown} />
+          <Chip label="Sweep" value={b.sweep} />
+          <Chip label="KOB" value={b.kob} />
+          <Chip label="Pass" value={b.pass} />
+          <Chip label="Mount" value={b.mount} />
+          <Chip label="Back" value={b.back} />
+
+          <Chip label="Adv" value={b.advantage} />
+          <Chip label="Pen" value={b.penalty} />
+
+          <Chip label="Finishes" value={b.finish} />
+        </View>
+      </CardShell>
+    );
+  }
+
   // -----------------------------
   // Baseball: Hitting
   // -----------------------------
@@ -388,18 +458,13 @@ export function renderSportStatsCard(
   }
 
   // -----------------------------
-  // Baseball: Pitching (enhanced)
+  // Baseball: Pitching
   // -----------------------------
   if (sportKey === 'baseball:pitching') {
     const p = normalizeBaseballPitching(sportStats);
 
     const hasDerived =
-      !!p.ipText ||
-      p.bf > 0 ||
-      p.pitches > 0 ||
-      !!p.whip ||
-      !!p.kPct ||
-      !!p.bbPct;
+      !!p.ipText || p.bf > 0 || p.pitches > 0 || !!p.whip || !!p.kPct || !!p.bbPct;
 
     return (
       <CardShell title={sportTitle(sportKey)}>
@@ -455,7 +520,7 @@ export function renderSportStatsCard(
   }
 
   // -----------------------------
-  // ✅ Volleyball: Default (NEW)
+  // ✅ Volleyball: Default
   // -----------------------------
   if (sportKey === 'volleyball:default') {
     const v = normalizeVolleyballDefault(sportStats);
