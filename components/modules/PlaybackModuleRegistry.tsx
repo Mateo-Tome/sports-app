@@ -15,20 +15,10 @@ import BasketballPlaybackModule from './basketball/BasketballPlaybackModule';
 // ✅ Volleyball
 import VolleyballPlaybackModule from './volleyball/VolleyballPlaybackModule';
 
+// ✅ BJJ (make sure this file name EXACTLY matches)
+import BJJPlaybackModule from './bjj/BJJPlaybackModule';
+
 export function normalizeKey(sport?: string, style?: string) {
-  // ✅ IMPORTANT:
-  // Your "sport" string sometimes looks like "volleyball:match" (or "wrestling:folkstyle", etc).
-  // The registry expects "sport:style" (two segments).
-  //
-  // So we normalize as:
-  //   sportBase = first segment before ":"   (e.g. "volleyball")
-  //   inferredStyle = second segment if present (e.g. "match")
-  //   finalStyle = explicit style param if provided, else inferredStyle, else "default"
-  //
-  // This makes ALL of these work:
-  // - sport="volleyball", style="default"     => "volleyball:default"
-  // - sport="volleyball:match", style=undef   => "volleyball:match"
-  // - sport="volleyball:match", style="default" => "volleyball:default" (explicit style wins)
   const rawSport = String(sport ?? '').trim().toLowerCase();
   const parts = rawSport.split(':').filter(Boolean);
 
@@ -53,17 +43,28 @@ const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
 
   // Basketball
   'basketball:default': BasketballPlaybackModule,
-  // safe aliases if you ever store basketball as basketball:pickup etc
-  // 'basketball:pickup': BasketballPlaybackModule,
 
   // Volleyball
   'volleyball:default': VolleyballPlaybackModule,
-  'volleyball:match': VolleyballPlaybackModule, // ✅ if you store sport as volleyball:match
+  'volleyball:match': VolleyballPlaybackModule,
 
-  // add new ones here later...
+  // ✅ BJJ
+  // Register multiple keys so it always shows even if style varies
+  'bjj:default': BJJPlaybackModule,
+  'bjj:gi': BJJPlaybackModule,
+  'bjj:nogi': BJJPlaybackModule,
+
+  // optional aliases (only keep if you actually store these)
+  'jiujitsu:default': BJJPlaybackModule,
+  'jiu-jitsu:default': BJJPlaybackModule,
+  'brazilianjiujitsu:default': BJJPlaybackModule,
 };
 
 export function getPlaybackModule(sport?: string, style?: string) {
   const key = normalizeKey(sport, style);
+
+  // ✅ TEMP DEBUG (leave for now, remove after it works)
+  console.log('[PlaybackModuleRegistry] sport/style/key =', sport, style, '=>', key);
+
   return { key, Module: Registry[key] ?? null };
 }

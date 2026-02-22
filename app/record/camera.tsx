@@ -1,3 +1,5 @@
+// app/record/camera.tsx
+
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions, type CameraView as CameraViewRef } from 'expo-camera';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
@@ -15,8 +17,8 @@ import {
 import {
   GestureHandlerRootView,
   PinchGestureHandler,
-  PinchGestureHandlerGestureEvent,
-  State
+  State,
+  type PinchGestureHandlerGestureEvent
 } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,14 +29,28 @@ import { startNewSegment, stopCurrentSegment } from '../../lib/recording/segment
 // Types
 import type { MatchEvent } from '../../lib/recording/finalizeRecording';
 
+type RouteParams = {
+  athlete?: string | string[];
+  sport?: string | string[];
+  style?: string | string[];
+};
+
+function paramToStr(v: unknown, fallback: string) {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const s = raw == null ? '' : String(raw);
+  const t = s.trim();
+  return t.length ? t : fallback;
+}
+
 export default function CameraScreen() {
-  const params = useLocalSearchParams<{ athlete?: string; sport?: string; style?: string }>();
+  const params = useLocalSearchParams<RouteParams>();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
-  const sportParam = params.sport || 'wrestling';
-  const styleParam = params.style || 'folkstyle';
-  const athleteName = params.athlete || 'Unassigned';
+  // ✅ Normalize route params (single source of truth)
+  const sportParam = useMemo(() => paramToStr(params.sport, 'wrestling'), [params.sport]);
+  const styleParam = useMemo(() => paramToStr(params.style, 'folkstyle'), [params.style]);
+  const athleteName = useMemo(() => paramToStr(params.athlete, 'Unassigned'), [params.athlete]);
 
   const [permission, requestPermission] = useCameraPermissions();
 
@@ -320,6 +336,7 @@ export default function CameraScreen() {
                 sport={sportParam}
                 style={styleParam}
                 score={score}
+                athleteName={athleteName} // ✅ pass athlete name to overlay
               />
             </View>
           )}

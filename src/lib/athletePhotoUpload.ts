@@ -1,7 +1,6 @@
 // src/lib/athletePhotoUpload.ts
 import * as FileSystem from 'expo-file-system';
-import { getAuth } from 'firebase/auth';
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, ensureAnonymous } from '../../lib/firebase';
 
 const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
 
@@ -34,9 +33,11 @@ export async function uploadAthleteProfilePhotoToB2(params: {
 }> {
   const { athleteId, localFileUri } = params;
 
+  // Ensure we have a Firebase user (anon is fine), but don't create anon during restore window
   await ensureAnonymous();
 
-  const user = getAuth().currentUser;
+  // IMPORTANT: use the SAME auth instance as the rest of the app
+  const user = auth.currentUser;
   const idToken = user ? await user.getIdToken() : null;
   if (!idToken) throw new Error('Not authenticated');
 

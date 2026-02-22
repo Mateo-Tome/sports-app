@@ -7,6 +7,7 @@ import { getStorage } from 'firebase/storage';
 import {
   getAuth,
   initializeAuth,
+  onAuthStateChanged,
   signInAnonymously,
   type User,
 } from 'firebase/auth';
@@ -26,7 +27,7 @@ const firebaseConfig = {
 
 // Optional: Log an error in dev if keys are missing without crashing the whole app
 if (__DEV__ && !firebaseConfig.apiKey) {
-  console.warn("Firebase configuration is missing. Check your .env file or EAS Secrets.");
+  console.warn('Firebase configuration is missing. Check your .env file or EAS Secrets.');
 }
 
 // ✅ Initialize Firebase app ONCE
@@ -37,6 +38,7 @@ let auth: ReturnType<typeof getAuth>;
 
 try {
   auth = initializeAuth(app, {
+    // Your Firebase typings may not export getReactNativePersistence, so call it via namespace.
     persistence: (AuthNS as any).getReactNativePersistence(AsyncStorage),
   });
 } catch (e: any) {
@@ -47,12 +49,32 @@ try {
 const db = getFirestore(app);
 const storage = getStorage(app);
 
+// ✅ Resolves once Firebase finishes restoring auth from persistence.
+// Prevents accidental guest creation during cold start restore window.
+let _authReady: Promise<User | null> | null = null;
+
+export function authReady(): Promise<User | null> {
+  if (_authReady) return _authReady;
+  _authReady = new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      unsub();
+      resolve(u);
+    });
+  });
+  return _authReady;
+}
+
+/**
+ * Ensure we have a Firebase user.
+ * - If a user is already restored (real or anon), return it.
+ * - If no user exists after restore completes, create an anonymous user.
+ */
 export async function ensureAnonymous(): Promise<User> {
-  if (!auth.currentUser) {
-    const { user } = await signInAnonymously(auth);
-    return user;
-  }
-  return auth.currentUser as User;
+  const restored = auth.currentUser ?? (await authReady());
+  if (restored) return restored;
+
+  const { user } = await signInAnonymously(auth);
+  return user;
 }
 
 export { app, auth, db, storage };

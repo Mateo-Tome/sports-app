@@ -247,7 +247,8 @@ export default function RecordingScreen() {
         toCam('volleyball', 'default');
         break;
       case 'BJJ':
-        toCam('bjj', 'gi');
+        // ✅ NEW: go to BJJ selection screen (Gi / No-Gi), like wrestling/baseball
+        router.push({ pathname: '/screens/bjjselection', params: { athlete } });
         break;
     }
   };
@@ -279,7 +280,6 @@ export default function RecordingScreen() {
 
   const AthleteCard = () => {
     const current = athletes.find((a) => a.name === athlete);
-
     const photo = current?.photoLocalUri || current?.photoUri || current?.photoUrl || null;
 
     return (
@@ -339,9 +339,7 @@ export default function RecordingScreen() {
           <TouchableOpacity
             onPress={() => setPickerOpen(true)}
             onLongPress={() =>
-              applyAthlete(
-                athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned',
-              )
+              applyAthlete(athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned')
             }
             style={{
               paddingVertical: 8,
