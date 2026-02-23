@@ -34,10 +34,10 @@
       "bundleIdentifier": "com.mateotome2133.sportapp",
       "buildNumber": "20",
       "infoPlist": {
-        "NSCameraUsageDescription": "This app records matches.",
-        "NSMicrophoneUsageDescription": "This app records match audio.",
-        "NSPhotoLibraryAddUsageDescription": "We add your videos to albums for organization.",
-        "NSPhotoLibraryUsageDescription": "We access your library to organize recordings."
+        "NSCameraUsageDescription": "QuickClip uses the camera to record match clips with sport-specific overlays.",
+        "NSMicrophoneUsageDescription": "QuickClip uses the microphone to record audio with your match clips.",
+        "NSPhotoLibraryUsageDescription": "QuickClip allows you to select videos or photos from your library to import into the app.",
+        "NSPhotoLibraryAddUsageDescription": "QuickClip saves your recordings to your Photos library."
       }
     },
     "android": {
