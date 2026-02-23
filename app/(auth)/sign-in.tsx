@@ -11,13 +11,15 @@ import {
   signInAnonymously,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -161,6 +163,24 @@ export default function SignInScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // ✅ This prevents “shake”: when keyboard is open, we DO NOT vertically re-center.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardOpen(true)
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardOpen(false)
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const isAnon = !!auth.currentUser?.isAnonymous;
 
   const goToApp = () => router.replace('/(tabs)');
@@ -195,7 +215,6 @@ export default function SignInScreen() {
     setErr(null);
     setBusy(true);
     try {
-      // If no user yet, create anon user. If already anon, keep same UID.
       if (!auth.currentUser) {
         await signInAnonymously(auth);
       }
@@ -204,8 +223,6 @@ export default function SignInScreen() {
       if (!u) throw new Error('Guest session failed to initialize.');
 
       await ensureUserDoc(u.uid);
-
-      // ✅ Allow guests into tabs after they tap Continue
       await AsyncStorage.setItem(GUEST_OK_KEY, '1');
 
       goToApp();
@@ -268,7 +285,6 @@ export default function SignInScreen() {
       await signInWithEmailAndPassword(auth, trimmedEmail, pass);
       if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
 
-      // Real user: guest flag no longer needed
       await AsyncStorage.removeItem(GUEST_OK_KEY);
 
       goToApp();
@@ -317,7 +333,11 @@ export default function SignInScreen() {
         <Text style={{ color: colors.text, fontSize: 30, fontWeight: '900', letterSpacing: 0.8 }}>
           {headerTitle}
         </Text>
-        <Text style={{ color: colors.sub, marginTop: 6, fontSize: 12 }}>{headerSub}</Text>
+
+        {/* Stable height prevents reflow */}
+        <Text style={{ color: colors.sub, marginTop: 6, fontSize: 12 }} numberOfLines={2}>
+          {headerSub}
+        </Text>
 
         {isAnon && screen === 'start' && (
           <View
@@ -341,9 +361,21 @@ export default function SignInScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
+        // ✅ Use padding (stable on route replaces / sign-out), not position (can go blank)
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
+        <ScrollView
+          style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: 18,
+            paddingBottom: 24,
+            // ✅ Center when keyboard closed; switch to top when typing so it doesn't "shake"
+            justifyContent: keyboardOpen ? 'flex-start' : 'center',
+          }}
+        >
           {screen === 'start' && (
             <Card>
               <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }}>Get started</Text>
@@ -442,6 +474,9 @@ export default function SignInScreen() {
                 value={email}
                 onChangeText={setEmail}
                 autoCapitalize="none"
+                autoCorrect={false}
+                textContentType="emailAddress"
+                autoComplete="email"
                 keyboardType="email-address"
                 placeholder="you@example.com"
                 placeholderTextColor="rgba(255,255,255,0.35)"
@@ -464,6 +499,9 @@ export default function SignInScreen() {
                 value={pass}
                 onChangeText={setPass}
                 secureTextEntry
+                autoCorrect={false}
+                textContentType="password"
+                autoComplete="password"
                 placeholder="••••••••"
                 placeholderTextColor="rgba(255,255,255,0.35)"
                 editable={!busy}
@@ -538,7 +576,7 @@ export default function SignInScreen() {
           >
             You’ll only see this screen if you sign out.
           </Text>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
