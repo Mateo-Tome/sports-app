@@ -1,6 +1,5 @@
 // src/stats/fetchSidecarByKey.ts
-import { getAuth } from 'firebase/auth';
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, ensureAnonymous } from '../../lib/firebase';
 import type { ClipSidecar } from './types';
 
 const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
@@ -15,9 +14,11 @@ export async function fetchClipSidecarByKey(b2SidecarKey: string): Promise<ClipS
   const key = String(b2SidecarKey ?? '').trim();
   if (!key) throw new Error('missing b2SidecarKey');
 
-  // Make sure we have a Firebase user (anon is fine)
+  // Make sure we have a Firebase user (anon is fine), but don't create anon during restore window
   await ensureAnonymous();
-  const user = getAuth().currentUser;
+
+  // IMPORTANT: use the SAME auth instance as the rest of the app
+  const user = auth.currentUser;
   const idToken = user ? await user.getIdToken() : null;
 
   // If you already use EXPO_PUBLIC_FUNCTIONS_BASE_URL elsewhere (like AthleteCard), keep it consistent.
@@ -46,7 +47,9 @@ export async function fetchClipSidecarByKey(b2SidecarKey: string): Promise<ClipS
 
   if (!Array.isArray(events)) throw new Error('sidecar JSON has no events array');
 
-  const athlete = String(meta?.athlete ?? meta?.athleteName ?? json?.athlete ?? json?.athleteName ?? '').trim();
+  const athlete = String(
+    meta?.athlete ?? meta?.athleteName ?? json?.athlete ?? json?.athleteName ?? ''
+  ).trim();
 
   const createdAt =
     typeof meta?.createdAt === 'number'

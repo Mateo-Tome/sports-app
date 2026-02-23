@@ -1,3 +1,6 @@
+# 🚩 CRITICAL FIX: Tell ffmpeg-kit-react-native which package to use
+ENV['FFMPEG_KIT_PACKAGE'] = 'full'
+
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
 require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
 
@@ -15,6 +18,17 @@ prepare_react_native_project!
 
 target 'QuickClip' do
   use_expo_modules!
+
+  # ✅ 1) Your custom FULL iOS podspec (KEEP THIS)
+  pod 'ffmpeg-kit-ios-full',
+      :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
+
+  # ✅ 2) Force the RN wrapper to use FULL
+  # NOTE: This only works correctly if autolinking does NOT also add ffmpeg-kit-react-native.
+  # In your case it is NOT autolinking (Podfile.lock had no ffmpeg), so this is correct.
+  pod 'ffmpeg-kit-react-native',
+      :path => '../node_modules/ffmpeg-kit-react-native',
+      :subspecs => ['full']
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];
@@ -37,7 +51,6 @@ target 'QuickClip' do
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
-    # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/..",
     :privacy_file_aggregation_enabled => podfile_properties['apple.privacyManifestAggregationEnabled'] != 'false',
   )
@@ -50,8 +63,7 @@ target 'QuickClip' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
-    # This is necessary for Xcode 14, because it signs resource bundles by default
-    # when building for devices.
+    # Xcode signs resource bundles by default for devices; disable for pods.
     installer.target_installation_results.pod_target_installation_results
       .each do |pod_name, target_installation_result|
       target_installation_result.resource_bundle_targets.each do |resource_bundle_target|
