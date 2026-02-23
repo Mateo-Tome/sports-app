@@ -32,7 +32,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
-      "buildNumber": "20",
+      "buildNumber": "28",
       "infoPlist": {
         "NSCameraUsageDescription": "QuickClip uses the camera to record match clips with sport-specific overlays.",
         "NSMicrophoneUsageDescription": "QuickClip uses the microphone to record audio with your match clips.",
@@ -63,5 +63,5 @@
       }
     }
   }
-  
+
 }

@@ -39,7 +39,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>27</string>
+    <string>4</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
@@ -56,9 +56,9 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>Allow QuickClip to access your microphone to record match audio.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>We add your videos to albums for organization.</string>
+    <string>QuickClip saves your recordings to your Photos library.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>We access your library to organize recordings.</string>
+    <string>QuickClip allows you to select videos or photos from your library to import into the app.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>

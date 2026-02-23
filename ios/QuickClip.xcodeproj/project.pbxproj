@@ -8,25 +8,25 @@
 
 /* Begin PBXBuildFile section */
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		17B1C4A1BAFB122FFFD2DB57 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 628E4B0E547EC8B61ECBCF98 /* PrivacyInfo.xcprivacy */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		7EB629E17AE718E706CE4B00 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D3892A10EFD1F32E5A25E8F /* ExpoModulesProvider.swift */; };
-		88044D3E33741E5BCE1A9BA7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E1FF308FCE022D7D6EF07970 /* PrivacyInfo.xcprivacy */; };
+		7C1C64A757451704506ADA9A /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C566856311C2F99BCCB36D /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		F0E3E10F9E36514D2489700A /* libPods-QuickClip.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DB74332E04A043F5C3601C1A /* libPods-QuickClip.a */; };
+		D8A6AEF16764ECBE26CAABFF /* libPods-QuickClip.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 131ED4FDA4E03B750AD456C3 /* libPods-QuickClip.a */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0271ED4DD09B72FA35B2A38B /* Pods-QuickClip.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuickClip.release.xcconfig"; path = "Target Support Files/Pods-QuickClip/Pods-QuickClip.release.xcconfig"; sourceTree = "<group>"; };
+		131ED4FDA4E03B750AD456C3 /* libPods-QuickClip.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-QuickClip.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07F961A680F5B00A75B9A /* QuickClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QuickClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = QuickClip/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = QuickClip/Info.plist; sourceTree = "<group>"; };
-		4D3892A10EFD1F32E5A25E8F /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-QuickClip/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		91FA21C132599D9F3E0A196B /* Pods-QuickClip.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuickClip.debug.xcconfig"; path = "Target Support Files/Pods-QuickClip/Pods-QuickClip.debug.xcconfig"; sourceTree = "<group>"; };
+		18C566856311C2F99BCCB36D /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-QuickClip/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		628E4B0E547EC8B61ECBCF98 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = QuickClip/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		9750AEBE22028558C245D07E /* Pods-QuickClip.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuickClip.debug.xcconfig"; path = "Target Support Files/Pods-QuickClip/Pods-QuickClip.debug.xcconfig"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = QuickClip/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		DB74332E04A043F5C3601C1A /* libPods-QuickClip.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-QuickClip.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		E1FF308FCE022D7D6EF07970 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = QuickClip/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		EAD2895D1D17E9A5E09A87D4 /* Pods-QuickClip.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuickClip.release.xcconfig"; path = "Target Support Files/Pods-QuickClip/Pods-QuickClip.release.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = QuickClip/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* QuickClip-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "QuickClip-Bridging-Header.h"; path = "QuickClip/QuickClip-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -37,7 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F0E3E10F9E36514D2489700A /* libPods-QuickClip.a in Frameworks */,
+				D8A6AEF16764ECBE26CAABFF /* libPods-QuickClip.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,16 +53,16 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				E1FF308FCE022D7D6EF07970 /* PrivacyInfo.xcprivacy */,
+				628E4B0E547EC8B61ECBCF98 /* PrivacyInfo.xcprivacy */,
 			);
 			name = QuickClip;
 			sourceTree = "<group>";
 		};
-		2092FF294C0D07BBD4F0B26C /* Pods */ = {
+		2A3F4D4EE356C2A5D10C202E /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				91FA21C132599D9F3E0A196B /* Pods-QuickClip.debug.xcconfig */,
-				EAD2895D1D17E9A5E09A87D4 /* Pods-QuickClip.release.xcconfig */,
+				9750AEBE22028558C245D07E /* Pods-QuickClip.debug.xcconfig */,
+				0271ED4DD09B72FA35B2A38B /* Pods-QuickClip.release.xcconfig */,
 			);
 			path = Pods;
 			sourceTree = "<group>";
@@ -71,25 +71,9 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				DB74332E04A043F5C3601C1A /* libPods-QuickClip.a */,
+				131ED4FDA4E03B750AD456C3 /* libPods-QuickClip.a */,
 			);
 			name = Frameworks;
-			sourceTree = "<group>";
-		};
-		30A9C45CEE3A319E4B6CB3BA /* QuickClip */ = {
-			isa = PBXGroup;
-			children = (
-				4D3892A10EFD1F32E5A25E8F /* ExpoModulesProvider.swift */,
-			);
-			name = QuickClip;
-			sourceTree = "<group>";
-		};
-		6BE05FF82A144E2D53E3C309 /* ExpoModulesProviders */ = {
-			isa = PBXGroup;
-			children = (
-				30A9C45CEE3A319E4B6CB3BA /* QuickClip */,
-			);
-			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -106,8 +90,8 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				2092FF294C0D07BBD4F0B26C /* Pods */,
-				6BE05FF82A144E2D53E3C309 /* ExpoModulesProviders */,
+				2A3F4D4EE356C2A5D10C202E /* Pods */,
+				951B05F299CC208614B04BF5 /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -120,6 +104,22 @@
 				13B07F961A680F5B00A75B9A /* QuickClip.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		951B05F299CC208614B04BF5 /* ExpoModulesProviders */ = {
+			isa = PBXGroup;
+			children = (
+				99AFDE0B9F8F782F62DC2E71 /* QuickClip */,
+			);
+			name = ExpoModulesProviders;
+			sourceTree = "<group>";
+		};
+		99AFDE0B9F8F782F62DC2E71 /* QuickClip */ = {
+			isa = PBXGroup;
+			children = (
+				18C566856311C2F99BCCB36D /* ExpoModulesProvider.swift */,
+			);
+			name = QuickClip;
 			sourceTree = "<group>";
 		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
@@ -139,13 +139,13 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "QuickClip" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				5A145FDBDCB49FF288303B59 /* [Expo] Configure project */,
+				4376CD11ACDBE27164F9C057 /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				9766669A7875743E91463FAD /* [CP] Embed Pods Frameworks */,
+				850CAA137F121B5AB68ED2B9 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -195,7 +195,7 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				88044D3E33741E5BCE1A9BA7 /* PrivacyInfo.xcprivacy in Resources */,
+				17B1C4A1BAFB122FFFD2DB57 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -239,7 +239,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		5A145FDBDCB49FF288303B59 /* [Expo] Configure project */ = {
+		4376CD11ACDBE27164F9C057 /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -310,33 +310,17 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-QuickClip/Pods-QuickClip-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		9766669A7875743E91463FAD /* [CP] Embed Pods Frameworks */ = {
+		850CAA137F121B5AB68ED2B9 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-QuickClip/Pods-QuickClip-frameworks.sh",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/ffmpegkit.framework/ffmpegkit",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libavcodec.framework/libavcodec",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libavdevice.framework/libavdevice",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libavfilter.framework/libavfilter",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libavformat.framework/libavformat",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libavutil.framework/libavutil",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libswresample.framework/libswresample",
-				"${PODS_XCFRAMEWORKS_BUILD_DIR}/ffmpeg-kit-ios-full/libswscale.framework/libswscale",
 				"${PODS_XCFRAMEWORKS_BUILD_DIR}/hermes-engine/Pre-built/hermes.framework/hermes",
 			);
 			name = "[CP] Embed Pods Frameworks";
 			outputPaths = (
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/ffmpegkit.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libavcodec.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libavdevice.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libavfilter.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libavformat.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libavutil.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libswresample.framework",
-				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/libswscale.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermes.framework",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -352,7 +336,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				7EB629E17AE718E706CE4B00 /* ExpoModulesProvider.swift in Sources */,
+				7C1C64A757451704506ADA9A /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -361,12 +345,12 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 91FA21C132599D9F3E0A196B /* Pods-QuickClip.debug.xcconfig */;
+			baseConfigurationReference = 9750AEBE22028558C245D07E /* Pods-QuickClip.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = QuickClip/QuickClip.entitlements;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 7CXY26L5PA;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -379,7 +363,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -398,12 +382,12 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = EAD2895D1D17E9A5E09A87D4 /* Pods-QuickClip.release.xcconfig */;
+			baseConfigurationReference = 0271ED4DD09B72FA35B2A38B /* Pods-QuickClip.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = QuickClip/QuickClip.entitlements;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 7CXY26L5PA;
 				INFOPLIST_FILE = QuickClip/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -411,7 +395,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -482,10 +466,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					" ",
-				);
+				OTHER_LDFLAGS = "$(inherited)  ";
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
@@ -540,10 +521,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = NO;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					" ",
-				);
+				OTHER_LDFLAGS = "$(inherited)  ";
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				USE_HERMES = true;

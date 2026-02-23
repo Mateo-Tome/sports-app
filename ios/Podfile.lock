@@ -382,13 +382,6 @@ PODS:
     - ExpoModulesCore
   - fast_float (6.1.4)
   - FBLazyVector (0.79.6)
-  - ffmpeg-kit-ios-full (6.0)
-  - ffmpeg-kit-react-native (6.0.2):
-    - ffmpeg-kit-react-native/full (= 6.0.2)
-    - React-Core
-  - ffmpeg-kit-react-native/full (6.0.2):
-    - ffmpeg-kit-ios-full (= 6.0)
-    - React-Core
   - fmt (11.0.2)
   - glog (0.3.5)
   - hermes-engine (0.79.6):
@@ -2326,8 +2319,6 @@ DEPENDENCIES:
   - EXUpdatesInterface (from `../node_modules/expo-updates-interface/ios`)
   - fast_float (from `../node_modules/react-native/third-party-podspecs/fast_float.podspec`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
-  - ffmpeg-kit-ios-full (from `https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec`)
-  - ffmpeg-kit-react-native (from `../node_modules/ffmpeg-kit-react-native`)
   - fmt (from `../node_modules/react-native/third-party-podspecs/fmt.podspec`)
   - glog (from `../node_modules/react-native/third-party-podspecs/glog.podspec`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
@@ -2500,10 +2491,6 @@ EXTERNAL SOURCES:
     :podspec: "../node_modules/react-native/third-party-podspecs/fast_float.podspec"
   FBLazyVector:
     :path: "../node_modules/react-native/Libraries/FBLazyVector"
-  ffmpeg-kit-ios-full:
-    :podspec: https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec
-  ffmpeg-kit-react-native:
-    :path: "../node_modules/ffmpeg-kit-react-native"
   fmt:
     :podspec: "../node_modules/react-native/third-party-podspecs/fmt.podspec"
   glog:
@@ -2695,8 +2682,6 @@ SPEC CHECKSUMS:
   EXUpdatesInterface: 7ff005b7af94ee63fa452ea7bb95d7a8ff40277a
   fast_float: 06eeec4fe712a76acc9376682e4808b05ce978b6
   FBLazyVector: 07309209b7b914451b8f822544a18e2a0a85afff
-  ffmpeg-kit-ios-full: 121688d45c8c4e6ee9d4196c792e5a490dabff68
-  ffmpeg-kit-react-native: 094840cfd598becf4cdbece240bf076e66014fea
   fmt: a40bb5bd0294ea969aaaba240a927bd33d878cdd
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: 44bb6fe76a6eb400d3a992e2d0b21946ae999fa9
@@ -2783,6 +2768,6 @@ SPEC CHECKSUMS:
   Yoga: dc7c21200195acacb62fa920c588e7c2106de45e
   ZXingObjC: 8898711ab495761b2dbbdec76d90164a6d7e14c5
 
-PODFILE CHECKSUM: d3f264c360ef4a1a1a5482aa46f9641f24b36c1f
+PODFILE CHECKSUM: 1451a424b5b998b86d2edf87ef8cfe5a0b23a9df
 
 COCOAPODS: 1.16.2

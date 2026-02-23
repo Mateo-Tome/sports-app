@@ -30,11 +30,6 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
-
-    // Also look in android/libs for local AARs (used by ffmpeg-kit)
-    flatDir {
-      dirs "$rootDir/libs"
-    }
   }
 }
 
