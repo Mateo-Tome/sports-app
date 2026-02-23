@@ -1,8 +1,8 @@
 // lib/access.ts
 import { auth, db } from '@/lib/firebase';
+import type { SportKey } from '@/lib/userProfile';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
-import type { SportKey } from '@/lib/userProfile';
 
 export type AccessState = {
   loading: boolean;
@@ -14,6 +14,9 @@ export type AccessState = {
   isPro: boolean; // includes tester bypass
 };
 
+// ✅ Open Beta switch: unlock everything in this build when set to "1"
+const BETA_UNLOCK_ALL = process.env.EXPO_PUBLIC_BETA_UNLOCK_ALL === '1';
+
 const SIGNED_OUT: AccessState = {
   loading: false,
   uid: null,
@@ -24,7 +27,9 @@ const SIGNED_OUT: AccessState = {
   isPro: false,
 };
 
-export function subscribeAccess(setAccess: (v: AccessState | ((prev: AccessState) => AccessState)) => void) {
+export function subscribeAccess(
+  setAccess: (v: AccessState | ((prev: AccessState) => AccessState)) => void
+) {
   let unsubDoc: null | (() => void) = null;
 
   // start in loading=true so UI can wait for first snapshot
@@ -61,21 +66,45 @@ export function subscribeAccess(setAccess: (v: AccessState | ((prev: AccessState
       (snap) => {
         const data = (snap.exists() ? snap.data() : {}) as any;
 
-        const isTester = !!data.isTester;
+        const firestoreTester = !!data.isTester;
+
+        // ✅ Decide tester/pro
+        const isTester = BETA_UNLOCK_ALL ? true : firestoreTester;
         const isPro = !!data.isPro || isTester; // ✅ tester bypass
+
+        // ✅ In beta unlock-all builds, remove "freeSport forever" limitation from UI
+        const allowedSport = BETA_UNLOCK_ALL
+          ? null
+          : ((data.freeSport ?? null) as SportKey | null);
 
         setAccess({
           loading: false,
           uid: user.uid,
           isSignedIn: true,
           isAnonymous: !!user.isAnonymous,
-          allowedSport: (data.freeSport ?? null) as SportKey | null,
+          allowedSport,
           isTester,
           isPro,
         });
       },
       (err) => {
         console.log('[subscribeAccess] snapshot error:', err);
+
+        // If Firestore is temporarily unavailable, but we’re in beta unlock-all,
+        // keep the app usable instead of locking people out.
+        if (BETA_UNLOCK_ALL) {
+          setAccess({
+            loading: false,
+            uid: user.uid,
+            isSignedIn: true,
+            isAnonymous: !!user.isAnonymous,
+            allowedSport: null,
+            isTester: true,
+            isPro: true,
+          });
+          return;
+        }
+
         // keep auth state, but no access data
         setAccess({
           loading: false,
