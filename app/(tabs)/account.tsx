@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   ScrollView,
   Text,
@@ -136,6 +137,9 @@ export default function AccountScreen() {
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
 
+  // ✅ For beta: disable paywall / pricing UI so Apple doesn’t see “buy” without purchase flow
+  const PRO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_PRO === '1';
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
     return unsub;
@@ -203,6 +207,13 @@ export default function AccountScreen() {
     ]);
   };
 
+  const openPrivacy = () => Linking.openURL('https://quickclipapp.com/privacy');
+  const openTerms = () => Linking.openURL('https://quickclipapp.com/terms');
+  const requestDeletion = () =>
+    Linking.openURL(
+      'mailto:support@quickclipapp.com?subject=Account%20Deletion%20Request&body=Please%20delete%20my%20QuickClip%20account.%0A%0AEmail%20used%20to%20sign%20in%3A%0AUser%20ID%20(if%20known)%3A'
+    );
+
   const actionRow = () => {
     if (!user) {
       return (
@@ -221,12 +232,64 @@ export default function AccountScreen() {
         </View>
       );
     }
-    
 
+    // ✅ Signed-in (real user): include legal links inside THIS same status box
     return (
-      <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
-        <PrimaryButton label="Upgrade to Pro" onPress={goToPaywall} disabled={busy} />
-        <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
+      <View style={{ marginTop: 18 }}>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <PrimaryButton
+            label={PRO_ENABLED ? 'Upgrade to Pro' : 'Pro (coming soon)'}
+            onPress={PRO_ENABLED ? goToPaywall : () => {}}
+            disabled={busy || !PRO_ENABLED}
+          />
+          <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
+        </View>
+
+        {/* ✅ Legal links INSIDE the same Card as “Account active” */}
+        <View
+          style={{
+            marginTop: 16,
+            borderRadius: 14,
+            overflow: 'hidden',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.10)',
+            backgroundColor: 'rgba(0,0,0,0.22)',
+          }}
+        >
+          <TouchableOpacity
+            onPress={openPrivacy}
+            activeOpacity={0.85}
+            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
+          >
+            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
+              Privacy Policy
+            </Text>
+          </TouchableOpacity>
+
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+
+          <TouchableOpacity
+            onPress={openTerms}
+            activeOpacity={0.85}
+            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
+          >
+            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
+              Terms of Service
+            </Text>
+          </TouchableOpacity>
+
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+
+          <TouchableOpacity
+            onPress={requestDeletion}
+            activeOpacity={0.85}
+            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
+          >
+            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
+              Request account deletion
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -259,7 +322,15 @@ export default function AccountScreen() {
             </Text>
           </View>
 
-          <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
+          <Text
+            style={{
+              color: 'white',
+              fontSize: 36,
+              fontWeight: '900',
+              marginTop: 16,
+              letterSpacing: -0.5,
+            }}
+          >
             Account
           </Text>
 
@@ -336,7 +407,7 @@ export default function AccountScreen() {
                   QuickClip Pro
                 </Text>
                 <Text style={{ color: 'rgba(255,255,255,0.60)', fontWeight: '700', fontSize: 13, marginTop: 2 }}>
-                  Everything unlocked
+                  {PRO_ENABLED ? 'Everything unlocked' : 'Coming soon'}
                 </Text>
               </View>
 
@@ -348,15 +419,16 @@ export default function AccountScreen() {
                   backgroundColor: 'rgba(245,194,77,0.14)',
                   borderWidth: 1,
                   borderColor: 'rgba(245,194,77,0.3)',
+                  opacity: PRO_ENABLED ? 1 : 0.55,
                 }}
               >
                 <Text style={{ color: '#f5c24d', fontWeight: '900', fontSize: 14 }}>
-                  $10.99/mo
+                  {PRO_ENABLED ? '$10.99/mo' : 'BETA'}
                 </Text>
               </View>
             </View>
 
-            <View style={{ gap: 12 }}>
+            <View style={{ gap: 12, opacity: PRO_ENABLED ? 1 : 0.7 }}>
               {[
                 'All sports unlocked',
                 'Extended cloud storage',
@@ -374,7 +446,8 @@ export default function AccountScreen() {
             </View>
 
             <TouchableOpacity
-              onPress={goToPaywall}
+              onPress={PRO_ENABLED ? goToPaywall : undefined}
+              disabled={!PRO_ENABLED}
               activeOpacity={0.88}
               style={{
                 marginTop: 18,
@@ -384,10 +457,11 @@ export default function AccountScreen() {
                 backgroundColor: 'rgba(255,255,255,0.06)',
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.14)',
+                opacity: PRO_ENABLED ? 1 : 0.45,
               }}
             >
               <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
-                View plan options
+                {PRO_ENABLED ? 'View plan options' : 'Pro is not enabled in beta'}
               </Text>
             </TouchableOpacity>
           </Card>

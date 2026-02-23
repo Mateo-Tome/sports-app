@@ -55,6 +55,11 @@ export default function RootLayout() {
     (async () => {
       const inAuth = segments[0] === '(auth)';
 
+      // ✅ Public routes (must be viewable while signed-out)
+      // segments example for /privacy => ["privacy"]
+      // segments example for /terms   => ["terms"]
+      const isPublic = segments[0] === 'privacy' || segments[0] === 'terms';
+
       const isSignedOut = !user;
       const isGuest = !!user?.isAnonymous;
       const isRealUser = !!user && !user.isAnonymous;
@@ -64,6 +69,10 @@ export default function RootLayout() {
 
       if (cancelled) return;
 
+      // ✅ If signed out/guest-not-ok, allow public pages to render with NO redirect
+      if (shouldShowAuth && isPublic) return;
+
+      // Existing behavior
       if (shouldShowAuth && inAuth) return;
       if (!shouldShowAuth && !inAuth) return;
 
