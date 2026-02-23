@@ -12,6 +12,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayProps } from './types';
 
+/** Helper */
+function cleanName(v?: string) {
+  const s = String(v ?? '').trim();
+  return s.length ? s : 'Unassigned';
+}
+
 /** Tiny visual confirmation toast (no haptics) */
 function FlashToast({
   text,
@@ -93,11 +99,14 @@ export default function WrestlingGrecoOverlay({
   sport: _sport,
   style: _style,
   score,
+  athleteName, // ✅ ADDED
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
+
+  const recordedName = cleanName(athleteName); // ✅ ADDED
 
   // layout paddings (match folkstyle)
   const EDGE_L = insets.left + 10;
@@ -169,6 +178,7 @@ export default function WrestlingGrecoOverlay({
       ...(meta || {}),
       myKidColor,
       opponentColor: myKidColor === 'red' ? 'blue' : 'red',
+      athleteName: recordedName, // ✅ ADDED (for exports/consistency)
     };
 
     onEvent({ key, label, actor, value, meta: finalMeta });
@@ -286,13 +296,7 @@ export default function WrestlingGrecoOverlay({
             <ChooserClose onClose={() => setBigFor(null)} />
           </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="FTD4"
               tint={color}
@@ -306,10 +310,7 @@ export default function WrestlingGrecoOverlay({
               label="GA4"
               tint={color}
               onPress={() => {
-                fire(actor as any, 'grand_amplitude', 'GA4', 4, {
-                  kind: 'GA',
-                  danger: false,
-                });
+                fire(actor as any, 'grand_amplitude', 'GA4', 4, { kind: 'GA', danger: false });
                 showToast(`${title}: GA4`, color);
                 setBigFor(null);
               }}
@@ -318,10 +319,7 @@ export default function WrestlingGrecoOverlay({
               label="GA5"
               tint={color}
               onPress={() => {
-                fire(actor as any, 'grand_amplitude', 'GA5', 5, {
-                  kind: 'GA',
-                  danger: true,
-                });
+                fire(actor as any, 'grand_amplitude', 'GA5', 5, { kind: 'GA', danger: true });
                 showToast(`${title}: GA5`, color);
                 setBigFor(null);
               }}
@@ -334,11 +332,7 @@ export default function WrestlingGrecoOverlay({
 
   const PassivityChooser = () => {
     if (!passFor) return null;
-    const {
-      actor: offenderActor,
-      color: offenderColor,
-      title: offenderTitle,
-    } = sideInfo(passFor);
+    const { actor: offenderActor, color: offenderColor, title: offenderTitle } = sideInfo(passFor);
     const receiver = receiverOf(offenderActor as any);
 
     return (
@@ -364,41 +358,19 @@ export default function WrestlingGrecoOverlay({
             paddingHorizontal: 12,
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 14,
-                marginRight: 8,
-              }}
-            >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
               {offenderTitle}: Passivity
             </Text>
             <ChooserClose onClose={() => setPassFor(null)} />
           </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="WARN"
               tint={offenderColor}
               onPress={() => {
-                fire('neutral', 'passivity', 'PASS WARN', 0, {
-                  offender: offenderActor,
-                });
+                fire('neutral', 'passivity', 'PASS WARN', 0, { offender: offenderActor });
                 showToast(`${offenderTitle}: PASS WARN`, offenderColor);
                 setPassFor(null);
               }}
@@ -407,9 +379,7 @@ export default function WrestlingGrecoOverlay({
               label="+1"
               tint={offenderColor}
               onPress={() => {
-                fire(receiver, 'passivity', 'PASS +1', 1, {
-                  offender: offenderActor,
-                });
+                fire(receiver, 'passivity', 'PASS +1', 1, { offender: offenderActor });
                 showToast(`${offenderTitle}: PASS (+1 opp)`, offenderColor);
                 setPassFor(null);
               }}
@@ -422,11 +392,7 @@ export default function WrestlingGrecoOverlay({
 
   const PenaltyChooser = () => {
     if (!penFor) return null;
-    const {
-      actor: offenderActor,
-      color: offenderColor,
-      title: offenderTitle,
-    } = sideInfo(penFor);
+    const { actor: offenderActor, color: offenderColor, title: offenderTitle } = sideInfo(penFor);
     const receiver = receiverOf(offenderActor as any);
 
     return (
@@ -452,34 +418,14 @@ export default function WrestlingGrecoOverlay({
             paddingHorizontal: 12,
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 14,
-                marginRight: 8,
-              }}
-            >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
               {offenderTitle}: Penalty
             </Text>
             <ChooserClose onClose={() => setPenFor(null)} />
           </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="P +1"
               tint={offenderColor}
@@ -493,10 +439,7 @@ export default function WrestlingGrecoOverlay({
               label="FLEE +1"
               tint={offenderColor}
               onPress={() => {
-                fire(receiver, 'flee', 'FLEE +1', 1, {
-                  offender: offenderActor,
-                  where: 'mat',
-                });
+                fire(receiver, 'flee', 'FLEE +1', 1, { offender: offenderActor, where: 'mat' });
                 showToast(`${offenderTitle}: FLEE (+1 opp)`, offenderColor);
                 setPenFor(null);
               }}
@@ -505,10 +448,7 @@ export default function WrestlingGrecoOverlay({
               label="FLEE +2"
               tint={offenderColor}
               onPress={() => {
-                fire(receiver, 'flee', 'FLEE +2', 2, {
-                  offender: offenderActor,
-                  where: 'danger',
-                });
+                fire(receiver, 'flee', 'FLEE +2', 2, { offender: offenderActor, where: 'danger' });
                 showToast(`${offenderTitle}: FLEE (+2 opp)`, offenderColor);
                 setPenFor(null);
               }}
@@ -556,7 +496,8 @@ export default function WrestlingGrecoOverlay({
 
         fire(actor, keyName, label, value);
 
-        if (actor === 'home') showToast(`My Kid: ${label}`, bg);
+        // ✅ toast uses athlete name (no color words)
+        if (actor === 'home') showToast(`${recordedName}: ${label}`, bg);
         else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
         else showToast(label, bg);
       }}
@@ -575,17 +516,18 @@ export default function WrestlingGrecoOverlay({
         elevation: 2,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 13, fontWeight: '800' }}>
-        {label}
-      </Text>
+      <Text style={{ color: 'white', fontSize: 13, fontWeight: '800' }}>{label}</Text>
     </TouchableOpacity>
   );
 
+  // ✅ UPDATED: pill shows "Name: points" (no "Score:" and no color words)
   const ScorePill = ({
+    title,
     value,
     border,
     extraStyle,
   }: {
+    title: string;
     value: number;
     border: string;
     extraStyle?: ViewStyle;
@@ -605,7 +547,9 @@ export default function WrestlingGrecoOverlay({
         extraStyle,
       ]}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>Score: {value}</Text>
+      <Text style={{ color: 'white', fontWeight: '900' }}>
+        {title}: {value}
+      </Text>
     </View>
   );
 
@@ -638,21 +582,21 @@ export default function WrestlingGrecoOverlay({
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle label="TD2" actor={leftActor as any} keyName="takedown" value={2} bg={leftColor} />
-
-        {/* ✅ one-tap exposure */}
         <Circle label="EX2" actor={leftActor as any} keyName="exposure" value={2} bg={leftColor} />
-
-        {/* ✅ one-tap out */}
         <Circle label="OB1" actor={leftActor as any} keyName="out" value={1} bg={leftColor} />
 
-        {/* multi-choice choosers */}
         <Circle label="BIG" actor="neutral" keyName="big" bg={leftColor} onPressOverride={() => setBigFor('left')} />
         <Circle label="PASS" actor="neutral" keyName="pass" bg={leftColor} onPressOverride={() => setPassFor('left')} />
         <Circle label="PEN" actor="neutral" keyName="pen" bg={leftColor} onPressOverride={() => setPenFor('left')} />
       </View>
 
       <View style={{ flex: 1 }} />
-      <ScorePill value={leftScore} border={leftColor} />
+
+      <ScorePill
+        title={myKidSide === 'left' ? recordedName : 'Opponent'}
+        value={leftScore}
+        border={leftColor}
+      />
     </View>
   );
 
@@ -683,31 +627,20 @@ export default function WrestlingGrecoOverlay({
         {rightTitle}
       </Text>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          width: COL_W,
-          gap: GAP,
-          justifyContent: 'flex-end',
-        }}
-      >
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="TD2" actor={rightActor as any} keyName="takedown" value={2} bg={rightColor} />
-
-        {/* ✅ one-tap exposure */}
         <Circle label="EX2" actor={rightActor as any} keyName="exposure" value={2} bg={rightColor} />
-
-        {/* ✅ one-tap out */}
         <Circle label="OB1" actor={rightActor as any} keyName="out" value={1} bg={rightColor} />
 
-        {/* multi-choice choosers */}
         <Circle label="BIG" actor="neutral" keyName="big" bg={rightColor} onPressOverride={() => setBigFor('right')} />
         <Circle label="PASS" actor="neutral" keyName="pass" bg={rightColor} onPressOverride={() => setPassFor('right')} />
         <Circle label="PEN" actor="neutral" keyName="pen" bg={rightColor} onPressOverride={() => setPenFor('right')} />
       </View>
 
       <View style={{ flex: 1 }} />
+
       <ScorePill
+        title={myKidSide === 'right' ? recordedName : 'Opponent'}
         value={rightScore}
         border={rightColor}
         extraStyle={{ alignSelf: 'flex-end', marginLeft: 0, marginRight: -5 }}
@@ -716,10 +649,7 @@ export default function WrestlingGrecoOverlay({
   );
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
       <View
         style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }}
         pointerEvents="box-none"
@@ -733,9 +663,7 @@ export default function WrestlingGrecoOverlay({
             backgroundColor: 'rgba(0,0,0,0.55)',
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '700' }}>
-            Flip Colors (My Kid: {myKidCurrentColor})
-          </Text>
+          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Colors (My Kid: {myKidCurrentColor})</Text>
         </TouchableOpacity>
       </View>
 

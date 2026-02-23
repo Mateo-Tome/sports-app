@@ -12,6 +12,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayProps } from './types';
 
+/** Helper */
+function cleanName(v?: string) {
+  const s = String(v ?? '').trim();
+  return s.length ? s : 'Unassigned';
+}
+
 /** Tiny visual confirmation toast (no haptics) */
 function FlashToast({
   text,
@@ -93,11 +99,14 @@ export default function WrestlingFreestyleOverlay({
   sport: _sport,
   style: _style,
   score,
+  athleteName, // ✅ ADDED
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
+
+  const recordedName = cleanName(athleteName); // ✅ ADDED
 
   // layout paddings (match folkstyle)
   const EDGE_L = insets.left + 10;
@@ -175,6 +184,7 @@ export default function WrestlingFreestyleOverlay({
       ...(meta || {}),
       myKidColor,
       opponentColor: myKidColor === 'red' ? 'blue' : 'red',
+      athleteName: recordedName, // ✅ ADDED (for exports/consistency)
     };
 
     onEvent({ key, label, actor, value, meta: finalMeta });
@@ -557,7 +567,8 @@ export default function WrestlingFreestyleOverlay({
 
         fire(actor, keyName, label, value);
 
-        if (actor === 'home') showToast(`My Kid: ${label}`, bg);
+        // ✅ toast uses athlete name (no color words)
+        if (actor === 'home') showToast(`${recordedName}: ${label}`, bg);
         else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
         else showToast(label, bg);
       }}
@@ -582,11 +593,14 @@ export default function WrestlingFreestyleOverlay({
     </TouchableOpacity>
   );
 
+  // ✅ UPDATED: pill shows "Name: points" (no "Score:" and no color words)
   const ScorePill = ({
+    title,
     value,
     border,
     extraStyle,
   }: {
+    title: string;
     value: number;
     border: string;
     extraStyle?: ViewStyle;
@@ -606,7 +620,9 @@ export default function WrestlingFreestyleOverlay({
         extraStyle,
       ]}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>Score: {value}</Text>
+      <Text style={{ color: 'white', fontWeight: '900' }}>
+        {title}: {value}
+      </Text>
     </View>
   );
 
@@ -637,23 +653,30 @@ export default function WrestlingFreestyleOverlay({
         {leftTitle}
       </Text>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          width: COL_W,
+          gap: GAP,
+        }}
+      >
         <Circle label="TD2" actor={leftActor as any} keyName="takedown" value={2} bg={leftColor} />
-
-        {/* ✅ one-tap exposure */}
         <Circle label="EX2" actor={leftActor as any} keyName="exposure" value={2} bg={leftColor} />
-
-        {/* ✅ one-tap out */}
         <Circle label="OB1" actor={leftActor as any} keyName="out" value={1} bg={leftColor} />
 
-        {/* multi-choice choosers */}
         <Circle label="BIG" actor="neutral" keyName="big" bg={leftColor} onPressOverride={() => setBigFor('left')} />
         <Circle label="PASS" actor="neutral" keyName="pass" bg={leftColor} onPressOverride={() => setPassFor('left')} />
         <Circle label="PEN" actor="neutral" keyName="pen" bg={leftColor} onPressOverride={() => setPenFor('left')} />
       </View>
 
       <View style={{ flex: 1 }} />
-      <ScorePill value={leftScore} border={leftColor} />
+
+      <ScorePill
+        title={myKidSide === 'left' ? recordedName : 'Opponent'}
+        value={leftScore}
+        border={leftColor}
+      />
     </View>
   );
 
@@ -694,21 +717,18 @@ export default function WrestlingFreestyleOverlay({
         }}
       >
         <Circle label="TD2" actor={rightActor as any} keyName="takedown" value={2} bg={rightColor} />
-
-        {/* ✅ one-tap exposure */}
         <Circle label="EX2" actor={rightActor as any} keyName="exposure" value={2} bg={rightColor} />
-
-        {/* ✅ one-tap out */}
         <Circle label="OB1" actor={rightActor as any} keyName="out" value={1} bg={rightColor} />
 
-        {/* multi-choice choosers */}
         <Circle label="BIG" actor="neutral" keyName="big" bg={rightColor} onPressOverride={() => setBigFor('right')} />
         <Circle label="PASS" actor="neutral" keyName="pass" bg={rightColor} onPressOverride={() => setPassFor('right')} />
         <Circle label="PEN" actor="neutral" keyName="pen" bg={rightColor} onPressOverride={() => setPenFor('right')} />
       </View>
 
       <View style={{ flex: 1 }} />
+
       <ScorePill
+        title={myKidSide === 'right' ? recordedName : 'Opponent'}
         value={rightScore}
         border={rightColor}
         extraStyle={{ alignSelf: 'flex-end', marginLeft: 0, marginRight: -5 }}

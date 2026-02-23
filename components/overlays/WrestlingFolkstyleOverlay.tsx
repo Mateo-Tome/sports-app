@@ -10,6 +10,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayProps } from './types';
 
+/** Helper */
+function cleanName(v?: string) {
+  const s = String(v ?? '').trim();
+  return s.length ? s : 'Unassigned';
+}
+
 /** Tiny visual confirmation toast (no haptics) */
 function FlashToast({
   text,
@@ -73,11 +79,14 @@ export default function WrestlingFolkstyleOverlay({
   sport: _sport,
   style: _style,
   score,
+  athleteName, // ✅ ADDED
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
+
+  const recordedName = cleanName(athleteName); // ✅ ADDED
 
   // layout paddings
   const EDGE_L = insets.left + 10;
@@ -142,7 +151,7 @@ export default function WrestlingFolkstyleOverlay({
     right: 0,
   });
 
-  // ✅ NEW: Technical Violation count (for a "Next:" tag, same vibe as caution/stall)
+  // ✅ Technical Violation count (for a "Next:" tag, same vibe as caution/stall)
   const [tvCount, setTvCount] = React.useState<{ left: number; right: number }>({
     left: 0,
     right: 0,
@@ -154,7 +163,7 @@ export default function WrestlingFolkstyleOverlay({
   const showToast = (text: string, tint: string) => setToast({ text, tint });
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
-  // ✅ NEW: Choice popup state (Top/Bottom/Neutral/Defer)
+  // ✅ Choice popup state (Top/Bottom/Neutral/Defer)
   const [choicePeriod, setChoicePeriod] = React.useState<number | null>(null);
   const [pendingChoiceForSide, setPendingChoiceForSide] = React.useState<null | 'left' | 'right'>(null);
   const [deferredBySide, setDeferredBySide] = React.useState<null | 'left' | 'right'>(null);
@@ -174,6 +183,7 @@ export default function WrestlingFolkstyleOverlay({
       myKidColor: myKidColor, // 'green' or 'red'
       opponentColor: myKidColor === 'green' ? 'red' : 'green',
       myKidSide,
+      athleteName: recordedName, // ✅ include for exports/consistency
     };
 
     onEvent({ key, label, actor, value, meta: finalMeta });
@@ -220,7 +230,14 @@ export default function WrestlingFolkstyleOverlay({
   );
 
   const NFSeparator = () => (
-    <View style={{ width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: 6 }} />
+    <View
+      style={{
+        width: 1,
+        height: 24,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        marginHorizontal: 6,
+      }}
+    />
   );
 
   const NFChooser = () => {
@@ -293,7 +310,7 @@ export default function WrestlingFolkstyleOverlay({
     );
   };
 
-  // ✅ NEW: Choice popup (Top / Bottom / Neutral / Defer)
+  // ✅ Choice popup (Top / Bottom / Neutral / Defer)
   const ChoicePopup = () => {
     if (!choicePeriod) return null;
 
@@ -322,7 +339,13 @@ export default function WrestlingFolkstyleOverlay({
       const who = side === 'left' ? leftTitle : rightTitle;
 
       const label =
-        choice === 'top' ? 'TOP' : choice === 'bottom' ? 'BOTTOM' : choice === 'neutral' ? 'NEUTRAL' : 'DEFER';
+        choice === 'top'
+          ? 'TOP'
+          : choice === 'bottom'
+            ? 'BOTTOM'
+            : choice === 'neutral'
+              ? 'NEUTRAL'
+              : 'DEFER';
 
       fire(actor as any, 'choice', label, 0, {
         period: choicePeriod,
@@ -419,15 +442,19 @@ export default function WrestlingFolkstyleOverlay({
             <NFChooserClose onClose={close} />
           </View>
 
-          <Text style={{ color: 'rgba(255,255,255,0.82)', fontWeight: '800', textAlign: 'center', marginBottom: 6 }}>
+          <Text
+            style={{
+              color: 'rgba(255,255,255,0.82)',
+              fontWeight: '800',
+              textAlign: 'center',
+              marginBottom: 6,
+            }}
+          >
             {helperText}
           </Text>
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.18)', marginVertical: 6 }} />
 
-          {/* GREEN row (left column color can be green or red depending on Flip Colors; we keep your exact mapping)
-              We label rows by TITLE to match "My Kid/Opponent" meaning, but you asked "both colors" —
-              the actual tint matches leftColor/rightColor, which is what the user sees/uses. */}
           <Text style={{ color: 'white', fontWeight: '900', marginBottom: 6, textAlign: 'center' }}>
             {leftTitle} (LEFT)
             {leftReq ? '  •  SELECT NOW' : ''}
@@ -486,7 +513,6 @@ export default function WrestlingFolkstyleOverlay({
       });
     };
 
-    // ✅ NEW: bump TV (Warn / +1)
     const bumpTV = (kind: 'warn' | '+1') => {
       setTvCount((prev) => {
         const current = prev[offenderSide];
@@ -587,7 +613,15 @@ export default function WrestlingFolkstyleOverlay({
           </View>
 
           {/* Caution */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              marginVertical: 4,
+            }}
+          >
             <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Caution</Text>
             <Tag text={cNext} />
             <ChipBtn
@@ -611,7 +645,15 @@ export default function WrestlingFolkstyleOverlay({
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
 
           {/* Stalling */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              marginVertical: 4,
+            }}
+          >
             <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Stalling</Text>
             <Tag text={stNext} />
             <ChipBtn
@@ -640,10 +682,18 @@ export default function WrestlingFolkstyleOverlay({
             />
           </View>
 
-          {/* ✅ NEW: Technical Violation */}
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 4 }}>
+          {/* Tech Violation */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              marginVertical: 4,
+            }}
+          >
             <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Tech Violation</Text>
             <Tag text={tvNext} />
             <ChipBtn
@@ -757,7 +807,9 @@ export default function WrestlingFolkstyleOverlay({
         if (onPressOverride) onPressOverride();
         else {
           fire(actor, keyName, label, value);
-          if (actor === 'home') showToast(`My Kid: ${label}`, bg);
+
+          // toast: show actual athlete name when home, opponent when opponent
+          if (actor === 'home') showToast(`${recordedName}: ${label}`, bg);
           else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
           else showToast(label, bg);
         }
@@ -781,7 +833,18 @@ export default function WrestlingFolkstyleOverlay({
     </TouchableOpacity>
   );
 
-  const ScorePill = ({ value, border, extraStyle }: { value: number; border: string; extraStyle?: ViewStyle }) => (
+  // ✅ UPDATED: pill shows "Name: points" (no "Score:" anywhere)
+  const ScorePill = ({
+    title,
+    value,
+    border,
+    extraStyle,
+  }: {
+    title: string;
+    value: number;
+    border: string;
+    extraStyle?: ViewStyle;
+  }) => (
     <View
       style={[
         {
@@ -797,7 +860,9 @@ export default function WrestlingFolkstyleOverlay({
         extraStyle,
       ]}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>Score: {value}</Text>
+      <Text style={{ color: 'white', fontWeight: '900' }}>
+        {title}: {value}
+      </Text>
     </View>
   );
 
@@ -827,16 +892,29 @@ export default function WrestlingFolkstyleOverlay({
       >
         {leftTitle}
       </Text>
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle label="T3" actor={leftActor as any} keyName="takedown" value={3} bg={leftColor} />
         <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
         <Circle label="R2" actor={leftActor as any} keyName="reversal" value={2} bg={leftColor} />
-        <Circle label="NF" actor={leftActor as any} keyName="nearfall" bg={leftColor} onPressOverride={() => openNF('left')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={leftColor} onPressOverride={() => openSC('left')} />
-        <Circle label="PIN" actor={'neutral'} keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
+        <Circle
+          label="NF"
+          actor={leftActor as any}
+          keyName="nearfall"
+          bg={leftColor}
+          onPressOverride={() => openNF('left')}
+        />
+        <Circle label="S/C" actor="neutral" keyName="sc" bg={leftColor} onPressOverride={() => openSC('left')} />
+        <Circle label="PIN" actor="neutral" keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
       </View>
+
       <View style={{ flex: 1 }} />
-      <ScorePill value={leftScore} border={leftColor} />
+
+      <ScorePill
+        title={myKidSide === 'left' ? recordedName : 'Opponent'}
+        value={leftScore}
+        border={leftColor}
+      />
     </View>
   );
 
@@ -866,16 +944,26 @@ export default function WrestlingFolkstyleOverlay({
       >
         {rightTitle}
       </Text>
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
         <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
-        <Circle label="NF" actor={rightActor as any} keyName="nearfall" bg={rightColor} onPressOverride={() => openNF('right')} />
-        <Circle label="S/C" actor={'neutral'} keyName="sc" bg={rightColor} onPressOverride={() => openSC('right')} />
-        <Circle label="PIN" actor={'neutral'} keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
+        <Circle
+          label="NF"
+          actor={rightActor as any}
+          keyName="nearfall"
+          bg={rightColor}
+          onPressOverride={() => openNF('right')}
+        />
+        <Circle label="S/C" actor="neutral" keyName="sc" bg={rightColor} onPressOverride={() => openSC('right')} />
+        <Circle label="PIN" actor="neutral" keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
       </View>
+
       <View style={{ flex: 1 }} />
+
       <ScorePill
+        title={myKidSide === 'right' ? recordedName : 'Opponent'}
         value={rightScore}
         border={rightColor}
         extraStyle={{
@@ -890,10 +978,7 @@ export default function WrestlingFolkstyleOverlay({
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
       {/* Flip colors control (unchanged) */}
-      <View
-        style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }}
-        pointerEvents="box-none"
-      >
+      <View style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
         <TouchableOpacity
           onPress={() => setMyKidColor((c) => (c === 'green' ? 'red' : 'green'))}
           style={{
