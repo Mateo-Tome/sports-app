@@ -27,7 +27,7 @@ allprojects {
       url(reactNativeAndroidDir)
     }
 
-    // ✅ allow local .aar files from android/app/libs
+    // Allow local .aar files from android/app/libs
     flatDir { dirs("$rootDir/app/libs") }
 
     google()
@@ -35,8 +35,10 @@ allprojects {
     maven { url 'https://www.jitpack.io' }
   }
 
-  // ✅ Gradle 8-safe dependency substitution (avoid resolving non-resolvable configs like 'archives')
-  configurations.configureEach {
+  // ✅ Apply substitution ONLY to resolvable runtime classpath configs (avoids 'archives')
+  configurations.matching { cfg ->
+    cfg.canBeResolved && cfg.name.endsWith("RuntimeClasspath")
+  }.configureEach {
     resolutionStrategy.dependencySubstitution {
       substitute(module("com.arthenica:ffmpeg-kit-https:6.0-2"))
         .using(files("$rootDir/app/libs/ffmpeg-kit-full-gpl-6.0-2.LTS.aar"))
