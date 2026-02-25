@@ -1,0 +1,70 @@
+diff --git a/node_modules/ffmpeg-kit-react-native/android/build.gradle b/node_modules/ffmpeg-kit-react-native/android/build.gradle
+index 2909280..9078751 100644
+--- a/node_modules/ffmpeg-kit-react-native/android/build.gradle
++++ b/node_modules/ffmpeg-kit-react-native/android/build.gradle
+@@ -125,5 +125,11 @@ repositories {
+ 
+ dependencies {
+   api 'com.facebook.react:react-native:+'
+-  implementation 'com.arthenica:ffmpeg-kit-' + safePackageName(safeExtGet('ffmpegKitPackage', 'https')) + ':' + safePackageVersion(safeExtGet('ffmpegKitPackage', 'https'))
++
++  // ✅ STOP trying to download dead Maven artifacts.
++  // ✅ Use the local .aar you added to android/app/libs instead.
++  implementation files("${rootProject.projectDir}/app/libs/ffmpeg-kit-full-gpl-6.0-2.LTS.aar")
++
++  // ✅ Common requirement when using local ffmpeg-kit AAR
++  implementation "com.arthenica:smart-exception-java:0.2.1"
+ }
+\ No newline at end of file
+diff --git a/node_modules/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec b/node_modules/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
+index 889d3e8..f9e0b9c 100644
+--- a/node_modules/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
++++ b/node_modules/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
+@@ -16,7 +16,8 @@ Pod::Spec.new do |s|
+ 
+   s.source       = { :git => "https://github.com/arthenica/ffmpeg-kit.git", :tag => "react.native.v#{s.version}" }
+ 
+-  s.default_subspec   = 'https'
++  # ✅ CRITICAL: default to FULL so autolinking cannot accidentally pull https variants
++  s.default_subspec   = 'full'
+ 
+   s.dependency "React-Core"
+ 
+@@ -48,31 +49,33 @@ Pod::Spec.new do |s|
+       ss.ios.deployment_target = '10'
+   end
+ 
++  # ✅ IMPORTANT: arthenica "https" iOS zips are 404 for your setup.
++  # Remap https subspecs to FULL so nothing tries to download ffmpeg-kit-ios-https.
+   s.subspec 'https' do |ss|
+       ss.source_files      = '**/FFmpegKitReactNativeModule.m',
+                              '**/FFmpegKitReactNativeModule.h'
+-      ss.dependency 'ffmpeg-kit-ios-https', "6.0"
++      ss.dependency 'ffmpeg-kit-ios-full', "6.0"
+       ss.ios.deployment_target = '12.1'
+   end
+ 
+   s.subspec 'https-lts' do |ss|
+       ss.source_files      = '**/FFmpegKitReactNativeModule.m',
+                              '**/FFmpegKitReactNativeModule.h'
+-      ss.dependency 'ffmpeg-kit-ios-https', "6.0.LTS"
++      ss.dependency 'ffmpeg-kit-ios-full', "6.0.LTS"
+       ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'https-gpl' do |ss|
+       ss.source_files      = '**/FFmpegKitReactNativeModule.m',
+                              '**/FFmpegKitReactNativeModule.h'
+-      ss.dependency 'ffmpeg-kit-ios-https-gpl', "6.0"
++      ss.dependency 'ffmpeg-kit-ios-full', "6.0"
+       ss.ios.deployment_target = '12.1'
+   end
+ 
+   s.subspec 'https-gpl-lts' do |ss|
+       ss.source_files      = '**/FFmpegKitReactNativeModule.m',
+                              '**/FFmpegKitReactNativeModule.h'
+-      ss.dependency 'ffmpeg-kit-ios-https-gpl', "6.0.LTS"
++      ss.dependency 'ffmpeg-kit-ios-full', "6.0.LTS"
+       ss.ios.deployment_target = '10'
+   end
+ 
