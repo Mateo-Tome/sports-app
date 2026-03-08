@@ -1,4 +1,3 @@
-// app/_layout.tsx
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -32,7 +31,6 @@ export default function RootLayout() {
       setUser(u);
       setBooted(true);
 
-      // ✅ Configure RevenueCat at most once at startup, safely and deferred.
       if (!didConfigureRCRef.current) {
         didConfigureRCRef.current = true;
         InteractionManager.runAfterInteractions(() => {
@@ -40,7 +38,6 @@ export default function RootLayout() {
         });
       }
 
-      // allow nav effect to run again when auth changes
       didNavRef.current = false;
     });
 
@@ -55,10 +52,10 @@ export default function RootLayout() {
     (async () => {
       const inAuth = segments[0] === '(auth)';
 
-      // ✅ Public routes (must be viewable while signed-out)
-      // segments example for /privacy => ["privacy"]
-      // segments example for /terms   => ["terms"]
-      const isPublic = segments[0] === 'privacy' || segments[0] === 'terms';
+      const isPublic =
+        segments[0] === 'privacy' ||
+        segments[0] === 'terms' ||
+        segments[0] === 's';
 
       const isSignedOut = !user;
       const isGuest = !!user?.isAnonymous;
@@ -69,10 +66,8 @@ export default function RootLayout() {
 
       if (cancelled) return;
 
-      // ✅ If signed out/guest-not-ok, allow public pages to render with NO redirect
       if (shouldShowAuth && isPublic) return;
 
-      // Existing behavior
       if (shouldShowAuth && inAuth) return;
       if (!shouldShowAuth && !inAuth) return;
 
