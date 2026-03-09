@@ -1,6 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { Platform, Text, View } from 'react-native';
-import CloudPlaybackScreen from '../cloud-playback';
+import { Text, View } from 'react-native';
 import PlaybackScreen from '../screens/PlaybackScreen';
 
 export default function SharePage() {
@@ -29,7 +28,7 @@ export default function SharePage() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      {Platform.OS === 'web' ? <CloudPlaybackScreen /> : <PlaybackScreen />}
+      <PlaybackScreen />
     </>
   );
 }
