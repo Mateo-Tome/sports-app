@@ -33,6 +33,10 @@
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",
       "buildNumber": "28",
+      "associatedDomains": [
+        "applinks:quickclipapp.com",
+        "applinks:www.quickclipapp.com"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "QuickClip uses the camera to record match clips with sport-specific overlays.",
         "NSMicrophoneUsageDescription": "QuickClip uses the microphone to record audio with your match clips.",
@@ -46,7 +50,26 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.mateotome2133.sportapp"
+      "package": "com.mateotome2133.sportapp",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "quickclipapp.com",
+              "pathPrefix": "/share"
+            },
+            {
+              "scheme": "https",
+              "host": "www.quickclipapp.com",
+              "pathPrefix": "/share"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -63,5 +86,4 @@
       }
     }
   }
-
 }
