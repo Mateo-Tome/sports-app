@@ -1,11 +1,11 @@
 {
-  "applinks": {
-    "apps": [],
-    "details": [
-      {
-        "appID": "7CXY26L5PA.com.mateotome2133.sportapp",
-        "paths": [ "/share/*" ]
-      }
-    ]
+    "applinks": {
+      "apps": [],
+      "details": [
+        {
+          "appID": "7CXY26L5PA.com.mateotome2133.sportapp",
+          "paths": [ "/s/*", "/share/*" ]
+        }
+      ]
+    }
   }
-}
