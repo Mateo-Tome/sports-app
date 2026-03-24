@@ -1,10 +1,3 @@
-// app/(whatever)/PlaybackScreen.tsx
-// PlaybackScreen (stable edit + stable seeks)
-// Key fixes vs the broken “gate” version:
-// - NEVER upper-clamp seeks when duration is unknown (prevents random snap-to-0).
-// - Remove seek-settle gate (Edit enters immediately; no “Edit did nothing”).
-// - Keep one authoritative edit timestamp: editAnchorTimeRef.
-// - Remove debug HUD overlay.
 
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
@@ -51,6 +44,14 @@ const isWeb = Platform.OS === 'web';
 
 export default function PlaybackScreen() {
   const router = useRouter();
+  const handleBackPress = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/library');
+    }
+  };
+
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
 
@@ -83,7 +84,7 @@ export default function PlaybackScreen() {
           This screen needs either a local videoPath or a cloud shareId.
         </Text>
         <Pressable
-          onPress={() => router.back()}
+          onPress={handleBackPress}
           style={{
             paddingHorizontal: 14,
             paddingVertical: 10,
@@ -586,7 +587,7 @@ export default function PlaybackScreen() {
           visible={!!errorMsg || !!loading}
           loading={!!loading}
           errorMsg={errorMsg ?? ''}
-          onBack={() => router.back()}
+          onBack={handleBackPress}
           onRetry={refreshSignedUrl}
         />
 
@@ -627,7 +628,7 @@ export default function PlaybackScreen() {
             </View>
 
             <Pressable
-              onPress={() => router.back()}
+              onPress={handleBackPress}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
