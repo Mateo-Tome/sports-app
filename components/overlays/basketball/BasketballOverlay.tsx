@@ -1,20 +1,22 @@
 // components/overlays/basketball/BasketballOverlay.tsx
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, Text, View } from 'react-native';
+import { Animated, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { OverlayCompactText } from '../OverlayCompactText';
+import { OverlayTitleText } from '../OverlayTitleText';
 import type { OverlayEvent, OverlayProps } from '../types';
 
 // ✅ basketball-spec (buttons, colors, lanes, shot tint/points)
 import {
-    BB_COLORS,
-    LEFT_BTNS,
-    RIGHT_BTNS,
-    laneForAction,
-    pointsForShot,
-    tintForShot,
-    type OverlayBtn,
-    type ShotType,
+  BB_COLORS,
+  LEFT_BTNS,
+  RIGHT_BTNS,
+  laneForAction,
+  pointsForShot,
+  tintForShot,
+  type OverlayBtn,
+  type ShotType,
 } from './basketballUiSpec';
 
 const THEME = {
@@ -48,6 +50,8 @@ function CircleButton({
   return (
     <Pressable
       onPress={disabled ? undefined : onPress}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
       style={{
         width: 58,
         height: 58,
@@ -64,13 +68,24 @@ function CircleButton({
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: lit ? 7 : 5,
         elevation: lit ? 4 : 2,
+        paddingHorizontal: 4,
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>{label}</Text>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+        {label}
+      </OverlayCompactText>
+
       {subLabel ? (
-        <Text style={{ color: THEME.textDim, fontWeight: '900', fontSize: 10, marginTop: 1 }}>
+        <OverlayCompactText
+          style={{
+            color: THEME.textDim,
+            fontWeight: '900',
+            fontSize: 10,
+            marginTop: 1,
+          }}
+        >
           {subLabel}
-        </Text>
+        </OverlayCompactText>
       ) : null}
     </Pressable>
   );
@@ -78,11 +93,15 @@ function CircleButton({
 
 function StatPill({ v, label }: { v: number | string; label: string }) {
   return (
-    <View style={{ alignItems: 'center', paddingHorizontal: 8, paddingVertical: 6 }}>
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>{v}</Text>
-      <Text style={{ color: THEME.textDim, fontWeight: '900', fontSize: 9, marginTop: 1 }}>
+    <View style={{ alignItems: 'center', paddingHorizontal: 6, paddingVertical: 6 }}>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+        {v}
+      </OverlayCompactText>
+      <OverlayCompactText
+        style={{ color: THEME.textDim, fontWeight: '900', fontSize: 9, marginTop: 1 }}
+      >
         {label}
-      </Text>
+      </OverlayCompactText>
     </View>
   );
 }
@@ -119,11 +138,14 @@ function ChoiceButton({
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: 4,
         elevation: 2,
+        paddingHorizontal: 8,
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, letterSpacing: 0.5 }}>
+      <OverlayCompactText
+        style={{ color: 'white', fontWeight: '900', fontSize: 14, letterSpacing: 0.5 }}
+      >
         {label}
-      </Text>
+      </OverlayCompactText>
     </Pressable>
   );
 }
@@ -191,7 +213,10 @@ function CenterChooser({
               justifyContent: 'space-between',
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>{title}</Text>
+            <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
+              {title}
+            </OverlayTitleText>
+
             <Pressable
               onPress={onCancel}
               style={{
@@ -203,7 +228,9 @@ function CenterChooser({
                 borderColor: 'rgba(255,255,255,0.18)',
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+              <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
+                Cancel
+              </OverlayCompactText>
             </Pressable>
           </View>
 
@@ -291,10 +318,8 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     value?: number,
   ) => {
     if (btnId) flashButton(btnId);
-
     if (toast) showToast(toast, tint);
 
-    // ✅ belt lane is decided here (basketball-only, clean)
     const beltLane = laneForAction(key, meta);
 
     const evt: OverlayEvent = {
@@ -303,7 +328,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
       label,
       value,
       meta: {
-        beltLane, // ✅ EventBelt uses this; no shared sport logic needed
+        beltLane,
         pillColor: tint,
         tint,
         color: tint,
@@ -330,7 +355,6 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
   };
 
   const logSimple = (b: OverlayBtn) => {
-    // local UX stats
     setStats((s) => {
       if (b.action === 'assist') return { ...s, ast: s.ast + 1 };
       if (b.action === 'steal') return { ...s, stl: s.stl + 1 };
@@ -342,18 +366,11 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
     const toast = b.sub ?? b.label;
 
-    emit(
-      b.action,
-      toast,
-      b.ringColor,
-      { kind: b.action },
-      toast,
-      b.id,
-    );
+    emit(b.action, toast, b.ringColor, { kind: b.action }, toast, b.id);
   };
 
   const shoot = (type: ShotType, made: boolean, btnId: string) => {
-    const tint = tintForShot(type, made); // ✅ miss -> red, make -> family color
+    const tint = tintForShot(type, made);
     const pts = pointsForShot(type);
 
     setStats((s) => {
@@ -414,7 +431,12 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
       return (
         <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
-            <ChoiceButton label="MAKE" bg={accent} border={accent} onPress={() => shoot(type, true, picker.btnId)} />
+            <ChoiceButton
+              label="MAKE"
+              bg={accent}
+              border={accent}
+              onPress={() => shoot(type, true, picker.btnId)}
+            />
             <ChoiceButton
               label="MISS"
               bg="rgba(255,255,255,0.10)"
@@ -429,14 +451,23 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     return (
       <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <ChoiceButton label="OFFENSE" bg={BB_COLORS.rebound} border={BB_COLORS.rebound} onPress={() => rebound('off', picker.btnId)} />
-          <ChoiceButton label="DEFENSE" bg="rgba(255,255,255,0.10)" border={BB_COLORS.rebound} onPress={() => rebound('def', picker.btnId)} />
+          <ChoiceButton
+            label="OFFENSE"
+            bg={BB_COLORS.rebound}
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('off', picker.btnId)}
+          />
+          <ChoiceButton
+            label="DEFENSE"
+            bg="rgba(255,255,255,0.10)"
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('def', picker.btnId)}
+          />
         </View>
       </CenterChooser>
     );
   };
 
-  // layout
   const BTN = 58;
   const GAP = 10;
   const COLS = 2;
@@ -444,7 +475,10 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
   const rightWidth = COLS * BTN + (COLS - 1) * GAP;
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+    >
       {/* Top mini box-score bar */}
       <View
         pointerEvents="none"
@@ -499,7 +533,14 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
             right: insets.right + 12,
             alignItems: 'center',
             opacity: toastOpacity,
-            transform: [{ translateY: toastOpacity.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
+            transform: [
+              {
+                translateY: toastOpacity.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-6, 0],
+                }),
+              },
+            ],
           }}
         >
           <View
@@ -512,7 +553,9 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
               paddingVertical: 7,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>{toastText}</Text>
+            <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>
+              {toastText}
+            </OverlayCompactText>
           </View>
         </Animated.View>
       ) : null}
@@ -558,7 +601,14 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
           alignItems: 'flex-end',
         }}
       >
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP, justifyContent: 'flex-end' }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: GAP,
+            justifyContent: 'flex-end',
+          }}
+        >
           {RIGHT_BTNS.map((b) => (
             <CircleButton
               key={b.id}
