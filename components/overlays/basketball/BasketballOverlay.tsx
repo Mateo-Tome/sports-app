@@ -420,53 +420,53 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     setPicker(null);
   };
 
-  const renderPicker = () => {
-    if (!picker) return null;
+const renderPicker = () => {
+  if (!picker) return null;
 
-    if (picker.kind === 'shot') {
-      const type = picker.type;
-      const accent =
-        type === '2PT' ? BB_COLORS.shot2 : type === '3PT' ? BB_COLORS.shot3 : BB_COLORS.ft;
-
-      return (
-        <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <ChoiceButton
-              label="MAKE"
-              bg={accent}
-              border={accent}
-              onPress={() => shoot(type, true, picker.btnId)}
-            />
-            <ChoiceButton
-              label="MISS"
-              bg="rgba(255,255,255,0.10)"
-              border={accent}
-              onPress={() => shoot(type, false, picker.btnId)}
-            />
-          </View>
-        </CenterChooser>
-      );
-    }
+  if (picker.kind === 'shot') {
+    const type = picker.type;
+    const accent =
+      type === '2PT' ? BB_COLORS.shot2 : type === '3PT' ? BB_COLORS.shot3 : BB_COLORS.ft;
 
     return (
-      <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
+      <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <ChoiceButton
-            label="OFFENSE"
-            bg={BB_COLORS.rebound}
-            border={BB_COLORS.rebound}
-            onPress={() => rebound('off', picker.btnId)}
+            label="MAKE"
+            bg="#22c55e" // ✅ GREEN
+            border="#22c55e"
+            onPress={() => shoot(type, true, picker.btnId)}
           />
           <ChoiceButton
-            label="DEFENSE"
-            bg="rgba(255,255,255,0.10)"
-            border={BB_COLORS.rebound}
-            onPress={() => rebound('def', picker.btnId)}
+            label="MISS"
+            bg="#ef4444" // ✅ RED
+            border="#ef4444"
+            onPress={() => shoot(type, false, picker.btnId)}
           />
         </View>
       </CenterChooser>
     );
-  };
+  }
+
+  return (
+    <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <ChoiceButton
+          label="OFFENSE"
+          bg={BB_COLORS.rebound}
+          border={BB_COLORS.rebound}
+          onPress={() => rebound('off', picker.btnId)}
+        />
+        <ChoiceButton
+          label="DEFENSE"
+          bg="rgba(255,255,255,0.10)"
+          border={BB_COLORS.rebound}
+          onPress={() => rebound('def', picker.btnId)}
+        />
+      </View>
+    </CenterChooser>
+  );
+};
 
   const BTN = 58;
   const GAP = 10;
