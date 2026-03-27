@@ -2,14 +2,15 @@
 
 import React from 'react';
 import {
-    Animated,
-    Text,
-    TouchableOpacity,
-    useWindowDimensions,
-    View,
-    type ViewStyle,
+  Animated,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { OverlayCompactText } from '../OverlayCompactText';
+import { OverlayTitleText } from '../OverlayTitleText';
 import type { OverlayProps } from '../types';
 
 function FlashToast({
@@ -56,9 +57,12 @@ function FlashToast({
         borderWidth: 1,
         borderColor: tint,
         zIndex: 100,
+        maxWidth: '88%',
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>{text}</Text>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+        {text}
+      </OverlayCompactText>
     </Animated.View>
   );
 }
@@ -80,32 +84,26 @@ export default function BJJOverlay({
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
 
-  // layout paddings
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
   const TOP = insets.top + 52;
   const BOTTOM = insets.bottom + 92;
 
-  // sizing
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
-  const TITLE_H = 28;
   const ROWS = 4;
   const GAP = 10;
-  const maxSize = Math.floor((availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS);
+  const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
   const SIZE = Math.max(34, Math.min(58, maxSize));
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
-  // colors
   const BASE_GREEN = '#22c55e';
   const BASE_RED = '#ef4444';
   const GOLD = '#d4a017';
 
-  // flip sides + colors
   const [myKidSide, setMyKidSide] = React.useState<'left' | 'right'>('left');
   const [myKidColor, setMyKidColor] = React.useState<'green' | 'red'>('green');
 
-  // ✅ this MUST be the passed athleteName from CameraScreen
   const recordedName = cleanName(athleteName);
 
   const leftActor = myKidSide === 'left' ? 'home' : 'opponent';
@@ -122,6 +120,11 @@ export default function BJJOverlay({
 
   const leftTitle = myKidSide === 'left' ? recordedName : 'Opponent';
   const rightTitle = myKidSide === 'right' ? recordedName : 'Opponent';
+
+  const pillMaxWidth = Math.max(
+    COL_W + 28,
+    Math.min(Math.floor(screenW * (isPortrait ? 0.44 : 0.42)), 320),
+  );
 
   const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
   const showToast = (text: string, tint: string) => setToast({ text, tint });
@@ -175,8 +178,8 @@ export default function BJJOverlay({
           actor === 'home'
             ? recordedName
             : actor === 'opponent'
-              ? 'Opponent'
-              : '';
+            ? 'Opponent'
+            : '';
 
         const suffix = typeof value === 'number' && value > 0 ? ` (+${value})` : '';
         const toastText = who ? `${who}: ${fullLabel}${suffix}` : `${fullLabel}${suffix}`;
@@ -196,9 +199,12 @@ export default function BJJOverlay({
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: 3,
         elevation: 2,
+        paddingHorizontal: 4,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 12, fontWeight: '900' }}>{shortLabel}</Text>
+      <OverlayCompactText style={{ color: 'white', fontSize: 12, fontWeight: '900' }}>
+        {shortLabel}
+      </OverlayCompactText>
     </TouchableOpacity>
   );
 
@@ -217,40 +223,31 @@ export default function BJJOverlay({
       style={[
         {
           marginTop: 10,
-          alignSelf: 'flex-start',
-          paddingHorizontal: 10,
-          paddingVertical: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
           borderRadius: 999,
           backgroundColor: 'rgba(0,0,0,0.55)',
           borderWidth: 1,
           borderColor: border,
+          maxWidth: pillMaxWidth,
+          minWidth: Math.min(170, pillMaxWidth),
+          minHeight: 38,
+          justifyContent: 'center',
         },
         extraStyle,
       ]}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>
+      <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>
         {cleanName(title)}: {value}
-      </Text>
+      </OverlayTitleText>
     </View>
   );
 
   const LeftGrid = () => (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, width: COL_W }}>
-      <Text
-        style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: leftColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
-        }}
-      >
-        {leftTitle}
-      </Text>
-
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, width: COL_W }}
+    >
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle shortLabel="TD2" fullLabel="Takedown" actor={leftActor} keyName="takedown" value={2} bg={leftColor} meta={{ points: 2 }} />
         <Circle shortLabel="SW2" fullLabel="Sweep" actor={leftActor} keyName="sweep" value={2} bg={leftColor} meta={{ points: 2 }} />
@@ -268,24 +265,19 @@ export default function BJJOverlay({
   );
 
   const RightGrid = () => (
-    <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, width: COL_W }}>
-      <Text
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, width: COL_W }}
+    >
+      <View
         style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: rightColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
-          alignSelf: 'flex-end',
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          width: COL_W,
+          gap: GAP,
+          justifyContent: 'flex-end',
         }}
       >
-        {rightTitle}
-      </Text>
-
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle shortLabel="TD2" fullLabel="Takedown" actor={rightActor} keyName="takedown" value={2} bg={rightColor} meta={{ points: 2 }} />
         <Circle shortLabel="SW2" fullLabel="Sweep" actor={rightActor} keyName="sweep" value={2} bg={rightColor} meta={{ points: 2 }} />
         <Circle shortLabel="KOB2" fullLabel="Knee on Belly" actor={rightActor} keyName="knee_on_belly" value={2} bg={rightColor} meta={{ points: 2 }} />
@@ -297,31 +289,54 @@ export default function BJJOverlay({
       </View>
 
       <View style={{ flex: 1 }} />
-      <ScorePill title={rightTitle} value={rightScore} border={rightColor} extraStyle={{ alignSelf: 'flex-end' }} />
+      <ScorePill
+        title={rightTitle}
+        value={rightScore}
+        border={rightColor}
+        extraStyle={{ alignSelf: 'flex-end' }}
+      />
     </View>
   );
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
+    >
       {/* Controls row */}
       <View style={{ position: 'absolute', top: -36, left: 0, right: 0 }} pointerEvents="box-none">
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
           <TouchableOpacity
             onPress={() => setMyKidColor((c) => (c === 'green' ? 'red' : 'green'))}
-            style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              maxWidth: 220,
+              minHeight: 34,
+              justifyContent: 'center',
+            }}
           >
-            <Text style={{ color: 'white', fontWeight: '700' }}>
+            <OverlayCompactText style={{ color: 'white', fontWeight: '700' }}>
               Flip Colors (Style: {String(style ?? 'gi').toUpperCase()})
-            </Text>
+            </OverlayCompactText>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => setMyKidSide((s) => (s === 'left' ? 'right' : 'left'))}
-            style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.55)' }}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              minHeight: 34,
+              justifyContent: 'center',
+            }}
           >
-            <Text style={{ color: 'white', fontWeight: '700' }}>
+            <OverlayCompactText style={{ color: 'white', fontWeight: '700' }}>
               Flip Sides
-            </Text>
+            </OverlayCompactText>
           </TouchableOpacity>
         </View>
       </View>
@@ -340,9 +355,13 @@ export default function BJJOverlay({
             borderRadius: 999,
             backgroundColor: GOLD,
             opacity: isRecording ? 1 : 0.6,
+            minHeight: 34,
+            justifyContent: 'center',
           }}
         >
-          <Text style={{ color: '#111', fontWeight: '900', fontSize: 12 }}>SUB</Text>
+          <OverlayCompactText style={{ color: '#111', fontWeight: '900', fontSize: 12 }}>
+            SUB
+          </OverlayCompactText>
         </TouchableOpacity>
       </View>
 
