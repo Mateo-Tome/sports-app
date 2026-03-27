@@ -10,6 +10,7 @@ import type { OverlayEvent, OverlayProps } from '../types';
 
 const BORDER = 'rgba(255,255,255,0.18)';
 const TEXT_DIM = 'rgba(255,255,255,0.82)';
+const PANEL_BG = 'rgba(15,23,42,0.78)';
 
 const COLORS = {
   kill: '#22c55e',
@@ -99,6 +100,45 @@ function CircleButton({
   );
 }
 
+function StatPill({ v, label }: { v: number; label: string }) {
+  return (
+    <View
+      style={{
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        minWidth: 52,
+      }}
+    >
+      <OverlayCompactText
+        style={{
+          color: 'white',
+          fontWeight: '900',
+          fontSize: 14,
+        }}
+      >
+        {v}
+      </OverlayCompactText>
+
+      <OverlayCompactText
+        numberOfLines={1}
+        style={{
+          color: TEXT_DIM,
+          fontWeight: '900',
+          fontSize: 10,
+          marginTop: 1,
+        }}
+      >
+        {label}
+      </OverlayCompactText>
+    </View>
+  );
+}
+
+function Divider() {
+  return <View style={{ width: 1, backgroundColor: BORDER }} />;
+}
+
 export default function VolleyballOverlay({
   isRecording,
   onEvent,
@@ -117,6 +157,14 @@ export default function VolleyballOverlay({
   const [toastColor, setToastColor] = useState<string>(COLORS.neutral);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
+
+  const [stats, setStats] = useState({
+    k: 0,
+    a: 0,
+    b: 0,
+    d: 0,
+    e: 0,
+  });
 
   const disableTaps = !isRecording;
 
@@ -191,6 +239,26 @@ export default function VolleyballOverlay({
     if (btnId) flashButton(btnId);
     showToast(toast ?? label, color);
 
+    setStats((s) => {
+      const next = { ...s };
+
+      if (key === 'kill') next.k += 1;
+      else if (key === 'ace') next.a += 1;
+      else if (key === 'block') next.b += 1;
+      else if (key === 'dig') next.d += 1;
+      else if (
+        key === 'attackError' ||
+        key === 'serveError' ||
+        key === 'net' ||
+        key === 'ballHandlingError' ||
+        key === 'error'
+      ) {
+        next.e += 1;
+      }
+
+      return next;
+    });
+
     const kind = (extraMeta as any)?.kind as 'good' | 'bad' | 'neutral' | undefined;
     const beltLane = kind === 'bad' ? 'top' : 'bottom';
 
@@ -243,12 +311,46 @@ export default function VolleyballOverlay({
         elevation: 9999,
       }}
     >
+      {/* Live stats pill */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: insets.top + 10,
+          left: insets.left + 10,
+          right: insets.right + 10,
+          alignItems: 'center',
+          zIndex: 10000,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: 'row',
+            backgroundColor: PANEL_BG,
+            borderWidth: 1,
+            borderColor: BORDER,
+            borderRadius: 14,
+            overflow: 'hidden',
+          }}
+        >
+          <StatPill v={stats.k} label="Kills" />
+          <Divider />
+          <StatPill v={stats.a} label="Aces" />
+          <Divider />
+          <StatPill v={stats.b} label="Blocks" />
+          <Divider />
+          <StatPill v={stats.d} label="Digs" />
+          <Divider />
+          <StatPill v={stats.e} label="Errors" />
+        </View>
+      </View>
+
       {toastText ? (
         <Animated.View
           pointerEvents="none"
           style={{
             position: 'absolute',
-            top: insets.top + 12,
+            top: insets.top + 44,
             left: insets.left + 12,
             right: insets.right + 12,
             alignItems: 'center',
