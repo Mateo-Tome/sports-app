@@ -1,39 +1,39 @@
 // components/overlays/volleyball/VolleyballOverlay.tsx
 
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { OverlayCompactText } from '../OverlayCompactText';
+import { OverlayTitleText } from '../OverlayTitleText';
 import type { OverlayEvent, OverlayProps } from '../types';
 
 const BORDER = 'rgba(255,255,255,0.18)';
 const TEXT_DIM = 'rgba(255,255,255,0.82)';
 
-// Unique colors per button (not blocky)
 const COLORS = {
   kill: '#22c55e',
   ace: '#f59e0b',
-  block: '#a855f7', // ✅ keep block purple (do NOT collide with net)
+  block: '#a855f7',
   dig: '#38bdf8',
   pass: '#14b8a6',
-  serveIn: '#60a5fa', // Serve In
-  attack: '#16a34a', // slightly different green than Kill
+  serveIn: '#60a5fa',
+  attack: '#16a34a',
 
-  // ✅ Errors: all red variants (worst = deepest red)
-  serveError: '#f87171', // light red
-  net: '#ef4444', // medium red
-  ballHandlingError: '#dc2626', // strong red
-  otherError: '#b91c1c', // deeper red (other)
-  attackError: '#991b1b', // ✅ deepest red (worst)
+  serveError: '#f87171',
+  net: '#ef4444',
+  ballHandlingError: '#dc2626',
+  otherError: '#b91c1c',
+  attackError: '#991b1b',
 
   neutral: 'rgba(148,163,184,0.92)',
 };
 
 type Btn = {
   id: string;
-  label: string; // short button label
-  sub?: string; // tiny text under label
-  action: string; // FULL word used for toast
+  label: string;
+  sub?: string;
+  action: string;
   key: string;
   color: string;
   value?: number;
@@ -57,13 +57,13 @@ function CircleButton({
 }) {
   return (
     <Pressable
-      hitSlop={10}
-      pressRetentionOffset={10}
       onPress={disabled ? undefined : onPress}
+      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      pressRetentionOffset={{ top: 18, bottom: 18, left: 18, right: 18 }}
       style={{
-        width: 54,
-        height: 54,
-        borderRadius: 27,
+        width: 58,
+        height: 58,
+        borderRadius: 29,
         backgroundColor: lit ? ringColor : 'rgba(0,0,0,0.28)',
         borderWidth: 2,
         borderColor: ringColor,
@@ -76,11 +76,15 @@ function CircleButton({
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: lit ? 6 : 4,
         elevation: lit ? 3 : 2,
+        paddingHorizontal: 4,
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>{label}</Text>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+        {label}
+      </OverlayCompactText>
+
       {subLabel ? (
-        <Text
+        <OverlayCompactText
           style={{
             color: lit ? 'rgba(255,255,255,0.92)' : TEXT_DIM,
             fontWeight: '800',
@@ -89,7 +93,7 @@ function CircleButton({
           }}
         >
           {subLabel}
-        </Text>
+        </OverlayCompactText>
       ) : null}
     </Pressable>
   );
@@ -106,7 +110,6 @@ export default function VolleyballOverlay({
 
   const [passChooserOpen, setPassChooserOpen] = useState(false);
 
-  // visual feedback states
   const [litId, setLitId] = useState<string | null>(null);
   const litTimerRef = useRef<any>(null);
 
@@ -121,7 +124,6 @@ export default function VolleyballOverlay({
     if (!isRecording && passChooserOpen) setPassChooserOpen(false);
   }, [isRecording, passChooserOpen]);
 
-  // ✅ Move Serve In + Ace to LEFT side (top) so right side never overflows
   const leftButtons: Btn[] = [
     { id: 'L_SI', label: 'SI', sub: 'Serve', action: 'Serve In', key: 'serveIn', color: COLORS.serveIn, value: 0, kind: 'good' },
     { id: 'L_A', label: 'A', sub: 'Ace', action: 'Ace', key: 'ace', color: COLORS.ace, value: 1, kind: 'good' },
@@ -135,12 +137,10 @@ export default function VolleyballOverlay({
     { id: 'L_BP', label: 'BP', sub: 'Bump', action: 'Bump Pass', key: 'bump', color: COLORS.neutral, value: 0, kind: 'neutral' },
   ];
 
-  // ✅ Right side now fits: Pass/Attack + Errors only
   const rightButtons: Btn[] = [
     { id: 'R_PR', label: 'PR', sub: 'Pass', action: 'Pass…', key: 'passRating', color: COLORS.pass, value: 0, kind: 'good' },
     { id: 'R_ATK', label: 'ATK', sub: 'Atk', action: 'Attack', key: 'attack', color: COLORS.attack, value: 0, kind: 'good' },
 
-    // ✅ Errors: each has its own button (fast taps)
     { id: 'R_AE', label: 'AE', sub: 'Atk', action: 'Attack Error', key: 'attackError', color: COLORS.attackError, value: 0, kind: 'bad' },
     { id: 'R_SE', label: 'SE', sub: 'Svc', action: 'Serve Error', key: 'serveError', color: COLORS.serveError, value: 0, kind: 'bad' },
     { id: 'R_NET', label: 'NET', sub: 'Net', action: 'Net Violation', key: 'net', color: COLORS.net, value: 0, kind: 'bad' },
@@ -191,7 +191,6 @@ export default function VolleyballOverlay({
     if (btnId) flashButton(btnId);
     showToast(toast ?? label, color);
 
-    // ✅ decide belt lane based on "kind" (bad events go on TOP)
     const kind = (extraMeta as any)?.kind as 'good' | 'bad' | 'neutral' | undefined;
     const beltLane = kind === 'bad' ? 'top' : 'bottom';
 
@@ -215,18 +214,21 @@ export default function VolleyballOverlay({
     onEvent?.(evt);
   };
 
-  // layout sizes
-  const BTN = 54;
+  const BTN = 58;
   const GAP = 10;
+  const COLS = 2;
 
-  const LEFT_COLS = 2;
-  const RIGHT_COLS = 2;
+  const leftWidth = COLS * BTN + (COLS - 1) * GAP;
+  const rightWidth = COLS * BTN + (COLS - 1) * GAP;
 
-  const leftWidth = LEFT_COLS * BTN + (LEFT_COLS - 1) * GAP;
-  const rightWidth = RIGHT_COLS * BTN + (RIGHT_COLS - 1) * GAP;
+  const LEFT_ROWS = Math.ceil(leftButtons.length / COLS);
+  const RIGHT_ROWS = Math.ceil(rightButtons.length / COLS);
 
-  // keep your same placement
-  const GRID_TOP = insets.top + 72;
+  const leftHeight = LEFT_ROWS * BTN + (LEFT_ROWS - 1) * GAP;
+  const rightHeight = RIGHT_ROWS * BTN + (RIGHT_ROWS - 1) * GAP;
+
+  const GRID_TOP = isLandscape ? insets.top + 28 : insets.top + 72;
+  const SIDE_PAD = isLandscape ? 18 : 12;
 
   return (
     <View
@@ -241,7 +243,6 @@ export default function VolleyballOverlay({
         elevation: 9999,
       }}
     >
-      {/* Last-action pill (FULL WORDS) */}
       {toastText ? (
         <Animated.View
           pointerEvents="none"
@@ -271,11 +272,12 @@ export default function VolleyballOverlay({
               borderRadius: 999,
               paddingHorizontal: 12,
               paddingVertical: 6,
+              maxWidth: '88%',
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>
+            <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 13 }}>
               {toastText}
-            </Text>
+            </OverlayCompactText>
           </View>
         </Animated.View>
       ) : null}
@@ -285,13 +287,11 @@ export default function VolleyballOverlay({
         pointerEvents="box-none"
         style={{
           position: 'absolute',
-          left: insets.left + 12,
+          left: insets.left + SIDE_PAD,
           top: GRID_TOP,
           width: leftWidth,
+          height: leftHeight,
           zIndex: 10001,
-
-          // ✅ KEY FIX: in landscape, parent must extend to bottom so last row can't get clipped from hit-testing
-          ...(isLandscape ? { bottom: 0 } : null),
         }}
       >
         <View
@@ -300,9 +300,6 @@ export default function VolleyballOverlay({
             flexDirection: 'row',
             flexWrap: 'wrap',
             gap: GAP,
-
-            // ✅ extra cushion only in landscape (doesn't change visible layout)
-            paddingBottom: isLandscape ? 40 : 0,
           }}
         >
           {leftButtons.map((b) => (
@@ -327,14 +324,12 @@ export default function VolleyballOverlay({
         pointerEvents="box-none"
         style={{
           position: 'absolute',
-          right: insets.right + 12,
+          right: insets.right + SIDE_PAD,
           top: GRID_TOP,
           width: rightWidth,
+          height: rightHeight,
           alignItems: 'flex-end',
           zIndex: 10001,
-
-          // ✅ same fix
-          ...(isLandscape ? { bottom: 0 } : null),
         }}
       >
         <View
@@ -344,7 +339,6 @@ export default function VolleyballOverlay({
             flexWrap: 'wrap',
             gap: GAP,
             justifyContent: 'flex-end',
-            paddingBottom: isLandscape ? 40 : 0,
           }}
         >
           {rightButtons.map((b) => (
@@ -372,7 +366,7 @@ export default function VolleyballOverlay({
         </View>
       </View>
 
-      {/* Pass rating chooser (INLINE overlay, no Modal) */}
+      {/* Pass rating chooser */}
       {passChooserOpen ? (
         <Pressable
           onPress={() => setPassChooserOpen(false)}
@@ -401,12 +395,13 @@ export default function VolleyballOverlay({
               padding: 14,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
+            <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
               Pass Rating
-            </Text>
-            <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 6 }}>
+            </OverlayTitleText>
+
+            <OverlayCompactText style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 6 }}>
               Tap 3 / 2 / 1 / 0
-            </Text>
+            </OverlayCompactText>
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
               {[
@@ -440,12 +435,13 @@ export default function VolleyballOverlay({
                     justifyContent: 'center',
                   }}
                 >
-                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>
+                  <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>
                     {p.label}
-                  </Text>
-                  <Text style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 2 }}>
+                  </OverlayTitleText>
+
+                  <OverlayCompactText style={{ color: TEXT_DIM, fontWeight: '800', marginTop: 2 }}>
                     {p.desc}
-                  </Text>
+                  </OverlayCompactText>
                 </Pressable>
               ))}
             </View>
@@ -463,7 +459,9 @@ export default function VolleyballOverlay({
                 borderColor: BORDER,
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '900' }}>Cancel</Text>
+              <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+                Cancel
+              </OverlayCompactText>
             </Pressable>
           </Pressable>
         </Pressable>
