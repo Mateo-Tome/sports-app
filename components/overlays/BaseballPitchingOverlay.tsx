@@ -1,6 +1,8 @@
+// components/overlays/BaseballPitchingOverlay.tsx
 import React from 'react';
-import { Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { OverlayCompactText } from './OverlayCompactText';
 import type { OverlayProps } from './types';
 
 import {
@@ -14,7 +16,6 @@ import { FOUL_COLOR } from '../modules/baseball/useBaseballHittingLogic';
 
 type BeltLane = 'top' | 'bottom' | undefined;
 
-// ✅ Pitching lane rules (your request):
 // balls/top, strikes/bottom
 function beltLaneForPitchingKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
@@ -55,17 +56,10 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   const isPortrait = screenH >= screenW;
   const CHOOSER_TOP = isPortrait ? TOP + 40 : TOP + 10;
 
-  // Pitcher POV colors
-  const PITCHER_GOOD = '#22c55e'; // green (good for pitcher)
-  const PITCHER_BAD = '#ef4444';  // red   (bad for pitcher)
-  const PITCHER_WARN = '#f59e0b'; // amber (meh/bad-ish)
+  const PITCHER_GOOD = '#22c55e';
+  const PITCHER_BAD = '#ef4444';
+  const PITCHER_WARN = '#f59e0b';
 
-  // ✅ Pitching mapping:
-  // - Strike = good (green)
-  // - Ball = bad (red)
-  // - Hit/HR = bad (red)
-  // - Out/K = good (green)
-  // - Walk = bad-ish (amber)
   const KEY_COLOR_PITCHING: Record<string, string> = {
     ball: PITCHER_BAD,
     strike: PITCHER_GOOD,
@@ -83,7 +77,6 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     setFouls(0);
   };
 
-  // A tiny CountBar that matches pitcher POV colors (no global changes)
   const PitchingCountBar = ({ top }: { top: number }) => (
     <View
       pointerEvents="none"
@@ -99,13 +92,23 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
           borderColor: 'rgba(255,255,255,0.35)',
         }}
       >
-        <Text style={{ fontSize: 11 }}>
-          <Text style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800' }}>Balls: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{balls}</Text>
-          <Text style={{ color: 'white' }}>   </Text>
-          <Text style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800' }}>Strikes: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{strikes}</Text>
-        </Text>
+        <OverlayCompactText style={{ fontSize: 11, color: 'white', fontWeight: '900' }}>
+          <OverlayCompactText
+            style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800', fontSize: 11 }}
+          >
+            Balls:{' '}
+          </OverlayCompactText>
+          {balls}
+          <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 11 }}>
+            {'   '}
+          </OverlayCompactText>
+          <OverlayCompactText
+            style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800', fontSize: 11 }}
+          >
+            Strikes:{' '}
+          </OverlayCompactText>
+          {strikes}
+        </OverlayCompactText>
       </View>
     </View>
   );
@@ -114,28 +117,23 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     if (!isRecording) return;
 
     const color = KEY_COLOR_PITCHING[key] ?? 'rgba(148,163,184,0.9)';
-    const beltLane = beltLaneForPitchingKey(key); // ✅ NEW
+    const beltLane = beltLaneForPitchingKey(key);
 
     onEvent({
       key,
       label,
       actor: 'neutral',
       meta: {
-        // ✅ NEW: this splits belt pills into 2 lanes
         beltLane,
-
-        // ✅ colors for playback/library
         pillColor: color,
         color,
         tint: color,
         buttonColor: color,
         chipColor: color,
-
         balls,
         strikes,
         fouls,
         outs,
-
         baseballMode: 'pitching',
         ...(extraMeta || {}),
       },
@@ -262,9 +260,12 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: 3,
         elevation: 2,
+        paddingHorizontal: 4,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
+      <OverlayCompactText style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
+        {label}
+      </OverlayCompactText>
     </TouchableOpacity>
   );
 

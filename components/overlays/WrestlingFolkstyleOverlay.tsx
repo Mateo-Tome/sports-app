@@ -1,13 +1,14 @@
 import React from 'react';
 import {
   Animated,
-  Text,
   TouchableOpacity,
   useWindowDimensions,
   View,
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { OverlayCompactText } from './OverlayCompactText';
+import { OverlayTitleText } from './OverlayTitleText';
 import { OverlayProps } from './types';
 
 /** Helper */
@@ -65,9 +66,12 @@ function FlashToast({
         borderWidth: 1,
         borderColor: tint,
         zIndex: 100,
+        maxWidth: '88%',
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>{text}</Text>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+        {text}
+      </OverlayCompactText>
     </Animated.View>
   );
 }
@@ -79,14 +83,14 @@ export default function WrestlingFolkstyleOverlay({
   sport: _sport,
   style: _style,
   score,
-  athleteName, // ✅ ADDED
+  athleteName,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
 
-  const recordedName = cleanName(athleteName); // ✅ ADDED
+  const recordedName = cleanName(athleteName);
 
   // layout paddings
   const EDGE_L = insets.left + 10;
@@ -105,32 +109,24 @@ export default function WrestlingFolkstyleOverlay({
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
   // base colors
-  const BASE_GREEN = '#22c55e'; // Green
-  const BASE_RED = '#ef4444'; // Red
+  const BASE_GREEN = '#22c55e';
+  const BASE_RED = '#ef4444';
   const GOLD = '#d4a017';
 
-  // State 1: Which physical side is "my kid" (LOCKED TO ACTOR/LABEL)
   const [myKidSide, setMyKidSide] = React.useState<'left' | 'right'>('left');
-
-  // State 2: Which color is assigned to "my kid" (FLIPPED by the single button)
   const [myKidColor, setMyKidColor] = React.useState<'green' | 'red'>('green');
 
-  // period tracker (P1, P2, P3, ...)
   const [period, setPeriod] = React.useState<number>(1);
 
-  // Actor mapping is fixed: 'left' or 'right' side determines 'home' or 'opponent'
   const leftActor = myKidSide === 'left' ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
 
-  // Title mapping is fixed: 'left' or 'right' side determines 'My Kid' or 'Opponent'
   const leftTitle = myKidSide === 'left' ? 'My Kid' : 'Opponent';
   const rightTitle = myKidSide === 'right' ? 'My Kid' : 'Opponent';
 
-  // Color mapping logic: Uses myKidColor state to determine the current visual assignment
   const HOME_COLOR = myKidColor === 'green' ? BASE_GREEN : BASE_RED;
   const OPP_COLOR = myKidColor === 'green' ? BASE_RED : BASE_GREEN;
 
-  // Final column colors: Maps the actor to the current visual color assignment
   const leftColor = leftActor === 'home' ? HOME_COLOR : OPP_COLOR;
   const rightColor = rightActor === 'home' ? HOME_COLOR : OPP_COLOR;
 
@@ -139,7 +135,6 @@ export default function WrestlingFolkstyleOverlay({
   const leftScore = leftActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
   const rightScore = rightActor === 'home' ? (score?.home ?? 0) : (score?.opponent ?? 0);
 
-  // choosers and state
   const [nfFor, setNfFor] = React.useState<null | 'left' | 'right'>(null);
   const [scFor, setScFor] = React.useState<null | 'left' | 'right'>(null);
   const [stallCount, setStallCount] = React.useState<{ left: number; right: number }>({
@@ -151,7 +146,6 @@ export default function WrestlingFolkstyleOverlay({
     right: 0,
   });
 
-  // ✅ Technical Violation count (for a "Next:" tag, same vibe as caution/stall)
   const [tvCount, setTvCount] = React.useState<{ left: number; right: number }>({
     left: 0,
     right: 0,
@@ -163,12 +157,10 @@ export default function WrestlingFolkstyleOverlay({
   const showToast = (text: string, tint: string) => setToast({ text, tint });
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
-  // ✅ Choice popup state (Top/Bottom/Neutral/Defer)
   const [choicePeriod, setChoicePeriod] = React.useState<number | null>(null);
   const [pendingChoiceForSide, setPendingChoiceForSide] = React.useState<null | 'left' | 'right'>(null);
   const [deferredBySide, setDeferredBySide] = React.useState<null | 'left' | 'right'>(null);
 
-  // fire function (keeps your existing metadata behavior)
   const fire = (
     actor: 'home' | 'opponent' | 'neutral',
     key: string,
@@ -180,26 +172,23 @@ export default function WrestlingFolkstyleOverlay({
 
     const finalMeta = {
       ...(meta || {}),
-      myKidColor: myKidColor, // 'green' or 'red'
+      myKidColor: myKidColor,
       opponentColor: myKidColor === 'green' ? 'red' : 'green',
       myKidSide,
-      athleteName: recordedName, // ✅ include for exports/consistency
+      athleteName: recordedName,
     };
 
     onEvent({ key, label, actor, value, meta: finalMeta });
   };
 
-  // period advance handler – fires a period event and opens Choice popup (P pill stays identical)
   const handleNextPeriod = () => {
     if (!isRecording) return;
     const next = period + 1;
     setPeriod(next);
 
-    // keep your existing period marker behavior
     fire('neutral', 'period', `P${next}`, undefined, { period: next });
     showToast(`Period ${next}`, '#ffffff');
 
-    // ✅ open choice popup for the NEW period
     setChoicePeriod(next);
     setDeferredBySide(null);
     setPendingChoiceForSide(null);
@@ -225,7 +214,9 @@ export default function WrestlingFolkstyleOverlay({
         marginRight: 6,
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+      <OverlayCompactText style={{ color: 'white', fontWeight: '700' }}>
+        Cancel
+      </OverlayCompactText>
     </TouchableOpacity>
   );
 
@@ -268,7 +259,9 @@ export default function WrestlingFolkstyleOverlay({
           elevation: 2,
         }}
       >
-        <Text style={{ color: 'white', fontWeight: '900' }}>{v}</Text>
+        <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+          {v}
+        </OverlayCompactText>
       </TouchableOpacity>
     );
 
@@ -299,7 +292,9 @@ export default function WrestlingFolkstyleOverlay({
             paddingHorizontal: 10,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '900', marginRight: 8 }}>{title}: NF points</Text>
+          <OverlayTitleText style={{ color: 'white', fontWeight: '900', marginRight: 8 }}>
+            {title}: NF points
+          </OverlayTitleText>
           <NFChooserClose onClose={() => setNfFor(null)} />
           <NFSeparator />
           <Chip v={2} />
@@ -310,7 +305,6 @@ export default function WrestlingFolkstyleOverlay({
     );
   };
 
-  // ✅ Choice popup (Top / Bottom / Neutral / Defer)
   const ChoicePopup = () => {
     if (!choicePeriod) return null;
 
@@ -354,7 +348,6 @@ export default function WrestlingFolkstyleOverlay({
         bySide: side,
       });
 
-      // If Defer: stay open + require the other side to choose next
       if (choice === 'defer') {
         setDeferredBySide(side);
         setPendingChoiceForSide(otherSide(side));
@@ -362,7 +355,6 @@ export default function WrestlingFolkstyleOverlay({
         return;
       }
 
-      // Normal choice: done
       showToast(`${who}: ${label}`, tint);
       close();
     };
@@ -384,7 +376,7 @@ export default function WrestlingFolkstyleOverlay({
         disabled={disabled || !isRecording}
         onPress={() => fireChoice(side, choice)}
         style={{
-          height: 34,
+          height: 38,
           paddingHorizontal: 12,
           borderRadius: 999,
           backgroundColor: tint,
@@ -398,9 +390,12 @@ export default function WrestlingFolkstyleOverlay({
           shadowOffset: { width: 0, height: 2 },
           shadowRadius: 3,
           elevation: 2,
+          minWidth: 86,
         }}
       >
-        <Text style={{ color: 'white', fontWeight: '900' }}>{text}</Text>
+        <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+          {text}
+        </OverlayCompactText>
       </TouchableOpacity>
     );
 
@@ -434,15 +429,23 @@ export default function WrestlingFolkstyleOverlay({
             paddingHorizontal: 12,
           }}
         >
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 6,
+            }}
+          >
+            <OverlayTitleText
+              style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}
+            >
               P{choicePeriod} Choice
-            </Text>
+            </OverlayTitleText>
             <NFChooserClose onClose={close} />
           </View>
 
-          <Text
+          <OverlayCompactText
             style={{
               color: 'rgba(255,255,255,0.82)',
               fontWeight: '800',
@@ -451,14 +454,17 @@ export default function WrestlingFolkstyleOverlay({
             }}
           >
             {helperText}
-          </Text>
+          </OverlayCompactText>
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.18)', marginVertical: 6 }} />
 
-          <Text style={{ color: 'white', fontWeight: '900', marginBottom: 6, textAlign: 'center' }}>
+          <OverlayTitleText
+            style={{ color: 'white', fontWeight: '900', marginBottom: 6, textAlign: 'center' }}
+          >
             {leftTitle} (LEFT)
             {leftReq ? '  •  SELECT NOW' : ''}
-          </Text>
+          </OverlayTitleText>
+
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <ChoiceBtn side="left" text="Top" choice="top" disabled={leftDisabled} tint={leftColor} />
             <ChoiceBtn side="left" text="Bottom" choice="bottom" disabled={leftDisabled} tint={leftColor} />
@@ -468,10 +474,13 @@ export default function WrestlingFolkstyleOverlay({
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.18)', marginVertical: 8 }} />
 
-          <Text style={{ color: 'white', fontWeight: '900', marginBottom: 6, textAlign: 'center' }}>
+          <OverlayTitleText
+            style={{ color: 'white', fontWeight: '900', marginBottom: 6, textAlign: 'center' }}
+          >
             {rightTitle} (RIGHT)
             {rightReq ? '  •  SELECT NOW' : ''}
-          </Text>
+          </OverlayTitleText>
+
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <ChoiceBtn side="right" text="Top" choice="top" disabled={rightDisabled} tint={rightColor} />
             <ChoiceBtn side="right" text="Bottom" choice="bottom" disabled={rightDisabled} tint={rightColor} />
@@ -543,7 +552,9 @@ export default function WrestlingFolkstyleOverlay({
           borderColor: 'rgba(255,255,255,0.25)',
         }}
       >
-        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>Next: {text}</Text>
+        <OverlayCompactText style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
+          Next: {text}
+        </OverlayCompactText>
       </View>
     );
 
@@ -578,7 +589,9 @@ export default function WrestlingFolkstyleOverlay({
           elevation: 2,
         }}
       >
-        <Text style={{ color: 'white', fontWeight: '900' }}>{label}</Text>
+        <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+          {label}
+        </OverlayCompactText>
       </TouchableOpacity>
     );
 
@@ -605,14 +618,22 @@ export default function WrestlingFolkstyleOverlay({
             paddingHorizontal: 12,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 6,
+            }}
+          >
+            <OverlayTitleText
+              style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}
+            >
               {offenderTitle}: S/C
-            </Text>
+            </OverlayTitleText>
             <NFChooserClose onClose={() => setScFor(null)} />
           </View>
 
-          {/* Caution */}
           <View
             style={{
               flexDirection: 'row',
@@ -622,7 +643,9 @@ export default function WrestlingFolkstyleOverlay({
               marginVertical: 4,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Caution</Text>
+            <OverlayTitleText style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>
+              Caution
+            </OverlayTitleText>
             <Tag text={cNext} />
             <ChipBtn
               label="Warn"
@@ -644,7 +667,6 @@ export default function WrestlingFolkstyleOverlay({
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
 
-          {/* Stalling */}
           <View
             style={{
               flexDirection: 'row',
@@ -654,7 +676,9 @@ export default function WrestlingFolkstyleOverlay({
               marginVertical: 4,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Stalling</Text>
+            <OverlayTitleText style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>
+              Stalling
+            </OverlayTitleText>
             <Tag text={stNext} />
             <ChipBtn
               label="Warn"
@@ -677,14 +701,16 @@ export default function WrestlingFolkstyleOverlay({
               toastText="Stall +2"
               onPress={() => {
                 bumpStall('+2');
-                fire(receiverActor, 'stalling', 'ST +2', 2, { offender: offenderActor, note: 'Stoppage/choice' });
+                fire(receiverActor, 'stalling', 'ST +2', 2, {
+                  offender: offenderActor,
+                  note: 'Stoppage/choice',
+                });
               }}
             />
           </View>
 
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 6 }} />
 
-          {/* Tech Violation */}
           <View
             style={{
               flexDirection: 'row',
@@ -694,7 +720,9 @@ export default function WrestlingFolkstyleOverlay({
               marginVertical: 4,
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>Tech Violation</Text>
+            <OverlayTitleText style={{ color: 'white', fontWeight: '800', marginRight: 6 }}>
+              Tech Violation
+            </OverlayTitleText>
             <Tag text={tvNext} />
             <ChipBtn
               label="Warn"
@@ -722,7 +750,6 @@ export default function WrestlingFolkstyleOverlay({
     if (!pinFor) return null;
     const actor = pinFor === 'left' ? leftActor : rightActor;
     const title = pinFor === 'left' ? leftTitle : rightTitle;
-    const color = pinFor === 'left' ? leftColor : rightColor;
 
     return (
       <View
@@ -747,9 +774,11 @@ export default function WrestlingFolkstyleOverlay({
             paddingHorizontal: 14,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
+          <OverlayTitleText
+            style={{ color: 'white', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}
+          >
             Confirm PIN for {title}?
-          </Text>
+          </OverlayTitleText>
           <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
             <TouchableOpacity
               onPress={() => setPinFor(null)}
@@ -762,7 +791,9 @@ export default function WrestlingFolkstyleOverlay({
                 borderColor: 'rgba(255,255,255,0.25)',
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+              <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
+                Cancel
+              </OverlayCompactText>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
@@ -777,7 +808,9 @@ export default function WrestlingFolkstyleOverlay({
                 backgroundColor: GOLD,
               }}
             >
-              <Text style={{ color: '#111', fontWeight: '900' }}>Confirm</Text>
+              <OverlayCompactText style={{ color: '#111', fontWeight: '900' }}>
+                Confirm
+              </OverlayCompactText>
             </TouchableOpacity>
           </View>
         </View>
@@ -808,7 +841,6 @@ export default function WrestlingFolkstyleOverlay({
         else {
           fire(actor, keyName, label, value);
 
-          // toast: show actual athlete name when home, opponent when opponent
           if (actor === 'home') showToast(`${recordedName}: ${label}`, bg);
           else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
           else showToast(label, bg);
@@ -829,11 +861,12 @@ export default function WrestlingFolkstyleOverlay({
         elevation: 2,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
+      <OverlayCompactText style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
+        {label}
+      </OverlayCompactText>
     </TouchableOpacity>
   );
 
-  // ✅ UPDATED: pill shows "Name: points" (no "Score:" anywhere)
   const ScorePill = ({
     title,
     value,
@@ -856,13 +889,16 @@ export default function WrestlingFolkstyleOverlay({
           backgroundColor: 'rgba(0,0,0,0.55)',
           borderWidth: 1,
           borderColor: border,
+          maxWidth: 180,
+          minHeight: 28,
+          justifyContent: 'center',
         },
         extraStyle,
       ]}
     >
-      <Text style={{ color: 'white', fontWeight: '900' }}>
+      <OverlayTitleText style={{ color: 'white', fontWeight: '900' }}>
         {title}: {value}
-      </Text>
+      </OverlayTitleText>
     </View>
   );
 
@@ -878,21 +914,6 @@ export default function WrestlingFolkstyleOverlay({
         width: COL_W,
       }}
     >
-      <Text
-        style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: leftColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
-        }}
-      >
-        {leftTitle}
-      </Text>
-
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP }}>
         <Circle label="T3" actor={leftActor as any} keyName="takedown" value={3} bg={leftColor} />
         <Circle label="E1" actor={leftActor as any} keyName="escape" value={1} bg={leftColor} />
@@ -930,22 +951,15 @@ export default function WrestlingFolkstyleOverlay({
         width: COL_W,
       }}
     >
-      <Text
+      <View
         style={{
-          color: 'white',
-          fontWeight: '800',
-          marginBottom: 8,
-          backgroundColor: rightColor,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          overflow: 'hidden',
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          width: COL_W,
+          gap: GAP,
+          justifyContent: 'flex-end',
         }}
       >
-        {rightTitle}
-      </Text>
-
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: COL_W, gap: GAP, justifyContent: 'flex-end' }}>
         <Circle label="T3" actor={rightActor as any} keyName="takedown" value={3} bg={rightColor} />
         <Circle label="E1" actor={rightActor as any} keyName="escape" value={1} bg={rightColor} />
         <Circle label="R2" actor={rightActor as any} keyName="reversal" value={2} bg={rightColor} />
@@ -976,9 +990,14 @@ export default function WrestlingFolkstyleOverlay({
   );
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
-      {/* Flip colors control (unchanged) */}
-      <View style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
+    >
+      <View
+        style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }}
+        pointerEvents="box-none"
+      >
         <TouchableOpacity
           onPress={() => setMyKidColor((c) => (c === 'green' ? 'red' : 'green'))}
           style={{
@@ -988,11 +1007,12 @@ export default function WrestlingFolkstyleOverlay({
             backgroundColor: 'rgba(0,0,0,0.55)',
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '700' }}>Flip Colors (My Kid: {myKidCurrentColor})</Text>
+          <OverlayCompactText style={{ color: 'white', fontWeight: '700' }}>
+            Flip Colors (My Kid: {myKidCurrentColor})
+          </OverlayCompactText>
         </TouchableOpacity>
       </View>
 
-      {/* Period tracker button (looks the same) */}
       <View
         style={{
           position: 'absolute',
@@ -1015,7 +1035,9 @@ export default function WrestlingFolkstyleOverlay({
             opacity: isRecording ? 1 : 0.6,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>P{period}</Text>
+          <OverlayCompactText style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>
+            P{period}
+          </OverlayCompactText>
         </TouchableOpacity>
       </View>
 
