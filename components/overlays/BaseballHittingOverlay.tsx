@@ -28,7 +28,6 @@ import {
 
 type BeltLane = 'top' | 'bottom' | undefined;
 
-// ✅ Hitting lane rules (opposite of pitching):
 // strikes/top, balls/bottom
 function beltLaneForHittingKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
@@ -55,7 +54,6 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
   const SIZE = Math.max(44, Math.min(70, maxSize));
   const BTN_SIZE = Math.round(SIZE * 0.75);
 
-  // state: count + quick info
   const [balls, setBalls] = React.useState(0);
   const [strikes, setStrikes] = React.useState(0);
   const [fouls, setFouls] = React.useState(0);
@@ -77,39 +75,31 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
     setFouls(0);
   };
 
-  // helper to fire a clean event (with count meta)
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
     if (!isRecording) return;
 
     const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
-    const beltLane = beltLaneForHittingKey(key); // ✅ NEW
+    const beltLane = beltLaneForHittingKey(key);
 
     onEvent({
       key,
       label,
       actor: 'neutral',
       meta: {
-        // ✅ NEW: this splits belt pills into 2 lanes
         beltLane,
-
         pillColor: color,
         color,
         tint: color,
         buttonColor: color,
         chipColor: color,
-
-        // always include count so playback can reconstruct
         balls,
         strikes,
         fouls,
         outs,
-
         ...(extraMeta || {}),
       },
     });
   };
-
-  // --- Actions (HITTING perspective) -----------------
 
   const onBall = () => {
     if (!isRecording) return;
@@ -204,7 +194,10 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
   };
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+    >
       <CountBar insetsTop={insets.top} balls={balls} strikes={strikes} />
 
       <HitOutChooser

@@ -1,8 +1,12 @@
-// app/record/camera.tsx
-
 import { useFocusEffect } from '@react-navigation/native';
-import { CameraView, useCameraPermissions, type CameraView as CameraViewRef } from 'expo-camera';
+import {
+  CameraView,
+  useCameraPermissions,
+  useMicrophonePermissions,
+  type CameraView as CameraViewRef,
+} from 'expo-camera';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -47,12 +51,13 @@ export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
-  // ✅ Normalize route params (single source of truth)
+  // Normalize route params
   const sportParam = useMemo(() => paramToStr(params.sport, 'wrestling'), [params.sport]);
   const styleParam = useMemo(() => paramToStr(params.style, 'folkstyle'), [params.style]);
   const athleteName = useMemo(() => paramToStr(params.athlete, 'Unassigned'), [params.athlete]);
 
-  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
 
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
@@ -85,12 +90,43 @@ export default function CameraScreen() {
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
 
-  // Auto-request permission on mount
+  // Auto-request camera permission on mount
   useEffect(() => {
-    if (permission && !permission.granted && permission.canAskAgain) {
-      requestPermission();
+    if (cameraPermission && !cameraPermission.granted && cameraPermission.canAskAgain) {
+      requestCameraPermission();
     }
-  }, [permission, requestPermission]);
+  }, [cameraPermission, requestCameraPermission]);
+
+  // Lock the camera screen to landscape while this screen is focused.
+  useFocusEffect(
+    useCallback(() => {
+      let mounted = true;
+
+      const lockOrientation = async () => {
+        try {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        } catch (e) {
+          console.log('[camera] failed to lock landscape', e);
+        }
+      };
+
+      lockOrientation();
+
+      return () => {
+        mounted = false;
+        const unlockOrientation = async () => {
+          try {
+            await ScreenOrientation.unlockAsync();
+          } catch (e) {
+            console.log('[camera] failed to unlock orientation', e);
+          }
+        };
+        if (mounted === false) {
+          unlockOrientation();
+        }
+      };
+    }, [])
+  );
 
   // Pulse effect for the "Ready" indicator
   useEffect(() => {
@@ -118,8 +154,6 @@ export default function CameraScreen() {
   const { ActiveOverlay, preRollSec } = useMemo(() => {
     let res = getRecordingOverlay(sportParam.toLowerCase(), styleParam.toLowerCase());
 
-    // NOTE: If you want zero sport-specific logic in CameraScreen,
-    // move this fallback into the RecordingOverlayRegistry instead.
     if (!res.Overlay && sportParam.toLowerCase() === 'baseball') {
       res = getRecordingOverlay('baseball', 'hitting');
     }
@@ -132,7 +166,7 @@ export default function CameraScreen() {
       let isCancelled = false;
 
       const task = InteractionManager.runAfterInteractions(() => {
-        if (!isCancelled && permission?.granted) {
+        if (!isCancelled && cameraPermission?.granted) {
           setShouldRenderCamera(true);
         }
       });
@@ -143,15 +177,13 @@ export default function CameraScreen() {
 
         setShouldRenderCamera(false);
         setCameraReady(false);
-
-        // Reset fade state so next mount is consistent
         camOpacity.setValue(0);
 
         if (segmentActiveRef.current) {
           stopCurrentSegment(cameraRef, segmentActiveRef);
         }
       };
-    }, [permission, camOpacity])
+    }, [cameraPermission, camOpacity])
   );
 
   const getCurrentTSec = useCallback(() => {
@@ -162,16 +194,45 @@ export default function CameraScreen() {
     return Math.max(0, Math.round(elapsed / 1000 - preRollSec));
   }, [isPaused, preRollSec]);
 
-  const handleStart = async () => {
-    if (!permission?.granted) {
-      Alert.alert('Camera permission', 'Please enable camera access to record.');
-      return;
+  const ensureRecordingPermissions = useCallback(async () => {
+    let camGranted = !!cameraPermission?.granted;
+    let micGranted = !!microphonePermission?.granted;
+
+    if (!camGranted) {
+      const camResp = await requestCameraPermission();
+      camGranted = !!camResp.granted;
     }
+
+    if (!micGranted) {
+      const micResp = await requestMicrophonePermission();
+      micGranted = !!micResp.granted;
+    }
+
+    if (!camGranted) {
+      Alert.alert('Camera permission', 'Please enable camera access to record.');
+      return false;
+    }
+
+    if (!micGranted) {
+      Alert.alert('Microphone permission', 'Please enable microphone access to record audio.');
+      return false;
+    }
+
+    return true;
+  }, [
+    cameraPermission,
+    microphonePermission,
+    requestCameraPermission,
+    requestMicrophonePermission,
+  ]);
+
+  const handleStart = async () => {
+    const hasPermissions = await ensureRecordingPermissions();
+    if (!hasPermissions) return;
     if (!cameraReady || isTransitioning) return;
 
     setIsTransitioning(true);
 
-    // Small warm-up: reduces first-frame issues / startRecording flakiness on some phones
     await new Promise((r) => setTimeout(r, 300));
 
     eventsRef.current = [];
@@ -231,7 +292,6 @@ export default function CameraScreen() {
     try {
       await stopCurrentSegment(cameraRef, segmentActiveRef);
 
-      // Buffer so mp4 header + file move completes on slower phones
       await new Promise((r) => setTimeout(r, 800));
 
       const mod = await import('../../lib/recording/finalizeRecording');
@@ -243,6 +303,10 @@ export default function CameraScreen() {
         eventsRef.current,
         scoreRef.current
       );
+
+      try {
+        await ScreenOrientation.unlockAsync();
+      } catch {}
 
       navigation.goBack();
     } catch (error) {
@@ -278,10 +342,10 @@ export default function CameraScreen() {
             </Animated.View>
           ) : (
             <View style={styles.centered}>
-              {!permission?.granted ? (
+              {!cameraPermission?.granted ? (
                 <View style={{ alignItems: 'center' }}>
                   <ActivityIndicator color="white" style={{ marginBottom: 20 }} />
-                  <TouchableOpacity style={styles.hudPill} onPress={requestPermission}>
+                  <TouchableOpacity style={styles.hudPill} onPress={requestCameraPermission}>
                     <Text style={styles.hudStatusText}>TAP TO ENABLE CAMERA</Text>
                   </TouchableOpacity>
                 </View>
@@ -292,7 +356,15 @@ export default function CameraScreen() {
           )}
 
           {!isRecording && (
-            <TouchableOpacity style={[styles.backBtn, { top: insets.top + 10 }]} onPress={() => navigation.goBack()}>
+            <TouchableOpacity
+              style={[styles.backBtn, { top: insets.top + 10 }]}
+              onPress={async () => {
+                try {
+                  await ScreenOrientation.unlockAsync();
+                } catch {}
+                navigation.goBack();
+              }}
+            >
               <Text style={styles.backBtnText}>✕ CLOSE</Text>
             </TouchableOpacity>
           )}
@@ -336,7 +408,7 @@ export default function CameraScreen() {
                 sport={sportParam}
                 style={styleParam}
                 score={score}
-                athleteName={athleteName} // ✅ pass athlete name to overlay
+                athleteName={athleteName}
               />
             </View>
           )}
