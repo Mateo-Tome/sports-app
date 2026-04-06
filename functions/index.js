@@ -164,6 +164,70 @@ async function getB2UploadUrl(apiUrl, authToken, bucketId) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* ✅ B2 delete helper                                                         */
+/* -------------------------------------------------------------------------- */
+
+async function deleteB2FileByName(apiUrl, authToken, bucketId, fileName) {
+  const cleanName = (fileName || '').toString().trim();
+  if (!cleanName) return { ok: true, skipped: true };
+
+  const listRes = await fetch(`${apiUrl}/b2api/v2/b2_list_file_names`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      bucketId,
+      prefix: cleanName,
+      maxFileCount: 10,
+    }),
+  });
+
+  const listJson = await listRes.json().catch(() => ({}));
+  if (!listRes.ok) {
+    const err = new Error('b2_list_file_names failed');
+    err.code = 'B2_LIST_FILE_NAMES_FAILED';
+    err.details = listJson;
+    throw err;
+  }
+
+  const files = Array.isArray(listJson.files) ? listJson.files : [];
+  const exact = files.find((f) => (f?.fileName || '') === cleanName);
+
+  // Missing file = already deleted / okay
+  if (!exact) {
+    return { ok: true, missing: true, fileName: cleanName };
+  }
+
+  const delRes = await fetch(`${apiUrl}/b2api/v2/b2_delete_file_version`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fileId: exact.fileId,
+      fileName: exact.fileName,
+    }),
+  });
+
+  const delJson = await delRes.json().catch(() => ({}));
+  if (!delRes.ok) {
+    const err = new Error('b2_delete_file_version failed');
+    err.code = 'B2_DELETE_FILE_VERSION_FAILED';
+    err.details = delJson;
+    throw err;
+  }
+
+  return {
+    ok: true,
+    fileId: exact.fileId,
+    fileName: exact.fileName,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* ✅ NEW ENDPOINT: Get signed VIEW url for a private athlete photo            */
 /* -------------------------------------------------------------------------- */
 
@@ -250,6 +314,87 @@ exports.getAthletePhotoUploadUrl = onRequest((req, res) => {
     } catch (e) {
       return res.status(500).json({
         error: 'getAthletePhotoUploadUrl failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: delete one cloud video owned by the caller                          */
+/* -------------------------------------------------------------------------- */
+
+exports.deleteVideo = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const uid = decoded.uid;
+
+      const videoId = (req.body?.videoId ?? '').toString().trim();
+      if (!videoId) {
+        return res.status(400).json({ error: 'Missing videoId' });
+      }
+
+      const vidRef = admin.firestore().doc(`videos/${videoId}`);
+      const vidSnap = await vidRef.get();
+
+      if (!vidSnap.exists) {
+        return res.status(404).json({ error: 'Video not found' });
+      }
+
+      const v = vidSnap.data() || {};
+      const ownerUid = (v.ownerUid || '').toString().trim();
+      if (!ownerUid || ownerUid !== uid) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const B2_BUCKET_ID = mustEnv('B2_BUCKET_ID');
+      const { apiUrl, authToken } = await authorizeB2Account();
+
+      const b2VideoKey = (v.b2VideoKey || '').toString().trim();
+      const b2SidecarKey = (v.b2SidecarKey || '').toString().trim();
+      const shareId = (v.shareId || '').toString().trim();
+
+      const deleteResults = {
+        video: null,
+        sidecar: null,
+      };
+
+      if (b2VideoKey) {
+        deleteResults.video = await deleteB2FileByName(apiUrl, authToken, B2_BUCKET_ID, b2VideoKey);
+      }
+
+      if (b2SidecarKey) {
+        deleteResults.sidecar = await deleteB2FileByName(apiUrl, authToken, B2_BUCKET_ID, b2SidecarKey);
+      }
+
+      await vidRef.delete();
+
+      if (shareId) {
+        await admin.firestore().doc(`shareIndex/${shareId}`).delete().catch(() => {});
+      }
+
+      return res.json({
+        ok: true,
+        videoId,
+        shareId: shareId || null,
+        deleteResults,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'deleteVideo failed',
         details: String(e?.message || e),
         code: e?.code,
         extra: e?.details,

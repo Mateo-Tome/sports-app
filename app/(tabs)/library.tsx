@@ -25,12 +25,8 @@ import {
 
 import EditAthleteModal from '../../components/library/EditAthleteModal';
 import EditTitleModal from '../../components/library/EditTitleModal';
-import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
-
-// ✅ top toggle UI (Local / Cloud)
 import LibraryDataSourceToggle from '../../components/library/LibraryDataSourceToggle';
-
-// ✅ data-source logic (local vs cloud) + cloud playback routing
+import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
 import { useLibraryDataSource } from '../../src/hooks/library/useLibraryDataSource';
 
 import {
@@ -51,15 +47,11 @@ import {
   thumbPathFor,
 } from '../../lib/library/thumbs';
 
-// ✅ move the big "load + build rows + load athletes/uploadedMap + sweep thumbs"
+import { deleteCloudVideo } from '../../lib/backend';
+import { ensureAnonymous } from '../../lib/firebase';
 import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
-
-// ✅ sport-specific library styling (basketball/volleyball/etc)
 import '../../lib/library/sportLibraryBitsInit';
 import { buildSportLibraryBits } from '../../lib/library/sportLibraryStyleRegistry';
-
-// ✅ IMPORTANT: use same UID-scoped athletes key as Athletes tab
-import { ensureAnonymous } from '../../lib/firebase';
 
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
@@ -69,18 +61,16 @@ function athletesKey(uid: string) {
 
 type Row = LibraryRow;
 
-// Make this flexible so we can display photos from local or cloud fields
 type Athlete = {
   id: string;
   name: string;
-  photoUri?: string | null;       // legacy
-  photoLocalUri?: string | null;  // your current local saved photo
-  photoUrl?: string | null;       // cloud URL
+  photoUri?: string | null;
+  photoLocalUri?: string | null;
+  photoUrl?: string | null;
   photoKey?: string | null;
   photoUpdatedAt?: number | null;
 };
 
-// ----- bounded concurrency helper (still used for lazy thumbs + legacy fallback load) -----
 async function mapLimit<T, R>(
   items: T[],
   limit: number,
@@ -101,7 +91,6 @@ async function mapLimit<T, R>(
   return results;
 }
 
-// ----- tiny FS queue (mutex) to avoid concurrent writes/moves -----
 let __fsQueue: Promise<any> = Promise.resolve();
 function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
   const task = __fsQueue.then(fn, fn);
@@ -112,14 +101,11 @@ function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
   return task;
 }
 
-// ===========================================================================
-
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const router = useRouter();
 
-  // stable key for uploadedMap: use assetId if present, else uri
   const keyFor = useCallback((r: Row) => r.assetId ?? r.uri, []);
 
   const [rows, setRows] = useState<Row[]>([]);
@@ -131,33 +117,28 @@ export default function LibraryScreen() {
     Record<string, { key: string; url: string; at: number }>
   >({});
 
-  // Title editor modal state
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
 
-  // segmented state
   const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
   const loadingRef = useRef(false);
 
-  // ✅ local vs cloud rows + playback routing for both
   const {
     dataSource,
     setDataSource,
     sourceRows,
     cloudCount,
     routerPushPlayback,
+    refreshCloudRows,
   } = useLibraryDataSource(router as any, rows);
 
-  // keep a ref of *source* rows for lazy thumb generation to access assetId
   const rowsRef = useRef<Row[]>([]);
   useEffect(() => {
     rowsRef.current = sourceRows as any;
   }, [sourceRows]);
 
-  // ---------------- LEGACY (fallback) LOADER ----------------
-  // If buildLibraryRows() ever throws, we fall back to your original behavior
   const legacyLoad = useCallback(async () => {
     const buildRow = async (meta: IndexMeta, eagerThumb: boolean) => {
       const info: any = await FileSystem.getInfoAsync(meta.uri);
@@ -211,7 +192,6 @@ export default function LibraryScreen() {
     filtered.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
     setRows(filtered);
 
-    // ✅ FIX: load athletes from UID-scoped key
     try {
       const u = await ensureAnonymous();
       const raw = await AsyncStorage.getItem(athletesKey(u.uid));
@@ -232,7 +212,6 @@ export default function LibraryScreen() {
     } catch {}
   }, []);
 
-  // ✅ SMALLER LOAD: delegated to buildLibraryRows() with fallback
   const load = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -251,7 +230,6 @@ export default function LibraryScreen() {
     }
   }, [legacyLoad]);
 
-  // initial + focus refresh
   useEffect(() => {
     load();
   }, [load]);
@@ -262,16 +240,11 @@ export default function LibraryScreen() {
     }, [load]),
   );
 
-  // ----- FAST PATH: patch row when sidecarUpdated (recompute sport grading) ---
   const patchRowFromSidecarPayload = useCallback(
     async (uri: string, payloadSidecar?: any) => {
-      // Prefer payload from the event (avoids disk race). Fallback to disk.
       const sidecar = payloadSidecar ?? (await readSidecarForUpload(uri));
-
-      // Baseline score bits (wrestling chips + outcome fallback)
       const scoreBits = await readOutcomeFor(uri);
 
-      // Sport-specific grading (basketball/volleyball/baseball style overrides)
       const effectiveSport = sidecar ? getSportKeyFromSidecar(sidecar) : '';
       const sportBits = buildSportLibraryBits(effectiveSport || '', sidecar);
 
@@ -283,7 +256,6 @@ export default function LibraryScreen() {
           ? sportBits.highlightGold
           : scoreBits.highlightGold;
 
-      // Only wrestling shows outcome/score chips in library rows
       const sportLower = String(effectiveSport || '').toLowerCase();
       const isWrestling = sportLower.startsWith('wrestling');
 
@@ -292,19 +264,13 @@ export default function LibraryScreen() {
           r.uri === uri
             ? ({
                 ...r,
-
-                // Wrestling-only chips
                 finalScore: isWrestling ? scoreBits.finalScore : null,
                 homeIsAthlete: isWrestling ? scoreBits.homeIsAthlete : null,
                 outcome: isWrestling ? (scoreBits.outcome ?? undefined) : undefined,
                 myScore: isWrestling ? scoreBits.myScore : null,
                 oppScore: isWrestling ? scoreBits.oppScore : null,
-
-                // Styling driven by sport grading
                 highlightGold: finalHighlightGold,
                 edgeColor: finalEdgeColor,
-
-                // optional extra bits (safe even if LibraryRow doesn’t strictly type them)
                 libraryStyle: {
                   edgeColor: finalEdgeColor,
                   badgeText: sportBits.badgeText ?? null,
@@ -314,7 +280,6 @@ export default function LibraryScreen() {
                     finalEdgeColor ??
                     null,
                 },
-
                 hittingLabel: sportBits.hittingLabel ?? null,
                 pitchingLabel: sportBits.pitchingLabel ?? null,
               } as any)
@@ -329,8 +294,6 @@ export default function LibraryScreen() {
     const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
       const uri = evt?.uri as string | undefined;
       if (!uri) return;
-
-      // ✅ pass sidecar payload so we update instantly and correctly
       await patchRowFromSidecarPayload(uri, evt?.sidecar);
     });
     return () => sub.remove();
@@ -339,47 +302,56 @@ export default function LibraryScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await load();
-      try {
-        await sweepOrphanThumbs();
-      } catch {}
+      if (dataSource === 'cloud') {
+        await refreshCloudRows();
+      } else {
+        await load();
+        try {
+          await sweepOrphanThumbs();
+        } catch {}
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [load]);
+  }, [dataSource, load, refreshCloudRows]);
 
-  // delete handler (serialized through FS queue) + thumb cleanup
   const removeVideo = useCallback(
     async (row: Row) => {
-      await enqueueFs(async () => {
+      const isCloud = String(row.uri).startsWith('cloud:');
+
+      if (isCloud) {
         try {
-          // ✅ never delete "cloud:" rows from filesystem
-          if (String(row.uri).startsWith('cloud:')) {
-            Alert.alert(
-              'Cloud clip',
-              'This is a cloud clip. Delete it from your cloud library later.',
-            );
+          if (!row.videoId) {
+            Alert.alert('Delete failed', 'Missing cloud video id.');
             return;
           }
 
-          // delete the video file
+          await deleteCloudVideo(row.videoId);
+          await refreshCloudRows();
+          Alert.alert('Deleted', 'Cloud video removed.');
+        } catch (e: any) {
+          console.log('cloud delete error', e);
+          Alert.alert('Delete failed', String(e?.message ?? e));
+        }
+        return;
+      }
+
+      await enqueueFs(async () => {
+        try {
           try {
             await FileSystem.deleteAsync(row.uri, { idempotent: true });
           } catch {}
 
-          // delete the cached thumbnail (if present)
           try {
             const t = thumbPathFor(row.uri);
             const info: any = await FileSystem.getInfoAsync(t);
             if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
           } catch {}
 
-          // drop from index
           const current = await readIndex();
           const updated = current.filter((e) => e.uri !== row.uri);
           await writeIndexAtomic(updated);
 
-          // delete from Photos (if it was saved there)
           if (row.assetId) {
             try {
               const { granted } = await MediaLibrary.requestPermissionsAsync();
@@ -395,14 +367,18 @@ export default function LibraryScreen() {
         }
       });
     },
-    [load],
+    [load, refreshCloudRows],
   );
 
   const confirmRemove = useCallback(
     (row: Row) => {
+      const isCloud = String(row.uri).startsWith('cloud:');
+
       Alert.alert(
         'Delete this video?',
-        'This removes the file, its index entry, and its cached thumbnail.',
+        isCloud
+          ? 'This removes the cloud video and its linked metadata.'
+          : 'This removes the file, its index entry, and its cached thumbnail.',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Delete', style: 'destructive', onPress: () => removeVideo(row) },
@@ -422,7 +398,6 @@ export default function LibraryScreen() {
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
 
-  // >>> define doEditAthlete used by the modal (FS-queued retag) <<<
   const doEditAthlete = useCallback(
     async (row: Row, newAthlete: string) => {
       try {
@@ -455,7 +430,6 @@ export default function LibraryScreen() {
     [load],
   );
 
-  // ====== GROUPINGS (✅ uses sourceRows so web cloud mode shows items) ======
   const { allRows, rowsByAthlete, rowsBySport, athleteSportsMap } = useMemo(() => {
     const allRowsLocal: Row[] = [...(sourceRows as any as Row[])].sort(
       (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
@@ -491,7 +465,6 @@ export default function LibraryScreen() {
     };
   }, [sourceRows]);
 
-  // ✅ FIX: prefer local photo, then cloud photoUrl, then legacy photoUri
   const photoFor = useCallback(
     (name: string) => {
       const a = athleteList.find((x) => x.name === name);
@@ -578,7 +551,6 @@ export default function LibraryScreen() {
         const nextList = [newEntry, ...athleteList];
         setAthleteList(nextList);
 
-        // ✅ FIX: persist to UID-scoped key (same as Athletes tab)
         try {
           const u = await ensureAnonymous();
           await AsyncStorage.setItem(athletesKey(u.uid), JSON.stringify(nextList));
@@ -591,7 +563,6 @@ export default function LibraryScreen() {
     [athletePickerOpen, athleteList, doEditAthlete],
   );
 
-  // ====== row renderer ======
   const renderVideoRow = useCallback(
     ({ item }: { item: Row }) => {
       const isCloud = String(item.uri).startsWith('cloud:');
@@ -636,7 +607,6 @@ export default function LibraryScreen() {
     ],
   );
 
-  // Lazy thumbnails for viewable rows (assetId-aware) — ✅ skip cloud rows
   const thumbQueueRef = useRef<Set<string>>(new Set());
   const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
     const toFetch: string[] = [];
@@ -677,10 +647,8 @@ export default function LibraryScreen() {
 
   const viewConfigRef = useRef({ itemVisiblePercentThreshold: 40 });
 
-  // ====== UI ======
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      {/* ✅ FIX: Safe-area padded header so Local/Cloud toggle won't hide behind Dynamic Island */}
       <View
         style={{
           paddingTop: Math.max(insets.top, 10),

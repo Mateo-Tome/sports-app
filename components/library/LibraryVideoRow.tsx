@@ -45,9 +45,12 @@ export type LibraryRow = {
   // ✅ Generic style bundle (sport-agnostic)
   libraryStyle?: LibraryStyle | null;
 
-  // Optional cloud-ish fields (safe to ignore if missing)
+  // ✅ Cloud metadata
+  videoId?: string;
   shareId?: string | null;
   storageKey?: string | null;
+  b2VideoKey?: string | null;
+  b2SidecarKey?: string | null;
 };
 
 type Props = {
@@ -161,12 +164,9 @@ const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => {
 };
 
 function resolveShareId(row: LibraryRow, uploaded: boolean): string {
-  // Best case: row already has shareId (cloud rows usually will)
   const direct = (row.shareId ?? '').trim();
   if (direct) return direct;
 
-  // If your local rows get a synthetic "cloud:<shareId>" uri, support that too.
-  // (Safe: only runs when uploaded = true)
   if (uploaded) {
     const uri = String(row.uri ?? '');
     if (uri.startsWith('cloud:')) {
@@ -197,7 +197,7 @@ function UploadedStatus() {
         shadowOpacity: 0.25,
         shadowRadius: 6,
         shadowOffset: { width: 0, height: 2 },
-        elevation: 2, // Android
+        elevation: 2,
       }}
     >
       <Text
@@ -206,7 +206,7 @@ function UploadedStatus() {
           fontWeight: '900',
           fontSize: 14,
           lineHeight: 14,
-          marginTop: 1, // optical centering
+          marginTop: 1,
         }}
       >
         ✓
@@ -214,7 +214,6 @@ function UploadedStatus() {
     </View>
   );
 }
-
 
 // ----- Main row component -----
 function LibraryVideoRowComponent({
@@ -235,7 +234,6 @@ function LibraryVideoRowComponent({
 
   const subtitle = subtitleBits.join(' • ');
 
-  // Keep your existing W/L chip behavior exactly the same
   const chip: Chip | null =
     row.sport !== 'highlights' &&
     row.outcome &&
@@ -253,7 +251,6 @@ function LibraryVideoRowComponent({
     outcome: row.outcome ?? undefined,
   };
 
-  // ✅ Prefer generic libraryStyle first, then legacy edgeColor, then W/L/T fallback
   const rowEdgeColor =
     (row.libraryStyle?.edgeColor?.trim() ? row.libraryStyle.edgeColor : null) ??
     (row.edgeColor?.trim() ? row.edgeColor : null) ??
@@ -265,7 +262,6 @@ function LibraryVideoRowComponent({
     row.libraryStyle?.edgeColor?.trim() ||
     'rgba(255,255,255,0.35)';
 
-  // ✅ Robust registry call (supports multiple export names)
   const SportCard =
     (SportCardRegistry as any).getSportCardComponent?.(safeRow as any) ??
     (SportCardRegistry as any).getSportCard?.(safeRow as any) ??
@@ -312,7 +308,6 @@ function LibraryVideoRowComponent({
       )}
 
       <View style={{ padding: 12 }}>
-        {/* Header row: Edit Title */}
         <View
           style={{
             flexDirection: 'row',
@@ -340,7 +335,6 @@ function LibraryVideoRowComponent({
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {/* Thumbnail */}
           {row.thumbUri ? (
             <Image
               key={row.thumbUri || row.uri}
@@ -394,7 +388,6 @@ function LibraryVideoRowComponent({
               ) : null}
             </View>
 
-            {/* actions row */}
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
               <TouchableOpacity
                 onPress={(e: any) => {
@@ -460,7 +453,6 @@ function LibraryVideoRowComponent({
                 <Text style={{ color: 'white', fontWeight: '700' }}>Edit Athlete</Text>
               </TouchableOpacity>
 
-              {/* Upload becomes Share once uploaded */}
               <View style={{ marginTop: 8, alignItems: 'center' }}>
                 {uploaded ? (
                   shareId ? (

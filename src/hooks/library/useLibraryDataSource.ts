@@ -30,8 +30,14 @@ export type LibraryRowLike = {
   highlightGold?: boolean;
   edgeColor?: string;
 
-  // ✅ NEW: sport-agnostic style
+  // ✅ sport-agnostic style
   libraryStyle?: LibraryStyle | null;
+
+  // ✅ keep cloud metadata so delete/share/playback can work safely
+  videoId?: string;
+  shareId?: string | null;
+  b2VideoKey?: string | null;
+  b2SidecarKey?: string | null;
 };
 
 const DS_KEY = 'library:dataSource';
@@ -78,11 +84,10 @@ function computeEdgeColorFromWL(o: 'W' | 'L' | '') {
 
 /**
  * Map Firestore VideoRow -> LibraryRow-like
- * IMPORTANT: Cloud needs style stored in Firestore (libraryStyle / edgeColor),
- * otherwise baseball will fall back to gray (because W/L doesn't apply).
  */
 function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
-  const shareId = safeStr((v as any).shareId, safeStr((v as any).id, ''));
+  const videoId = safeStr((v as any).id, '');
+  const shareId = safeStr((v as any).shareId, videoId);
   if (!shareId) return null;
 
   const athleteName =
@@ -102,33 +107,30 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     typeof (v as any).myScore === 'number'
       ? (v as any).myScore
       : typeof (v as any).scoreFor === 'number'
-      ? (v as any).scoreFor
-      : null;
+        ? (v as any).scoreFor
+        : null;
 
   const oppScore =
     typeof (v as any).oppScore === 'number'
       ? (v as any).oppScore
       : typeof (v as any).scoreAgainst === 'number'
-      ? (v as any).scoreAgainst
-      : null;
+        ? (v as any).scoreAgainst
+        : null;
 
   const outcomeWL = computeOutcomeLabel((v as any).outcome ?? (v as any).result);
 
   const finalScoreText =
     safeStr((v as any).finalScore, '') ||
     safeStr((v as any).scoreText, '') ||
-    (myScore != null && oppScore != null && outcomeWL ? `${outcomeWL} ${myScore}\u2013${oppScore}` : '');
+    (myScore != null && oppScore != null && outcomeWL
+      ? `${outcomeWL} ${myScore}\u2013${oppScore}`
+      : '');
 
-  // Title: "Anakin • baseball-hitting • Jan 11 at 5:53 PM"
   const titleParts = [athleteName, sportStyle];
   if (when) titleParts.push(when);
 
   const libStyle = ((v as any).libraryStyle ?? null) as LibraryStyle | null;
 
-  // ✅ Border color priority:
-  // 1) libraryStyle.edgeColor (sport-agnostic, best)
-  // 2) legacy doc edgeColor
-  // 3) W/L fallback (only helps wrestling/etc)
   const edgeColor =
     (safeStr(libStyle?.edgeColor, '') || null) ??
     (safeStr((v as any).edgeColor, '') || null) ??
@@ -153,12 +155,19 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     finalScore: finalScoreText || null,
 
     homeIsAthlete:
-      typeof (v as any).homeIsAthlete === 'boolean' ? (v as any).homeIsAthlete : undefined,
+      typeof (v as any).homeIsAthlete === 'boolean'
+        ? (v as any).homeIsAthlete
+        : undefined,
 
     highlightGold: !!(v as any).highlightGold,
 
     edgeColor,
     libraryStyle: libStyle,
+
+    videoId: videoId || undefined,
+    shareId: shareId || null,
+    b2VideoKey: (v as any).b2VideoKey ?? null,
+    b2SidecarKey: (v as any).b2SidecarKey ?? null,
   };
 }
 
@@ -166,6 +175,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
   const [dataSource, setDataSourceState] = useState<'local' | 'cloud'>('local');
   const [cloudRows, setCloudRows] = useState<LibraryRowLike[]>([]);
   const [cloudCount, setCloudCount] = useState<number>(0);
+  const [cloudRefreshNonce, setCloudRefreshNonce] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -181,6 +191,10 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     try {
       await AsyncStorage.setItem(DS_KEY, v);
     } catch {}
+  }, []);
+
+  const refreshCloudRows = useCallback(async () => {
+    setCloudRefreshNonce((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -208,7 +222,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     return () => {
       cancelled = true;
     };
-  }, [dataSource]);
+  }, [dataSource, cloudRefreshNonce]);
 
   const sourceRows = useMemo(() => {
     return dataSource === 'cloud' ? cloudRows : (localRows as any);
@@ -253,5 +267,6 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     sourceRows,
     cloudCount,
     routerPushPlayback,
+    refreshCloudRows,
   };
 }
