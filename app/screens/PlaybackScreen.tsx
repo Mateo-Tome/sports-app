@@ -1,4 +1,3 @@
-
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -180,7 +179,6 @@ export default function PlaybackScreen() {
     }
   }, [dur, getLiveDuration]);
 
-  // ✅ Critical: DO NOT upper-clamp when duration is unknown (D<=0).
   const clampToDuration = useCallback(
     (sec: number) => {
       const D = getDurationSafe();
@@ -191,15 +189,11 @@ export default function PlaybackScreen() {
     [getDurationSafe],
   );
 
-  // ---- time refs ----
-  const desiredTimeRef = useRef<number>(0); // latest intended time from scrub/seek
+  const desiredTimeRef = useRef<number>(0);
   const lastUserSeekMsRef = useRef<number>(0);
   const isScrubbingRef = useRef<boolean>(false);
-
-  // single source of truth for edit stamping
   const editAnchorTimeRef = useRef<number>(0);
 
-  // unified seek (updates desired immediately)
   const onSeek = useCallback(
     (sec: number) => {
       const t = clampToDuration(sec);
@@ -215,7 +209,6 @@ export default function PlaybackScreen() {
     [clampToDuration, seekInternal, webSeek],
   );
 
-  // preview time from scrubber drag (intent only)
   const onPreviewTime = useCallback(
     (sec: number) => {
       const t = clampToDuration(sec);
@@ -344,10 +337,8 @@ export default function PlaybackScreen() {
 
     editAnchorTimeRef.current = desiredTimeRef.current || tPlayer;
 
-    // force player seek to anchor (no gating)
     onSeek(editAnchorTimeRef.current);
 
-    // pause to reduce drift
     try {
       (player as any)?.pause?.();
     } catch {}
@@ -367,8 +358,6 @@ export default function PlaybackScreen() {
     setQuickEditFor(null);
   };
 
-  // ADD stamps at frozen editAnchorTimeRef while in edit mode
-  // REPLACE keeps original pill timestamp
   const handleOverlayEventFromModule = (evt: OverlayEvent) => {
     const actor: Actor = toActor((evt as any).actor);
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
@@ -425,7 +414,6 @@ export default function PlaybackScreen() {
       return;
     }
 
-    // fallback (shouldn't usually happen)
     addAtTime(tNow);
   };
 
@@ -547,8 +535,14 @@ export default function PlaybackScreen() {
 
       <View style={{ flex: 1 }}>
         {shouldMountVideoView ? (
-          isWeb ? (
-            <View style={{ flex: 1, backgroundColor: 'black' }}>
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'black',
+              overflow: 'hidden',
+            }}
+          >
+            {isWeb ? (
               <video
                 key={videoKey}
                 ref={bindRef}
@@ -556,21 +550,35 @@ export default function PlaybackScreen() {
                 playsInline
                 controls={false}
                 muted={false}
-                style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'black' }}
+                style={
+                  {
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    backgroundColor: 'black',
+                  } as any
+                }
                 {...(videoHandlers as any)}
               />
-            </View>
-          ) : (
-            <VideoView
-              key={videoKey}
-              player={player}
-              style={{ flex: 1 }}
-              allowsFullscreen
-              allowsPictureInPicture
-              nativeControls={false}
-              contentFit="contain"
-            />
-          )
+            ) : (
+              <VideoView
+                key={videoKey}
+                player={player}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  backgroundColor: 'black',
+                }}
+                allowsFullscreen
+                allowsPictureInPicture
+                nativeControls={false}
+                contentFit="contain"
+              />
+            )}
+          </View>
         ) : (
           <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>Loading video…</Text>
