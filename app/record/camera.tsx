@@ -382,9 +382,12 @@ export default function CameraScreen() {
             </View>
           )}
 
-          {zoom > 0 && (
-            <View style={[styles.zoomIndicator, { top: insets.top + 10 }]}>
-              <Text style={styles.zoomText}>{Math.round(zoom * 100)}% ZOOM</Text>
+          {cameraReady && isRecording && isPaused && !isProcessing && (
+            <View style={styles.pausedPillWrap} pointerEvents="none">
+              <View style={styles.pausedPill}>
+                <View style={styles.pausedDot} />
+                <Text style={styles.pausedPillText}>PAUSED</Text>
+              </View>
             </View>
           )}
 
@@ -509,16 +512,35 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5
   },
 
-  zoomIndicator: {
-    position: 'absolute',
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    zIndex: 50
+  pausedPillWrap: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30
   },
-  zoomText: { color: 'white', fontWeight: 'bold', fontSize: 10, letterSpacing: 1 },
+  pausedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)'
+  },
+  pausedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F59E0B',
+    marginRight: 10
+  },
+  pausedPillText: {
+    color: 'white',
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 1.4
+  },
 
   overlayLoader: {
     ...StyleSheet.absoluteFillObject,
