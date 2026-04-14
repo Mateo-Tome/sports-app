@@ -43,14 +43,52 @@ function getEventTimeSec(ev: any): number | null {
   return null;
 }
 
-function getCountMeta(ev: any): any | null {
-  // support both meta and meta.meta nesting
-  return ev?.meta?.meta ?? ev?.meta ?? null;
+function getKind(ev: any): string {
+  return String(ev?.kind ?? ev?.key ?? ev?.label ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function sortEventsByTime(events: any[]): any[] {
+  return [...events].sort((a, b) => {
+    const ta = getEventTimeSec(a);
+    const tb = getEventTimeSec(b);
+    if (ta == null && tb == null) return 0;
+    if (ta == null) return 1;
+    if (tb == null) return -1;
+    return ta - tb;
+  });
 }
 
 /**
- * Derive {balls,strikes,fouls} at playback time (nowSec) by scanning events.
- * We pick the *last* event <= now that has count fields.
+ * Derive {balls,strikes,fouls} at playback time by rebuilding the baseball count
+ * from the event sequence itself.
+ *
+ * Why this changed:
+ * - The old version trusted saved count snapshots in event meta.
+ * - That breaks when a past event is edited/replaced on playback because older
+ *   saved meta can become stale.
+ *
+ * This version only uses baseball event kinds:
+ * - ball
+ * - strike
+ * - foul
+ * - walk
+ * - strikeout
+ * - out
+ * - hit
+ * - homerun
+ *
+ * Reset rules:
+ * - walk resets count
+ * - strikeout resets count
+ * - out resets count
+ * - hit resets count
+ * - homerun resets count
+ *
+ * Foul rule:
+ * - foul adds a strike only if strikes < 2
+ * - fouls always increment the foul counter
  */
 export function deriveCountAtTime(events: any[] | undefined, now: number | undefined) {
   const nowSec = typeof now === 'number' && Number.isFinite(now) ? toSec(now) : 0;
@@ -59,60 +97,60 @@ export function deriveCountAtTime(events: any[] | undefined, now: number | undef
     return { balls: 0, strikes: 0, fouls: 0 };
   }
 
-  // Sort by time so we can break early correctly
-  const ordered = [...events].sort((a, b) => {
-    const ta = getEventTimeSec(a);
-    const tb = getEventTimeSec(b);
-    if (ta == null && tb == null) return 0;
-    if (ta == null) return 1;
-    if (tb == null) return -1;
-    return ta - tb;
-  });
+  const ordered = sortEventsByTime(events);
 
-  let found: { balls: number; strikes: number; fouls: number } | null = null;
+  let balls = 0;
+  let strikes = 0;
+  let fouls = 0;
 
   for (let i = 0; i < ordered.length; i++) {
-    const ev: any = ordered[i];
-
+    const ev = ordered[i];
     const evSec = getEventTimeSec(ev);
-    // If event time exists and is after playback time, stop.
-    // ✅ Do NOT use truthy checks; nowSec can be 0.
+
+    // Stop once we pass the current playback time.
     if (evSec != null && evSec > nowSec) break;
 
-    const m = getCountMeta(ev);
-    if (!m) continue;
+    const kind = getKind(ev);
 
-    const hasCountMeta =
-      typeof m.balls === 'number' ||
-      typeof m.strikes === 'number' ||
-      typeof m.fouls === 'number' ||
-      typeof m.ballsAfter === 'number' ||
-      typeof m.strikesAfter === 'number' ||
-      typeof m.foulsAfter === 'number';
+    switch (kind) {
+      case 'ball': {
+        balls = Math.min(balls + 1, 4);
+        break;
+      }
 
-    if (!hasCountMeta) continue;
+      case 'strike': {
+        strikes = Math.min(strikes + 1, 3);
+        break;
+      }
 
-    found = {
-      balls:
-        typeof m.ballsAfter === 'number'
-          ? m.ballsAfter
-          : typeof m.balls === 'number'
-          ? m.balls
-          : 0,
-      strikes:
-        typeof m.strikesAfter === 'number'
-          ? m.strikesAfter
-          : typeof m.strikes === 'number'
-          ? m.strikes
-          : 0,
-      fouls:
-        typeof m.foulsAfter === 'number'
-          ? m.foulsAfter
-          : typeof m.fouls === 'number'
-          ? m.fouls
-          : 0,
-    };
+      case 'foul':
+      case 'foul ball': {
+        fouls += 1;
+        if (strikes < 2) {
+          strikes += 1;
+        }
+        break;
+      }
+
+      // terminal / reset events
+      case 'walk':
+      case 'strikeout':
+      case 'out':
+      case 'hit':
+      case 'homerun':
+      case 'home run':
+      case 'hr allowed':
+      case 'hit allowed': {
+        balls = 0;
+        strikes = 0;
+        fouls = 0;
+        break;
+      }
+
+      default:
+        break;
+    }
   }
 
-  return found ?? { balls: 0, strikes: 0, fouls: 0 };
+  return { balls, strikes, fouls };
 }
