@@ -13,16 +13,17 @@ import {
   Alert,
   Animated,
   InteractionManager,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import {
   GestureHandlerRootView,
   PinchGestureHandler,
   State,
-  type PinchGestureHandlerGestureEvent
+  type PinchGestureHandlerGestureEvent,
 } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -97,14 +98,24 @@ export default function CameraScreen() {
     }
   }, [cameraPermission, requestCameraPermission]);
 
-  // Lock the camera screen to landscape while this screen is focused.
+  // Lock the camera screen while focused.
+  // Android gets a fixed landscape side to reduce ambiguous rotation metadata.
+  // iPhone keeps the old generic landscape behavior for safety.
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
 
       const lockOrientation = async () => {
         try {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+          if (Platform.OS === 'android') {
+            await ScreenOrientation.lockAsync(
+              ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT,
+            );
+          } else {
+            await ScreenOrientation.lockAsync(
+              ScreenOrientation.OrientationLock.LANDSCAPE,
+            );
+          }
         } catch (e) {
           console.log('[camera] failed to lock landscape', e);
         }
@@ -125,7 +136,7 @@ export default function CameraScreen() {
           unlockOrientation();
         }
       };
-    }, [])
+    }, []),
   );
 
   // Pulse effect for the "Ready" indicator
@@ -134,7 +145,7 @@ export default function CameraScreen() {
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
         Animated.timing(pulseAnim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
-      ])
+      ]),
     );
     if (cameraReady && !isRecording) pulse.start();
     return () => pulse.stop();
@@ -183,7 +194,7 @@ export default function CameraScreen() {
           stopCurrentSegment(cameraRef, segmentActiveRef);
         }
       };
-    }, [cameraPermission, camOpacity])
+    }, [cameraPermission, camOpacity]),
   );
 
   const getCurrentTSec = useCallback(() => {
@@ -301,7 +312,7 @@ export default function CameraScreen() {
         `${sportParam}:${styleParam}`,
         markers,
         eventsRef.current,
-        scoreRef.current
+        scoreRef.current,
       );
 
       try {
@@ -319,7 +330,10 @@ export default function CameraScreen() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PinchGestureHandler onGestureEvent={onPinchGestureEvent} onHandlerStateChange={onPinchStateChange}>
+      <PinchGestureHandler
+        onGestureEvent={onPinchGestureEvent}
+        onHandlerStateChange={onPinchStateChange}
+      >
         <View style={styles.container}>
           {shouldRenderCamera ? (
             <Animated.View style={{ flex: 1, opacity: camOpacity }}>
@@ -335,7 +349,7 @@ export default function CameraScreen() {
                   Animated.timing(camOpacity, {
                     toValue: 1,
                     duration: 250,
-                    useNativeDriver: true
+                    useNativeDriver: true,
                   }).start();
                 }}
               />
@@ -425,7 +439,11 @@ export default function CameraScreen() {
 
           <View style={[styles.controls, { bottom: insets.bottom + 40 }]}>
             {!isRecording ? (
-              <TouchableOpacity style={styles.recordBtnOuter} onPress={handleStart} disabled={!cameraReady || isTransitioning}>
+              <TouchableOpacity
+                style={styles.recordBtnOuter}
+                onPress={handleStart}
+                disabled={!cameraReady || isTransitioning}
+              >
                 <View style={styles.recordBtnInner} />
               </TouchableOpacity>
             ) : (
@@ -438,11 +456,18 @@ export default function CameraScreen() {
                   <Text style={styles.controlLabel}>{isPaused ? 'RESUME' : 'PAUSE'}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.stopBtn} onPress={handleStop} disabled={isTransitioning}>
+                <TouchableOpacity
+                  style={styles.stopBtn}
+                  onPress={handleStop}
+                  disabled={isTransitioning}
+                >
                   <View style={styles.stopIcon} />
                 </TouchableOpacity>
 
-                <HighlightButton count={markers.length} onPress={() => setMarkers((p) => [...p, getCurrentTSec()])} />
+                <HighlightButton
+                  count={markers.length}
+                  onPress={() => setMarkers((p) => [...p, getCurrentTSec()])}
+                />
               </View>
             )}
           </View>
@@ -465,7 +490,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
-    zIndex: 100
+    zIndex: 100,
   },
   backBtnText: { color: 'white', fontWeight: '900', fontSize: 11, letterSpacing: 1 },
 
@@ -473,7 +498,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10
+    zIndex: 10,
   },
   hudPill: {
     backgroundColor: 'rgba(0,0,0,0.75)',
@@ -482,20 +507,20 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)'
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   hudAthleteName: {
     color: 'white',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: 2,
-    marginBottom: 4
+    marginBottom: 4,
   },
   hudDivider: {
     width: 40,
     height: 1,
     backgroundColor: 'rgba(255,255,255,0.3)',
-    marginVertical: 6
+    marginVertical: 6,
   },
   hudStatusRow: { flexDirection: 'row', alignItems: 'center' },
   hudPulseDot: {
@@ -503,20 +528,20 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#4ADE80',
-    marginRight: 8
+    marginRight: 8,
   },
   hudStatusText: {
     color: '#4ADE80',
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 1.5
+    letterSpacing: 1.5,
   },
 
   pausedPillWrap: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 30
+    zIndex: 30,
   },
   pausedPill: {
     flexDirection: 'row',
@@ -526,20 +551,20 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)'
+    borderColor: 'rgba(255,255,255,0.16)',
   },
   pausedDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#F59E0B',
-    marginRight: 10
+    marginRight: 10,
   },
   pausedPillText: {
     color: 'white',
     fontWeight: '900',
     fontSize: 13,
-    letterSpacing: 1.4
+    letterSpacing: 1.4,
   },
 
   overlayLoader: {
@@ -547,7 +572,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.9)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 1000
+    zIndex: 1000,
   },
   loaderText: { color: 'white', marginTop: 15, fontWeight: '900', letterSpacing: 2 },
 
@@ -560,11 +585,11 @@ const styles = StyleSheet.create({
     borderWidth: 5,
     borderColor: '#fff',
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
   },
   recordBtnInner: { width: 58, height: 58, borderRadius: 30, backgroundColor: '#FF3B30' },
   stopIcon: { width: 30, height: 30, backgroundColor: 'white', borderRadius: 4 },
   controlBtn: { padding: 10, minWidth: 90, alignItems: 'center' },
   stopBtn: { padding: 10 },
-  controlLabel: { color: 'white', fontWeight: '900', fontSize: 13, letterSpacing: 1 }
+  controlLabel: { color: 'white', fontWeight: '900', fontSize: 13, letterSpacing: 1 },
 });
