@@ -75,6 +75,8 @@ async function authorizeB2Account() {
   const apiUrl = authJson.apiUrl;
   const downloadUrl = authJson.downloadUrl;
   const authToken = authJson.authorizationToken;
+  const recommendedPartSize = Number(authJson.recommendedPartSize || 0);
+  const absoluteMinimumPartSize = Number(authJson.absoluteMinimumPartSize || 0);
 
   if (!apiUrl || !downloadUrl || !authToken) {
     const err = new Error('Missing apiUrl/downloadUrl/token from B2 auth');
@@ -83,7 +85,13 @@ async function authorizeB2Account() {
     throw err;
   }
 
-  return { apiUrl, downloadUrl, authToken };
+  return {
+    apiUrl,
+    downloadUrl,
+    authToken,
+    recommendedPartSize,
+    absoluteMinimumPartSize,
+  };
 }
 
 /**
@@ -164,6 +172,144 @@ async function getB2UploadUrl(apiUrl, authToken, bucketId) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* ✅ B2 large-file helpers                                                    */
+/* -------------------------------------------------------------------------- */
+
+async function startB2LargeFile(apiUrl, authToken, bucketId, fileName, contentType, fileInfo = {}) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_start_large_file`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      bucketId,
+      fileName,
+      contentType,
+      fileInfo,
+    }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_start_large_file failed');
+    err.code = 'B2_START_LARGE_FILE_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  if (!j.fileId || !j.fileName) {
+    const err = new Error('b2_start_large_file missing fields');
+    err.code = 'B2_START_LARGE_FILE_MISSING_FIELDS';
+    err.details = j;
+    throw err;
+  }
+
+  return j;
+}
+
+async function getB2UploadPartUrl(apiUrl, authToken, fileId) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_get_upload_part_url`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fileId }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_get_upload_part_url failed');
+    err.code = 'B2_GET_UPLOAD_PART_URL_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  if (!j.uploadUrl || !j.authorizationToken) {
+    const err = new Error('b2_get_upload_part_url missing fields');
+    err.code = 'B2_GET_UPLOAD_PART_URL_MISSING_FIELDS';
+    err.details = j;
+    throw err;
+  }
+
+  return {
+    uploadUrl: j.uploadUrl,
+    uploadAuthToken: j.authorizationToken,
+  };
+}
+
+async function finishB2LargeFile(apiUrl, authToken, fileId, partSha1Array) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_finish_large_file`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fileId,
+      partSha1Array,
+    }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_finish_large_file failed');
+    err.code = 'B2_FINISH_LARGE_FILE_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  return j;
+}
+
+async function listB2Parts(apiUrl, authToken, fileId, startPartNumber = 1, maxPartCount = 1000) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_list_parts`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fileId,
+      startPartNumber,
+      maxPartCount,
+    }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_list_parts failed');
+    err.code = 'B2_LIST_PARTS_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  return j;
+}
+
+async function cancelB2LargeFile(apiUrl, authToken, fileId) {
+  const r = await fetch(`${apiUrl}/b2api/v2/b2_cancel_large_file`, {
+    method: 'POST',
+    headers: {
+      Authorization: authToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fileId }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error('b2_cancel_large_file failed');
+    err.code = 'B2_CANCEL_LARGE_FILE_FAILED';
+    err.details = j;
+    throw err;
+  }
+
+  return j;
+}
+
+/* -------------------------------------------------------------------------- */
 /* ✅ B2 delete helper                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -226,6 +372,255 @@ async function deleteB2FileByName(apiUrl, authToken, bucketId, fileName) {
     fileName: exact.fileName,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: start large video upload                                            */
+/* -------------------------------------------------------------------------- */
+
+exports.startLargeVideoUpload = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const uid = decoded.uid;
+
+      const originalFileName = clean(req.body?.originalFileName || '');
+      const mimeType = clean(req.body?.mimeType || 'video/mp4') || 'video/mp4';
+
+      if (!originalFileName) {
+        return res.status(400).json({ error: 'Missing originalFileName' });
+      }
+
+      const safeName = originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const fileName = `videos/${uid}/${safeName}`;
+
+      const B2_BUCKET_ID = mustEnv('B2_BUCKET_ID');
+      const {
+        apiUrl,
+        authToken,
+        recommendedPartSize,
+        absoluteMinimumPartSize,
+      } = await authorizeB2Account();
+
+      const started = await startB2LargeFile(
+        apiUrl,
+        authToken,
+        B2_BUCKET_ID,
+        fileName,
+        mimeType,
+        {
+          ownerUid: uid,
+          originalFileName: safeName,
+        },
+      );
+
+      return res.json({
+        ok: true,
+        fileId: started.fileId,
+        fileName: started.fileName,
+        recommendedPartSize,
+        absoluteMinimumPartSize,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'startLargeVideoUpload failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: get upload-part URL for large video                                 */
+/* -------------------------------------------------------------------------- */
+
+exports.getLargeVideoUploadPartUrl = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      await admin.auth().verifyIdToken(idToken);
+
+      const fileId = clean(req.body?.fileId || '');
+      if (!fileId) {
+        return res.status(400).json({ error: 'Missing fileId' });
+      }
+
+      const { apiUrl, authToken } = await authorizeB2Account();
+      const out = await getB2UploadPartUrl(apiUrl, authToken, fileId);
+
+      return res.json({
+        ok: true,
+        uploadUrl: out.uploadUrl,
+        uploadAuthToken: out.uploadAuthToken,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'getLargeVideoUploadPartUrl failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: finish large video upload                                           */
+/* -------------------------------------------------------------------------- */
+
+exports.finishLargeVideoUpload = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      await admin.auth().verifyIdToken(idToken);
+
+      const fileId = clean(req.body?.fileId || '');
+      const partSha1Array = Array.isArray(req.body?.partSha1Array)
+        ? req.body.partSha1Array.map((x) => clean(x))
+        : [];
+
+      if (!fileId) {
+        return res.status(400).json({ error: 'Missing fileId' });
+      }
+      if (!partSha1Array.length) {
+        return res.status(400).json({ error: 'Missing partSha1Array' });
+      }
+
+      const { apiUrl, authToken } = await authorizeB2Account();
+      const out = await finishB2LargeFile(apiUrl, authToken, fileId, partSha1Array);
+
+      return res.json({
+        ok: true,
+        fileId: out.fileId,
+        fileName: out.fileName,
+        contentLength: out.contentLength ?? null,
+        contentSha1: out.contentSha1 ?? null,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'finishLargeVideoUpload failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: list uploaded parts for recovery / resume                           */
+/* -------------------------------------------------------------------------- */
+
+exports.listLargeVideoParts = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      await admin.auth().verifyIdToken(idToken);
+
+      const fileId = clean(req.body?.fileId || '');
+      if (!fileId) {
+        return res.status(400).json({ error: 'Missing fileId' });
+      }
+
+      const { apiUrl, authToken } = await authorizeB2Account();
+      const out = await listB2Parts(apiUrl, authToken, fileId);
+
+      return res.json({
+        ok: true,
+        parts: Array.isArray(out.parts) ? out.parts : [],
+        nextPartNumber: out.nextPartNumber ?? null,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'listLargeVideoParts failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* ✅ NEW: cancel unfinished large upload                                      */
+/* -------------------------------------------------------------------------- */
+
+exports.cancelLargeVideoUpload = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      await admin.auth().verifyIdToken(idToken);
+
+      const fileId = clean(req.body?.fileId || '');
+      if (!fileId) {
+        return res.status(400).json({ error: 'Missing fileId' });
+      }
+
+      const { apiUrl, authToken } = await authorizeB2Account();
+      const out = await cancelB2LargeFile(apiUrl, authToken, fileId);
+
+      return res.json({
+        ok: true,
+        fileId: out.fileId ?? fileId,
+        fileName: out.fileName ?? null,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'cancelLargeVideoUpload failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
 
 /* -------------------------------------------------------------------------- */
 /* ✅ NEW ENDPOINT: Get signed VIEW url for a private athlete photo            */
