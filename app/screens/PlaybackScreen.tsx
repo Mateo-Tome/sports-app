@@ -105,20 +105,6 @@ export default function PlaybackScreen() {
   const overlayOn = overlayMode === 'all' || overlayMode === 'noBelt';
   const showEventBelt = overlayMode === 'all' || overlayMode === 'noScore';
 
-  const overlayLabel = useMemo(() => {
-    switch (overlayMode) {
-      case 'all':
-        return 'Overlay: All';
-      case 'noBelt':
-        return 'Score Only';
-      case 'noScore':
-        return 'Belt Only';
-      case 'off':
-      default:
-        return 'Overlay: Off';
-    }
-  }, [overlayMode]);
-
   const [editMode, setEditMode] = useState(false);
   const [editSubmode, setEditSubmode] = useState<'add' | 'replace' | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
@@ -540,6 +526,8 @@ export default function PlaybackScreen() {
               flex: 1,
               backgroundColor: 'black',
               overflow: 'hidden',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             {isWeb ? (
@@ -661,9 +649,11 @@ export default function PlaybackScreen() {
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
                 right: insets.right + SAFE_MARGIN,
-                paddingVertical: 8,
-                paddingHorizontal: 12,
+                width: 40,
+                height: 40,
                 borderRadius: 999,
+                alignItems: 'center',
+                justifyContent: 'center',
                 backgroundColor: 'rgba(0,0,0,0.45)',
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.25)',
@@ -672,7 +662,7 @@ export default function PlaybackScreen() {
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>{overlayLabel} ▾</Text>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>⚙</Text>
             </Pressable>
 
             <OverlayModeMenu

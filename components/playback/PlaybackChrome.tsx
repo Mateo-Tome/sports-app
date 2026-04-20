@@ -1,5 +1,3 @@
-// components/playback/PlaybackChrome.tsx
-
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Dimensions, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
@@ -53,7 +51,7 @@ function abbrKind(kind?: string): string {
   return kind.slice(0, 3).toUpperCase();
 }
 
-/* ==================== Overlay mode menu ==================== */
+/* ==================== Overlay / tools menu ==================== */
 
 export function OverlayModeMenu(props: {
   visible: boolean;
@@ -68,9 +66,9 @@ export function OverlayModeMenu(props: {
 
   const options: { key: OverlayMode; label: string }[] = [
     { key: 'all', label: 'All' },
-    { key: 'noBelt', label: 'Score' },
-    { key: 'noScore', label: 'Belt' },
-    { key: 'off', label: 'Off' },
+    { key: 'noBelt', label: 'Score Only' },
+    { key: 'noScore', label: 'Belt Only' },
+    { key: 'off', label: 'Overlay Off' },
   ];
 
   return (
@@ -100,11 +98,24 @@ export function OverlayModeMenu(props: {
           backgroundColor: 'rgba(0,0,0,0.9)',
           borderWidth: 1,
           borderColor: 'rgba(255,255,255,0.25)',
-          paddingVertical: 6,
+          paddingVertical: 8,
           paddingHorizontal: 8,
-          minWidth: 120,
+          minWidth: 176,
         }}
       >
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.62)',
+            fontWeight: '800',
+            fontSize: 11,
+            letterSpacing: 0.6,
+            marginBottom: 6,
+            paddingHorizontal: 6,
+          }}
+        >
+          DISPLAY
+        </Text>
+
         {options.map((opt) => {
           const isActive = opt.key === mode;
           return (
@@ -112,8 +123,8 @@ export function OverlayModeMenu(props: {
               key={opt.key}
               onPress={() => onSelect(opt.key)}
               style={{
-                paddingVertical: 4,
-                paddingHorizontal: 6,
+                paddingVertical: 8,
+                paddingHorizontal: 8,
                 borderRadius: 8,
                 backgroundColor: isActive ? 'rgba(59,130,246,0.35)' : 'transparent',
                 marginBottom: 2,
@@ -245,7 +256,6 @@ function readPeriodNumber(e: EventRow): number | null {
     inner?.period ??
     meta?.periodNumber ??
     inner?.periodNumber ??
-    // extra safety for weird nesting
     meta?.meta?.period ??
     meta?.meta?.periodNumber;
 
@@ -273,7 +283,6 @@ function readChoiceToken(e: EventRow): 'top' | 'bottom' | 'neutral' | 'defer' | 
   const meta: any = (e as any)?.meta ?? {};
   const inner: any = meta?.meta ?? {};
 
-  // Prefer explicit meta.choice first, then fallback to label
   const raw =
     meta?.choice ??
     inner?.choice ??
@@ -317,8 +326,6 @@ function findLastRealChoiceForPeriod(events: EventRow[], periodNum: number): Eve
 
     const token = readChoiceToken(e);
     if (!token) continue;
-
-    // NEVER show defer in playback
     if (token === 'defer') continue;
 
     return e;
@@ -363,7 +370,6 @@ export function EventBelt(props: {
     return 'opponent';
   };
 
-  // Determines if this event is a "period marker"
   const getPeriodLabel = (e: EventRow): string | null => {
     const meta = (e as any).meta ?? {};
     const inner = meta?.meta ?? {};
@@ -373,12 +379,12 @@ export function EventBelt(props: {
       typeof meta.period === 'number'
         ? meta.period
         : typeof inner.period === 'number'
-          ? inner.period
-          : typeof meta.periodNumber === 'number'
-            ? meta.periodNumber
-            : typeof inner.periodNumber === 'number'
-              ? inner.periodNumber
-              : undefined;
+        ? inner.period
+        : typeof meta.periodNumber === 'number'
+        ? meta.periodNumber
+        : typeof inner.periodNumber === 'number'
+        ? inner.periodNumber
+        : undefined;
 
     if (typeof rawPeriod === 'number' && rawPeriod > 0) return `P${rawPeriod}`;
 
@@ -420,8 +426,6 @@ export function EventBelt(props: {
 
     for (const { e } of indexed) {
       const type = readEventType(e);
-
-      // ✅ hide choice pills completely so you never get 2 pills
       if (type === 'choice') continue;
 
       const lane = laneFor(e);
@@ -664,7 +668,6 @@ export function QuickEditSheet(props: {
   const screenW = Dimensions.get('window').width;
   const BOX_W = Math.min(screenW * 0.75, 520);
 
-  // Keep this as-is (it’s “edit what you long-pressed”)
   const kind = String((event as any)?.kind ?? '');
   const pts = (event as any).points ? `+${(event as any).points}` : '';
 
