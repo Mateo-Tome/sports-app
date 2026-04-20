@@ -498,18 +498,19 @@ export function UploadButton(props: Props) {
                 const sportStyle =
                   style && style !== "unknown" ? `${sport}-${style}` : sport;
 
+                const recordedAt =
+                  typeof fullSidecar?.createdAt === "number" &&
+                  Number.isFinite(fullSidecar.createdAt)
+                    ? fullSidecar.createdAt
+                    : now;
+
                 let title = safeString(
                   fullSidecar?.displayName ?? fullSidecar?.title,
                   ""
                 );
 
                 if (!title) {
-                  const createdMs =
-                    typeof fullSidecar?.createdAt === "number"
-                      ? fullSidecar.createdAt
-                      : now;
-
-                  const d = new Date(createdMs);
+                  const d = new Date(recordedAt);
                   const datePart = d.toLocaleDateString([], {
                     month: "short",
                     day: "numeric",
@@ -559,7 +560,8 @@ export function UploadButton(props: Props) {
                   sportStyle: sportStyle || null,
                   originalFileName: localName,
 
-                  createdAt: now,
+                  createdAt: recordedAt,
+                  uploadedAt: now,
                   updatedAt: now,
 
                   storageProvider: "b2",
