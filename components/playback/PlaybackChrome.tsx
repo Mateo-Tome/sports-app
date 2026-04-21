@@ -51,6 +51,68 @@ function abbrKind(kind?: string): string {
   return kind.slice(0, 3).toUpperCase();
 }
 
+/* ==================== Compact menu text helpers ==================== */
+
+function MenuSectionText({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: any;
+}) {
+  return (
+    <Text
+      allowFontScaling={false}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.85}
+      style={style}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function MenuLabelText({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: any;
+}) {
+  return (
+    <Text
+      allowFontScaling={false}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.82}
+      style={style}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function MenuButtonText({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: any;
+}) {
+  return (
+    <Text
+      allowFontScaling={false}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.75}
+      style={style}
+    >
+      {children}
+    </Text>
+  );
+}
+
 /* ==================== Overlay / tools menu ==================== */
 
 export function OverlayModeMenu(props: {
@@ -59,8 +121,32 @@ export function OverlayModeMenu(props: {
   onSelect: (m: OverlayMode) => void;
   onClose: () => void;
   insets: Insets;
+  canEditOrientation?: boolean;
+  rotationLabel?: string;
+  orientationDirty?: boolean;
+  orientationSaving?: boolean;
+  onRotateLeft?: () => void;
+  onRotateRight?: () => void;
+  onResetOrientation?: () => void;
+  onRevertOrientation?: () => void;
+  onSaveOrientation?: () => void;
 }) {
-  const { visible, mode, onSelect, onClose, insets } = props;
+  const {
+    visible,
+    mode,
+    onSelect,
+    onClose,
+    insets,
+    canEditOrientation = false,
+    rotationLabel = '0°',
+    orientationDirty = false,
+    orientationSaving = false,
+    onRotateLeft,
+    onRotateRight,
+    onResetOrientation,
+    onRevertOrientation,
+    onSaveOrientation,
+  } = props;
 
   if (!visible) return null;
 
@@ -100,10 +186,11 @@ export function OverlayModeMenu(props: {
           borderColor: 'rgba(255,255,255,0.25)',
           paddingVertical: 8,
           paddingHorizontal: 8,
-          minWidth: 176,
+          minWidth: 220,
+          maxWidth: 260,
         }}
       >
-        <Text
+        <MenuSectionText
           style={{
             color: 'rgba(255,255,255,0.62)',
             fontWeight: '800',
@@ -114,7 +201,7 @@ export function OverlayModeMenu(props: {
           }}
         >
           DISPLAY
-        </Text>
+        </MenuSectionText>
 
         {options.map((opt) => {
           const isActive = opt.key === mode;
@@ -123,19 +210,182 @@ export function OverlayModeMenu(props: {
               key={opt.key}
               onPress={() => onSelect(opt.key)}
               style={{
+                minHeight: 38,
                 paddingVertical: 8,
                 paddingHorizontal: 8,
                 borderRadius: 8,
                 backgroundColor: isActive ? 'rgba(59,130,246,0.35)' : 'transparent',
                 marginBottom: 2,
+                justifyContent: 'center',
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
+              <MenuLabelText style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
                 {opt.label}
-              </Text>
+              </MenuLabelText>
             </Pressable>
           );
         })}
+
+        {canEditOrientation && (
+          <>
+            <View
+              style={{
+                height: 1,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                marginVertical: 8,
+              }}
+            />
+
+            <MenuSectionText
+              style={{
+                color: 'rgba(255,255,255,0.62)',
+                fontWeight: '800',
+                fontSize: 11,
+                letterSpacing: 0.6,
+                marginBottom: 6,
+                paddingHorizontal: 6,
+              }}
+            >
+              ORIENTATION
+            </MenuSectionText>
+
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 8,
+                paddingHorizontal: 6,
+                gap: 8,
+              }}
+            >
+              <MenuLabelText style={{ color: '#fff', fontWeight: '800', fontSize: 13, flex: 1 }}>
+                Current
+              </MenuLabelText>
+              <MenuLabelText style={{ color: '#fff', fontWeight: '900', fontSize: 13 }}>
+                {rotationLabel}
+              </MenuLabelText>
+            </View>
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                gap: 6,
+                marginBottom: 6,
+              }}
+            >
+              <Pressable
+                onPress={onRotateLeft}
+                style={{
+                  flex: 1,
+                  minHeight: 38,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 6,
+                }}
+              >
+                <MenuButtonText style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>
+                  ↺ Left
+                </MenuButtonText>
+              </Pressable>
+
+              <Pressable
+                onPress={onRotateRight}
+                style={{
+                  flex: 1,
+                  minHeight: 38,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 6,
+                }}
+              >
+                <MenuButtonText style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>
+                  Right ↻
+                </MenuButtonText>
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={onResetOrientation}
+              style={{
+                minHeight: 38,
+                paddingVertical: 8,
+                paddingHorizontal: 8,
+                borderRadius: 8,
+                backgroundColor: 'rgba(255,255,255,0.08)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.18)',
+                marginBottom: orientationDirty ? 6 : 0,
+                justifyContent: 'center',
+              }}
+            >
+              <MenuButtonText style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
+                Reset to 0°
+              </MenuButtonText>
+            </Pressable>
+
+            {orientationDirty && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6 }}>
+                <Pressable
+                  onPress={onRevertOrientation}
+                  style={{
+                    flex: 1,
+                    minHeight: 38,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(120,120,120,0.35)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.18)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 6,
+                  }}
+                >
+                  <MenuButtonText style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
+                    Cancel
+                  </MenuButtonText>
+                </Pressable>
+
+                <Pressable
+                  onPress={onSaveOrientation}
+                  style={{
+                    flex: 1,
+                    minHeight: 38,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(34,197,94,0.95)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(0,0,0,0.3)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 6,
+                  }}
+                >
+                  <MenuButtonText
+                    style={{
+                      color: '#062b12',
+                      fontWeight: '900',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {orientationSaving ? 'Saving…' : 'Save'}
+                  </MenuButtonText>
+                </Pressable>
+              </View>
+            )}
+          </>
+        )}
       </View>
     </View>
   );
@@ -379,12 +629,12 @@ export function EventBelt(props: {
       typeof meta.period === 'number'
         ? meta.period
         : typeof inner.period === 'number'
-        ? inner.period
-        : typeof meta.periodNumber === 'number'
-        ? meta.periodNumber
-        : typeof inner.periodNumber === 'number'
-        ? inner.periodNumber
-        : undefined;
+          ? inner.period
+          : typeof meta.periodNumber === 'number'
+            ? meta.periodNumber
+            : typeof inner.periodNumber === 'number'
+              ? inner.periodNumber
+              : undefined;
 
     if (typeof rawPeriod === 'number' && rawPeriod > 0) return `P${rawPeriod}`;
 
@@ -593,13 +843,14 @@ export function EventBelt(props: {
                   }}
                 >
                   <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
                     style={{
                       color: it.periodTextColor ?? '#111',
                       fontWeight: '900',
                       fontSize: 12,
                     }}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
                   >
                     {it.periodText ?? (it.periodLabel || '').toLowerCase()}
                   </Text>
@@ -631,7 +882,11 @@ export function EventBelt(props: {
                   opacity: isPassed ? 0.45 : 1,
                 }}
               >
-                <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }} numberOfLines={1}>
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={{ color: 'white', fontSize: 11, fontWeight: '800' }}
+                >
                   {`${abbrKind(pillKind)}${
                     typeof (it.e as any).points === 'number' && (it.e as any).points > 0
                       ? `+${(it.e as any).points}`
@@ -639,7 +894,11 @@ export function EventBelt(props: {
                   }`}
                 </Text>
 
-                <Text style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}>
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={{ color: 'white', opacity: 0.9, fontSize: 9, marginTop: 1 }}
+                >
                   {fmt(it.displayT)}
                 </Text>
               </Pressable>
@@ -688,6 +947,10 @@ export function QuickEditSheet(props: {
       }}
     >
       <Text
+        allowFontScaling={false}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
         style={{
           color: '#fff',
           fontWeight: '900',
@@ -705,7 +968,13 @@ export function QuickEditSheet(props: {
           onPress={onReplace}
           style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2563eb' }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+            style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}
+          >
             Replace…
           </Text>
         </Pressable>
@@ -714,7 +983,13 @@ export function QuickEditSheet(props: {
           onPress={onDelete}
           style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#dc2626' }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+            style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}
+          >
             Delete
           </Text>
         </Pressable>
@@ -730,7 +1005,13 @@ export function QuickEditSheet(props: {
             borderColor: 'rgba(255,255,255,0.22)',
           }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+            style={{ color: '#fff', fontWeight: '900', textAlign: 'center', fontSize: 14 }}
+          >
             Cancel
           </Text>
         </Pressable>

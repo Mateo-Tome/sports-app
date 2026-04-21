@@ -1,4 +1,3 @@
-// src/hooks/useLocalSidecar.ts
 import * as FileSystem from 'expo-file-system';
 import { useEffect, useRef, useState } from 'react';
 import { DeviceEventEmitter } from 'react-native';
@@ -95,13 +94,11 @@ async function resolveSidecarPath(videoPath: string): Promise<string> {
   const base = lastDot > lastSlash ? videoPath.slice(0, lastDot) : videoPath;
   const guess = `${base}.json`;
 
-  // 1) exact guess exists?
   try {
     const info = await FileSystem.getInfoAsync(guess);
     if ((info as any)?.exists) return guess;
   } catch {}
 
-  // 2) scan directory case-insensitive (handles odd casing / renamed file)
   const dir = videoPath.slice(0, lastSlash + 1);
   const baseName = base.slice(lastSlash + 1);
 
@@ -112,7 +109,6 @@ async function resolveSidecarPath(videoPath: string): Promise<string> {
     if (candidate) return dir + candidate;
   } catch {}
 
-  // 3) default to guess (for new sidecar writes)
   return guess;
 }
 
@@ -127,7 +123,6 @@ async function tryReadSidecarAt(path: string): Promise<SidecarWithOrientation | 
   }
 }
 
-// Ensure every event has a stable _id (supports old clips that used "id")
 function ensureEventIds(input: any[]): EventRow[] {
   return (input || []).map((e: any) => {
     const existing = e?._id ?? e?.id;
@@ -158,12 +153,15 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
   const sidecarPathRef = useRef<string | null>(null);
   const sidecarMeta = useRef<SidecarMeta>({});
 
-  const saveSidecar = async (next: EventRow[]) => {
+  const writeSidecar = async (
+    nextEvents: EventRow[],
+    overrideArg?: OrientationOverride,
+  ) => {
     try {
       const path = sidecarPathRef.current;
       if (!path) return;
 
-      const ordered = [...next].sort((a, b) => a.t - b.t);
+      const ordered = [...nextEvents].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
       const o = deriveOutcome(withScores, homeIsAthlete);
       setFinalScore(o.finalScore);
@@ -181,6 +179,12 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         (pathGuess.style ?? '').trim() ||
         'default';
 
+      const finalOrientationOverride = normalizeOrientationOverride(
+        overrideArg ??
+          sidecarMeta.current.orientationOverride ??
+          orientationOverride,
+      );
+
       const payload: SidecarWithOrientation = {
         athlete: athleteName,
         sport: finalSport,
@@ -197,30 +201,38 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         athletePinned: o.athletePinned,
         athleteWasPinned: o.athleteWasPinned,
         modifiedAt: Date.now(),
-        orientationOverride: normalizeOrientationOverride(
-          sidecarMeta.current.orientationOverride ?? orientationOverride,
-        ),
+        orientationOverride: finalOrientationOverride,
       };
 
       const tmp = `${path}.tmp`;
       await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload));
 
-      // atomic replace
       try {
         await FileSystem.deleteAsync(path, { idempotent: true });
       } catch {}
       await FileSystem.moveAsync({ from: tmp, to: path });
 
-      // keep ref/state aligned after save
-      const savedOverride = normalizeOrientationOverride(payload.orientationOverride);
-      sidecarMeta.current.orientationOverride = savedOverride;
-      setOrientationOverride(savedOverride);
+      sidecarMeta.current.orientationOverride = finalOrientationOverride;
+      setOrientationOverride(finalOrientationOverride);
 
-      // emit AFTER file in place
       try {
         DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload });
       } catch {}
     } catch {}
+  };
+
+  const saveSidecar = async (next: EventRow[]) => {
+    await writeSidecar(next);
+  };
+
+  const persistOrientationOverride = async (
+    nextOverride: OrientationOverride,
+    nextEvents?: EventRow[],
+  ) => {
+    const normalized = normalizeOrientationOverride(nextOverride);
+    sidecarMeta.current.orientationOverride = normalized;
+    setOrientationOverride(normalized);
+    await writeSidecar(nextEvents ?? events, normalized);
   };
 
   useEffect(() => {
@@ -302,7 +314,6 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
       const normalized = normalizeEvents(rawEvts, hiA);
 
-      // assignIds + ensure _id ALWAYS exists (supports legacy "id")
       const withIds = ensureEventIds(assignIds(normalized) as any);
 
       const ordered = [...withIds].sort((a, b) => a.t - b.t);
@@ -335,6 +346,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
     orientationOverride,
     setOrientationOverride,
     saveSidecar,
+    persistOrientationOverride,
     accumulate,
   };
 }

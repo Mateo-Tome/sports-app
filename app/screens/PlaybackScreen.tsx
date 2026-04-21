@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useLocalSidecar } from '../../src/hooks/useLocalSidecar';
 import { usePlaybackChrome } from '../../src/hooks/usePlaybackChrome';
+import { usePlaybackOrientationFix } from '../../src/hooks/usePlaybackOrientationFix';
 import { usePlaybackPlayer } from '../../src/hooks/usePlaybackPlayer';
 import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
@@ -53,7 +54,7 @@ export default function PlaybackScreen() {
   };
 
   const insets = useSafeAreaInsets();
-  const { width: screenW } = useWindowDimensions();
+  const { width: screenW, height: screenH } = useWindowDimensions();
 
   type PlaybackParams = {
     videoPath?: string;
@@ -79,8 +80,17 @@ export default function PlaybackScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, marginBottom: 8 }}>Nothing to play</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginBottom: 14 }}>
+        <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={{ color: 'white', fontWeight: '900', fontSize: 18, marginBottom: 8 }}
+        >
+          Nothing to play
+        </Text>
+        <Text
+          allowFontScaling={false}
+          style={{ color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginBottom: 14 }}
+        >
           This screen needs either a local videoPath or a cloud shareId.
         </Text>
         <Pressable
@@ -94,7 +104,15 @@ export default function PlaybackScreen() {
             borderColor: 'rgba(255,255,255,0.22)',
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '900' }}>Go Back</Text>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+            style={{ color: 'white', fontWeight: '900' }}
+          >
+            Go Back
+          </Text>
         </Pressable>
       </View>
     );
@@ -223,12 +241,32 @@ export default function PlaybackScreen() {
     homeIsAthlete,
     homeColorIsGreen,
     orientationOverride,
-    setOrientationOverride,
     saveSidecar,
+    persistOrientationOverride,
     accumulate: accumulateEvents,
   } = useLocalSidecar({
     videoPath: videoPath ?? '',
     shareId,
+  });
+
+  const {
+    canEditOrientation,
+    rotationLabel,
+    dirty: orientationDirty,
+    isSaving: orientationSaving,
+    rotateLeft,
+    rotateRight,
+    reset: resetOrientation,
+    revert: revertOrientation,
+    save: saveOrientation,
+    videoStageStyle,
+    videoSurfaceStyle,
+  } = usePlaybackOrientationFix({
+    persistedOrientation: orientationOverride,
+    viewportWidth: screenW,
+    viewportHeight: screenH,
+    shareId,
+    persistOrientationOverride,
   });
 
   const { shareMeta } = useShareSidecar({
@@ -311,15 +349,6 @@ export default function PlaybackScreen() {
   }, [events, now]);
 
   const genId = () => Math.random().toString(36).slice(2, 9);
-
-  const persistOrientationOverride = useCallback(
-    async (nextOverride: 0 | 90 | 180 | 270) => {
-      if (shareId) return;
-      setOrientationOverride(nextOverride);
-      await saveSidecar(events);
-    },
-    [events, saveSidecar, setOrientationOverride, shareId],
-  );
 
   const enterAddMode = () => {
     const tPlayer = clampToDuration(now || 0);
@@ -542,46 +571,48 @@ export default function PlaybackScreen() {
               justifyContent: 'center',
             }}
           >
-            {isWeb ? (
-              <video
-                key={videoKey}
-                ref={bindRef}
-                src={loadedSrc || undefined}
-                playsInline
-                controls={false}
-                muted={false}
-                style={
-                  {
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain',
-                    backgroundColor: 'black',
-                  } as any
-                }
-                {...(videoHandlers as any)}
-              />
-            ) : (
-              <VideoView
-                key={videoKey}
-                player={player}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  right: 0,
-                  bottom: 0,
-                  left: 0,
-                  backgroundColor: 'black',
-                }}
-                allowsFullscreen
-                allowsPictureInPicture
-                nativeControls={false}
-                contentFit="contain"
-              />
-            )}
+            <View style={videoStageStyle}>
+              {isWeb ? (
+                <video
+                  key={videoKey}
+                  ref={bindRef}
+                  src={loadedSrc || undefined}
+                  playsInline
+                  controls={false}
+                  muted={false}
+                  style={
+                    {
+                      ...videoSurfaceStyle,
+                      objectFit: 'contain',
+                    } as any
+                  }
+                  {...(videoHandlers as any)}
+                />
+              ) : (
+                <VideoView
+                  key={videoKey}
+                  player={player}
+                  style={videoSurfaceStyle}
+                  allowsFullscreen
+                  allowsPictureInPicture
+                  nativeControls={false}
+                  contentFit="contain"
+                  {...(Platform.OS === 'android'
+                    ? ({ surfaceType: 'textureView' } as any)
+                    : {})}
+                />
+              )}
+            </View>
           </View>
         ) : (
           <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}>Loading video…</Text>
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '800' }}
+            >
+              Loading video…
+            </Text>
           </View>
         )}
 
@@ -652,7 +683,15 @@ export default function PlaybackScreen() {
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>‹ Back</Text>
+              <Text
+                allowFontScaling={false}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+                style={{ color: 'white', fontWeight: '800' }}
+              >
+                ‹ Back
+              </Text>
             </Pressable>
 
             <Pressable
@@ -674,7 +713,13 @@ export default function PlaybackScreen() {
               }}
               pointerEvents={chromeVisible ? 'auto' : 'none'}
             >
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>⚙</Text>
+              <Text
+                allowFontScaling={false}
+                numberOfLines={1}
+                style={{ color: 'white', fontWeight: '900', fontSize: 18 }}
+              >
+                ⚙
+              </Text>
             </Pressable>
 
             <OverlayModeMenu
@@ -684,7 +729,30 @@ export default function PlaybackScreen() {
               onClose={() => setOverlayMenuOpen(false)}
               onSelect={(m) => {
                 setOverlayMode(m);
-                setOverlayMenuOpen(false);
+              }}
+              canEditOrientation={canEditOrientation}
+              rotationLabel={rotationLabel}
+              orientationDirty={orientationDirty}
+              orientationSaving={orientationSaving}
+              onRotateLeft={() => {
+                rotateLeft();
+                showChrome();
+              }}
+              onRotateRight={() => {
+                rotateRight();
+                showChrome();
+              }}
+              onResetOrientation={() => {
+                resetOrientation();
+                showChrome();
+              }}
+              onRevertOrientation={() => {
+                revertOrientation();
+                showChrome();
+              }}
+              onSaveOrientation={async () => {
+                await saveOrientation();
+                showChrome();
               }}
             />
 
@@ -727,7 +795,15 @@ export default function PlaybackScreen() {
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: '#111', fontWeight: '900' }}>Edit</Text>
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={{ color: '#111', fontWeight: '900' }}
+                >
+                  Edit
+                </Text>
               </Pressable>
             )}
 
@@ -749,7 +825,15 @@ export default function PlaybackScreen() {
                 }}
                 pointerEvents={chromeVisible ? 'auto' : 'none'}
               >
-                <Text style={{ color: '#fff', fontWeight: '900' }}>{isPlaying ? '❚❚ Pause' : '▶ Play'}</Text>
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={{ color: '#fff', fontWeight: '900' }}
+                >
+                  {isPlaying ? '❚❚ Pause' : '▶ Play'}
+                </Text>
               </Pressable>
             )}
 
