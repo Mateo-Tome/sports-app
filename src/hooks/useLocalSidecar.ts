@@ -11,7 +11,18 @@ import {
   Sidecar,
 } from '../../components/playback/playbackCore';
 
-type SidecarMeta = { sport?: string; style?: string; createdAt?: number };
+type OrientationOverride = 0 | 90 | 180 | 270;
+
+type SidecarMeta = {
+  sport?: string;
+  style?: string;
+  createdAt?: number;
+  orientationOverride?: OrientationOverride;
+};
+
+type SidecarWithOrientation = Sidecar & {
+  orientationOverride?: OrientationOverride;
+};
 
 function accumulate(evts: EventRow[]) {
   let h = 0,
@@ -24,6 +35,10 @@ function accumulate(evts: EventRow[]) {
     }
     return { ...e, scoreAfter: e.scoreAfter ?? { home: h, opponent: o } };
   });
+}
+
+function normalizeOrientationOverride(value: unknown): OrientationOverride {
+  return value === 90 || value === 180 || value === 270 ? value : 0;
 }
 
 /**
@@ -101,18 +116,18 @@ async function resolveSidecarPath(videoPath: string): Promise<string> {
   return guess;
 }
 
-async function tryReadSidecarAt(path: string): Promise<Sidecar | null> {
+async function tryReadSidecarAt(path: string): Promise<SidecarWithOrientation | null> {
   try {
     const info = await FileSystem.getInfoAsync(path);
     if (!(info as any)?.exists) return null;
     const txt = await FileSystem.readAsStringAsync(path);
-    return JSON.parse(txt || '{}');
+    return JSON.parse(txt || '{}') as SidecarWithOrientation;
   } catch {
     return null;
   }
 }
 
-// ✅ Ensure every event has a stable _id (supports old clips that used "id")
+// Ensure every event has a stable _id (supports old clips that used "id")
 function ensureEventIds(input: any[]): EventRow[] {
   return (input || []).map((e: any) => {
     const existing = e?._id ?? e?.id;
@@ -138,6 +153,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
   const [style, setStyle] = useState<string | undefined>(undefined);
   const [homeIsAthlete, setHomeIsAthlete] = useState(true);
   const [homeColorIsGreen, setHomeColorIsGreen] = useState(true);
+  const [orientationOverride, setOrientationOverride] = useState<OrientationOverride>(0);
 
   const sidecarPathRef = useRef<string | null>(null);
   const sidecarMeta = useRef<SidecarMeta>({});
@@ -165,7 +181,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         (pathGuess.style ?? '').trim() ||
         'default';
 
-      const payload: Sidecar = {
+      const payload: SidecarWithOrientation = {
         athlete: athleteName,
         sport: finalSport,
         style: finalStyle,
@@ -181,6 +197,9 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         athletePinned: o.athletePinned,
         athleteWasPinned: o.athleteWasPinned,
         modifiedAt: Date.now(),
+        orientationOverride: normalizeOrientationOverride(
+          sidecarMeta.current.orientationOverride ?? orientationOverride,
+        ),
       };
 
       const tmp = `${path}.tmp`;
@@ -191,6 +210,11 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         await FileSystem.deleteAsync(path, { idempotent: true });
       } catch {}
       await FileSystem.moveAsync({ from: tmp, to: path });
+
+      // keep ref/state aligned after save
+      const savedOverride = normalizeOrientationOverride(payload.orientationOverride);
+      sidecarMeta.current.orientationOverride = savedOverride;
+      setOrientationOverride(savedOverride);
 
       // emit AFTER file in place
       try {
@@ -212,12 +236,14 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         setHomeIsAthlete(true);
         setHomeColorIsGreen(true);
         setAthleteName('Athlete');
+        setOrientationOverride(0);
         return;
       }
 
       setDebugMsg('No video path provided.');
       setEvents([]);
       setFinalScore(undefined);
+      setOrientationOverride(0);
       return;
     }
 
@@ -235,20 +261,28 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         setEvents([]);
         setFinalScore(undefined);
         setDebugMsg(`No sidecar found. Will create on save.\n${resolvedPath}`);
-        sidecarMeta.current = { sport: fromPath.sport, style: fromPath.style, createdAt: Date.now() };
+        sidecarMeta.current = {
+          sport: fromPath.sport,
+          style: fromPath.style,
+          createdAt: Date.now(),
+          orientationOverride: 0,
+        };
         setSport(fromPath.sport);
         setStyle(fromPath.style);
         setHomeIsAthlete(true);
         setHomeColorIsGreen(true);
         setAthleteName('Athlete');
+        setOrientationOverride(0);
         return;
       }
 
       const hiA = parsed.homeIsAthlete !== false;
       const hcG = parsed.homeColorIsGreen !== false;
+      const parsedOrientationOverride = normalizeOrientationOverride(parsed.orientationOverride);
 
       setHomeIsAthlete(hiA);
       setHomeColorIsGreen(hcG);
+      setOrientationOverride(parsedOrientationOverride);
 
       setAthleteName(parsed.athlete?.trim() || 'Athlete');
 
@@ -259,6 +293,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         sport: parsedSport,
         style: parsedStyle,
         createdAt: parsed.createdAt ?? Date.now(),
+        orientationOverride: parsedOrientationOverride,
       };
 
       setSport(parsedSport);
@@ -267,7 +302,7 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
       const normalized = normalizeEvents(rawEvts, hiA);
 
-      // ✅ assignIds + ensure _id ALWAYS exists (supports legacy "id")
+      // assignIds + ensure _id ALWAYS exists (supports legacy "id")
       const withIds = ensureEventIds(assignIds(normalized) as any);
 
       const ordered = [...withIds].sort((a, b) => a.t - b.t);
@@ -297,6 +332,8 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
     setHomeIsAthlete,
     homeColorIsGreen,
     setHomeColorIsGreen,
+    orientationOverride,
+    setOrientationOverride,
     saveSidecar,
     accumulate,
   };

@@ -30,8 +30,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import HighlightButton from '../../components/HighlightButton';
 import { getRecordingOverlay } from '../../components/overlays/RecordingOverlayRegistry';
 import { startNewSegment, stopCurrentSegment } from '../../lib/recording/segmentManager';
+import { useRecordingStartGuard } from '../../src/hooks/useRecordingStartGuard';
 
-// Types
 import type { MatchEvent } from '../../lib/recording/finalizeRecording';
 
 type RouteParams = {
@@ -52,7 +52,6 @@ export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
-  // Normalize route params
   const sportParam = useMemo(() => paramToStr(params.sport, 'wrestling'), [params.sport]);
   const styleParam = useMemo(() => paramToStr(params.style, 'folkstyle'), [params.style]);
   const athleteName = useMemo(() => paramToStr(params.athlete, 'Unassigned'), [params.athlete]);
@@ -64,15 +63,13 @@ export default function CameraScreen() {
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [remountKey] = useState(0);
 
-  // --- Animations ---
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
   const camOpacity = useRef(new Animated.Value(0)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
 
-  // --- Zoom State ---
   const [zoom, setZoom] = useState(0);
   const baseZoomRef = useRef(0);
 
-  // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -91,16 +88,14 @@ export default function CameraScreen() {
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
 
-  // Auto-request camera permission on mount
+  const { showRotateHelper } = useRecordingStartGuard();
+
   useEffect(() => {
     if (cameraPermission && !cameraPermission.granted && cameraPermission.canAskAgain) {
       requestCameraPermission();
     }
   }, [cameraPermission, requestCameraPermission]);
 
-  // Lock the camera screen while focused.
-  // Android gets a fixed landscape side to reduce ambiguous rotation metadata.
-  // iPhone keeps the old generic landscape behavior for safety.
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
@@ -108,13 +103,9 @@ export default function CameraScreen() {
       const lockOrientation = async () => {
         try {
           if (Platform.OS === 'android') {
-            await ScreenOrientation.lockAsync(
-              ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT,
-            );
+            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT);
           } else {
-            await ScreenOrientation.lockAsync(
-              ScreenOrientation.OrientationLock.LANDSCAPE,
-            );
+            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
           }
         } catch (e) {
           console.log('[camera] failed to lock landscape', e);
@@ -139,7 +130,6 @@ export default function CameraScreen() {
     }, []),
   );
 
-  // Pulse effect for the "Ready" indicator
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
@@ -147,11 +137,55 @@ export default function CameraScreen() {
         Animated.timing(pulseAnim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
       ]),
     );
+
     if (cameraReady && !isRecording) pulse.start();
     return () => pulse.stop();
   }, [cameraReady, isRecording, pulseAnim]);
 
-  // --- Zoom Logic ---
+  useEffect(() => {
+    if (!cameraReady || isRecording || !showRotateHelper) {
+      rotateAnim.stopAnimation();
+      rotateAnim.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(rotateAnim, {
+          toValue: 0,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.delay(200),
+      ]),
+    );
+
+    loop.start();
+    return () => loop.stop();
+  }, [cameraReady, isRecording, showRotateHelper, rotateAnim]);
+
+  const deviceRotateStyle = {
+    transform: [
+      {
+        rotate: rotateAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0deg', '90deg'],
+        }),
+      },
+      {
+        scale: rotateAnim.interpolate({
+          inputRange: [0, 0.5, 1],
+          outputRange: [1, 1.06, 1],
+        }),
+      },
+    ],
+  };
+
   const onPinchGestureEvent = (event: PinchGestureHandlerGestureEvent) => {
     let newZoom = baseZoomRef.current + (event.nativeEvent.scale - 1) * 0.2;
     newZoom = Math.max(0, Math.min(newZoom, 1));
@@ -328,6 +362,9 @@ export default function CameraScreen() {
     }
   };
 
+  const showReadyHud = cameraReady && !isRecording && !isProcessing;
+  const showRotateHint = showReadyHud && showRotateHelper;
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <PinchGestureHandler
@@ -383,8 +420,19 @@ export default function CameraScreen() {
             </TouchableOpacity>
           )}
 
-          {cameraReady && !isRecording && (
-            <View style={styles.centerHudContainer} pointerEvents="none">
+          {showReadyHud && (
+            <View style={styles.centerHudWrap} pointerEvents="none">
+              {showRotateHint && (
+                <View style={styles.rotateHintTopWrap}>
+                  <View style={styles.rotateHintCard}>
+                    <Animated.View style={[styles.rotateDeviceShell, deviceRotateStyle]}>
+                      <View style={styles.rotateDeviceScreen} />
+                    </Animated.View>
+                    <Text style={styles.rotateHintText}>Rotate device</Text>
+                  </View>
+                </View>
+              )}
+
               <View style={styles.hudPill}>
                 <Text style={styles.hudAthleteName}>{athleteName.toUpperCase()}</Text>
                 <View style={styles.hudDivider} />
@@ -494,12 +542,53 @@ const styles = StyleSheet.create({
   },
   backBtnText: { color: 'white', fontWeight: '900', fontSize: 11, letterSpacing: 1 },
 
-  centerHudContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
+  centerHudWrap: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    top: '25%',
     alignItems: 'center',
     zIndex: 10,
   },
+
+  rotateHintTopWrap: {
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  rotateHintCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.46)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  rotateDeviceShell: {
+    width: 14,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#fff',
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rotateDeviceScreen: {
+    width: 7,
+    height: 12,
+    borderRadius: 1,
+    backgroundColor: '#fff',
+    opacity: 0.9,
+  },
+  rotateHintText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+
   hudPill: {
     backgroundColor: 'rgba(0,0,0,0.75)',
     paddingHorizontal: 24,

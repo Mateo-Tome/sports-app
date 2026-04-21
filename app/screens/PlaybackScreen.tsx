@@ -43,6 +43,7 @@ const isWeb = Platform.OS === 'web';
 
 export default function PlaybackScreen() {
   const router = useRouter();
+
   const handleBackPress = () => {
     if (router.canGoBack()) {
       router.back();
@@ -221,6 +222,8 @@ export default function PlaybackScreen() {
     style,
     homeIsAthlete,
     homeColorIsGreen,
+    orientationOverride,
+    setOrientationOverride,
     saveSidecar,
     accumulate: accumulateEvents,
   } = useLocalSidecar({
@@ -308,6 +311,15 @@ export default function PlaybackScreen() {
   }, [events, now]);
 
   const genId = () => Math.random().toString(36).slice(2, 9);
+
+  const persistOrientationOverride = useCallback(
+    async (nextOverride: 0 | 90 | 180 | 270) => {
+      if (shareId) return;
+      setOrientationOverride(nextOverride);
+      await saveSidecar(events);
+    },
+    [events, saveSidecar, setOrientationOverride, shareId],
+  );
 
   const enterAddMode = () => {
     const tPlayer = clampToDuration(now || 0);

@@ -28,6 +28,19 @@ export type MatchEvent = {
   scoreAfter?: { home: number; opponent: number };
 };
 
+type SidecarPayload = {
+  athlete: string;
+  sport: string;
+  style: string;
+  createdAt: number;
+  events: MatchEvent[];
+  finalScore: { home: number; opponent: number };
+  homeIsAthlete: boolean;
+  highlights: Array<{ t: number; duration: number }>;
+  processedClips: Array<{ url: string; markerTime: number }>;
+  orientationOverride: 0 | 90 | 180 | 270;
+};
+
 export async function finalizeRecording(
   segments: string[],
   chosenAthlete: string,
@@ -70,7 +83,7 @@ export async function finalizeRecording(
   const sport = (sportKey || '').trim() || 'unknown';
 
   const { appUri } = await saveToAppStorage(finalPath, athlete, sport, {
-    importToPhotos: false, // ✅ critical for instant Stop UX
+    importToPhotos: false, // critical for instant Stop UX
   });
 
   log('saveToAppStorage done');
@@ -81,7 +94,7 @@ export async function finalizeRecording(
   if (appUri) {
     jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
 
-    const payload = {
+    const payload: SidecarPayload = {
       athlete,
       sport: sportKey.split(':')[0],
       style: sportKey.split(':')[1],
@@ -91,6 +104,7 @@ export async function finalizeRecording(
       homeIsAthlete: true,
       highlights: markers.map((t) => ({ t, duration: HILITE_DURATION_SEC })),
       processedClips: [], // populated by post tasks later (best-effort)
+      orientationOverride: 0,
     };
 
     await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload, null, 2));
@@ -107,7 +121,7 @@ export async function finalizeRecording(
   }
   log('segments cleaned');
 
-  // ✅ SHOW QUICK CONFIRMATION (fast)
+  // SHOW QUICK CONFIRMATION (fast)
   Alert.alert(
     'Recording saved',
     `Athlete: ${athlete}\nSegments: ${segments.length}\nHighlights queued: ${markers.length}`,
@@ -144,8 +158,16 @@ export async function finalizeRecording(
         if (jsonUri) {
           try {
             const txt = await FileSystem.readAsStringAsync(jsonUri);
-            const parsed = JSON.parse(txt);
+            const parsed = JSON.parse(txt) as SidecarPayload;
             parsed.processedClips = clips.map((c: any) => ({ url: c.url, markerTime: c.markerTime }));
+            if (
+              parsed.orientationOverride !== 0 &&
+              parsed.orientationOverride !== 90 &&
+              parsed.orientationOverride !== 180 &&
+              parsed.orientationOverride !== 270
+            ) {
+              parsed.orientationOverride = 0;
+            }
             await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(parsed, null, 2));
             log('post: sidecar updated with clips');
           } catch (e) {
