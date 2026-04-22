@@ -249,26 +249,6 @@ export default function PlaybackScreen() {
     shareId,
   });
 
-  const {
-    canEditOrientation,
-    rotationLabel,
-    dirty: orientationDirty,
-    isSaving: orientationSaving,
-    rotateLeft,
-    rotateRight,
-    reset: resetOrientation,
-    revert: revertOrientation,
-    save: saveOrientation,
-    videoStageStyle,
-    videoSurfaceStyle,
-  } = usePlaybackOrientationFix({
-    persistedOrientation: orientationOverride,
-    viewportWidth: screenW,
-    viewportHeight: screenH,
-    shareId,
-    persistOrientationOverride,
-  });
-
   const { shareMeta } = useShareSidecar({
     shareId,
     sidecarUrl,
@@ -288,7 +268,32 @@ export default function PlaybackScreen() {
 
   const effectiveFinalScore = shareId ? (shareMeta.finalScore ?? finalScore) : finalScore;
 
+  const effectiveOrientationOverride =
+    shareId && typeof shareMeta.orientationOverride === 'number'
+      ? shareMeta.orientationOverride
+      : orientationOverride;
+
   const displayAthlete = athleteParamStr?.trim() || effectiveAthleteName;
+
+  const {
+    canEditOrientation,
+    rotationLabel,
+    dirty: orientationDirty,
+    isSaving: orientationSaving,
+    rotateLeft,
+    rotateRight,
+    reset: resetOrientation,
+    revert: revertOrientation,
+    save: saveOrientation,
+    videoStageStyle,
+    videoSurfaceStyle,
+  } = usePlaybackOrientationFix({
+    persistedOrientation: effectiveOrientationOverride,
+    viewportWidth: screenW,
+    viewportHeight: screenH,
+    shareId,
+    persistOrientationOverride,
+  });
 
   const {
     chromeVisible,

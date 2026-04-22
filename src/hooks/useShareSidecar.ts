@@ -1,7 +1,12 @@
-// src/hooks/useShareSidecar.ts
 import { useEffect, useState } from 'react';
 import type { Actor, EventRow } from '../../components/playback/playbackCore';
 import { toActor } from '../../components/playback/playbackCore';
+
+type OrientationOverride = 0 | 90 | 180 | 270;
+
+function normalizeOrientationOverride(value: unknown): OrientationOverride {
+  return value === 90 || value === 180 || value === 270 ? value : 0;
+}
 
 export type ShareMeta = {
   sport?: string;
@@ -10,6 +15,7 @@ export type ShareMeta = {
   homeIsAthlete?: boolean;
   homeColorIsGreen?: boolean;
   finalScore?: { home: number; opponent: number };
+  orientationOverride?: OrientationOverride;
 };
 
 type Args = {
@@ -37,7 +43,6 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
       try {
         setSidecarLoadMsg('sidecar: loading…');
 
-        // ✅ FIX: fetch sidecar through our Firebase Function proxy to avoid browser CORS issues
         const proxyUrl = `https://us-central1-sports-app-9efb3.cloudfunctions.net/getSidecar?shareId=${encodeURIComponent(
           shareId
         )}`;
@@ -54,10 +59,19 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
         // meta can be in json.meta, json.data.meta, or top-level
         const meta = (json?.meta ?? json?.data?.meta ?? json) as any;
 
+        const rawOrientationOverride =
+          meta?.orientationOverride ??
+          json?.orientationOverride ??
+          json?.data?.orientationOverride;
+
         const nextMeta: ShareMeta = {
           sport: meta?.sport ?? json?.sport,
           style: meta?.style ?? json?.style,
-          athleteName: meta?.athleteName ?? json?.athleteName,
+          athleteName:
+            meta?.athleteName ??
+            json?.athleteName ??
+            meta?.athlete ??
+            json?.athlete,
           homeIsAthlete:
             typeof (meta?.homeIsAthlete ?? json?.homeIsAthlete) === 'boolean'
               ? (meta?.homeIsAthlete ?? json?.homeIsAthlete)
@@ -67,6 +81,7 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
               ? (meta?.homeColorIsGreen ?? json?.homeColorIsGreen)
               : undefined,
           finalScore: meta?.finalScore ?? json?.finalScore,
+          orientationOverride: normalizeOrientationOverride(rawOrientationOverride),
         };
 
         // events can be in json.events or json.data.events
@@ -103,7 +118,7 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
           setSidecarLoadMsg(
             `sidecar ✓ events=${withScores.length} sport=${String(nextMeta.sport ?? '')} style=${String(
               nextMeta.style ?? ''
-            )}`
+            )} orientation=${String(nextMeta.orientationOverride ?? 0)}`
           );
         }
       } catch (err: any) {
