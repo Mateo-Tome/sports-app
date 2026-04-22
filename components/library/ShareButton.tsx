@@ -25,8 +25,10 @@ export default function ShareButton({
   label = 'Share',
 }: Props) {
   const base = getBaseUrl();
+
+  // Keep this on /share/<id> so it matches your universal-link path.
   const defaultUrl = base
-    ? `${base}/s/${encodeURIComponent(shareId)}`
+    ? `${base}/share/${encodeURIComponent(shareId)}`
     : '';
 
   const candidate = buildUrl?.(shareId);

@@ -56,7 +56,6 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
 
         const json = await res.json();
 
-        // meta can be in json.meta, json.data.meta, or top-level
         const meta = (json?.meta ?? json?.data?.meta ?? json) as any;
 
         const rawOrientationOverride =
@@ -84,7 +83,6 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
           orientationOverride: normalizeOrientationOverride(rawOrientationOverride),
         };
 
-        // events can be in json.events or json.data.events
         const rawEvents = (json?.events ?? json?.data?.events ?? []) as any[];
 
         if (!Array.isArray(rawEvents)) {
@@ -100,8 +98,8 @@ export function useShareSidecar({ shareId, sidecarUrl, accumulateEvents, setEven
               typeof e?.points === 'number'
                 ? e.points
                 : typeof e?.value === 'number'
-                ? e.value
-                : undefined;
+                  ? e.value
+                  : undefined;
 
             const meta2 = (e?.meta ?? {}) as Record<string, any>;
             const _id = String(e?._id ?? e?.id ?? `${t}-${kind}-${Math.random().toString(36).slice(2, 7)}`);
