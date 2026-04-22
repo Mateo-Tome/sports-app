@@ -277,6 +277,7 @@ export default function PlaybackScreen() {
 
   const {
     canEditOrientation,
+    previewOrientation,
     rotationLabel,
     dirty: orientationDirty,
     isSaving: orientationSaving,
@@ -287,6 +288,7 @@ export default function PlaybackScreen() {
     save: saveOrientation,
     videoStageStyle,
     videoSurfaceStyle,
+    webVideoSurfaceStyle,
   } = usePlaybackOrientationFix({
     persistedOrientation: effectiveOrientationOverride,
     viewportWidth: screenW,
@@ -583,14 +585,10 @@ export default function PlaybackScreen() {
                   ref={bindRef}
                   src={loadedSrc || undefined}
                   playsInline
+                  autoPlay
+                  muted
                   controls={false}
-                  muted={false}
-                  style={
-                    {
-                      ...videoSurfaceStyle,
-                      objectFit: 'contain',
-                    } as any
-                  }
+                  style={webVideoSurfaceStyle as any}
                   {...(videoHandlers as any)}
                 />
               ) : (

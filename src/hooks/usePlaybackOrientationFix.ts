@@ -92,7 +92,7 @@ export function usePlaybackOrientationFix({
     []
   );
 
-  const videoSurfaceStyle = useMemo(() => {
+  const nativeVideoSurfaceStyle = useMemo(() => {
     const baseWidth = isQuarterTurn ? viewportHeight : viewportWidth;
     const baseHeight = isQuarterTurn ? viewportWidth : viewportHeight;
 
@@ -101,6 +101,20 @@ export function usePlaybackOrientationFix({
       height: Math.max(1, baseHeight),
       backgroundColor: 'black',
       transform: [{ rotate: `${previewOrientation}deg` }],
+    };
+  }, [isQuarterTurn, previewOrientation, viewportHeight, viewportWidth]);
+
+  const webVideoSurfaceStyle = useMemo(() => {
+    const baseWidth = isQuarterTurn ? viewportHeight : viewportWidth;
+    const baseHeight = isQuarterTurn ? viewportWidth : viewportHeight;
+
+    return {
+      width: Math.max(1, baseWidth),
+      height: Math.max(1, baseHeight),
+      backgroundColor: 'black',
+      objectFit: 'contain' as const,
+      transform: `rotate(${previewOrientation}deg)`,
+      transformOrigin: 'center center',
     };
   }, [isQuarterTurn, previewOrientation, viewportHeight, viewportWidth]);
 
@@ -118,6 +132,7 @@ export function usePlaybackOrientationFix({
     revert,
     save,
     videoStageStyle,
-    videoSurfaceStyle,
+    videoSurfaceStyle: nativeVideoSurfaceStyle,
+    webVideoSurfaceStyle,
   };
 }
