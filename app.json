@@ -28,7 +28,8 @@
           "cameraPermission": "Allow QuickClip to access your camera to record matches.",
           "microphonePermission": "Allow QuickClip to access your microphone to record match audio."
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "ios": {
       "bundleIdentifier": "com.mateotome2133.sportapp",

@@ -17,9 +17,6 @@ import {
 
 import { computeSportColor } from "../../lib/sportColors/computeSportColor";
 
-// -----------------------------
-// Sidecar reader
-// -----------------------------
 async function readSidecarForUpload(videoUri: string): Promise<any | null> {
   try {
     const lastSlash = videoUri.lastIndexOf("/");
@@ -64,9 +61,7 @@ async function makeFreshTempUploadCopy(
   extension = "mp4"
 ): Promise<string> {
   const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-  if (!baseDir) {
-    throw new Error("No writable cache/document directory available");
-  }
+  if (!baseDir) throw new Error("No writable cache/document directory available");
 
   const tempUri = `${baseDir}upload-${shareId}.${extension}`;
 
@@ -74,22 +69,14 @@ async function makeFreshTempUploadCopy(
     await FileSystem.deleteAsync(tempUri, { idempotent: true });
   } catch {}
 
-  await FileSystem.copyAsync({
-    from: sourceUri,
-    to: tempUri,
-  });
+  await FileSystem.copyAsync({ from: sourceUri, to: tempUri });
 
   const info: any = await FileSystem.getInfoAsync(tempUri);
-  if (!info?.exists) {
-    throw new Error("Failed to prepare temp upload copy");
-  }
+  if (!info?.exists) throw new Error("Failed to prepare temp upload copy");
 
   return tempUri;
 }
 
-// -----------------------------
-// Props
-// -----------------------------
 type OldStyleProps = {
   row: {
     uri: string;
@@ -170,9 +157,7 @@ function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
@@ -212,8 +197,7 @@ function computeScoreBits(fullSidecar: any | null): {
         result: null,
         scoreText: null,
         homeIsAthlete,
-        finalScore:
-          home != null && opp != null ? { home, opponent: opp } : null,
+        finalScore: home != null && opp != null ? { home, opponent: opp } : null,
       };
     }
 
@@ -223,13 +207,11 @@ function computeScoreBits(fullSidecar: any | null): {
     const result: "W" | "L" | "T" =
       scoreFor > scoreAgainst ? "W" : scoreFor < scoreAgainst ? "L" : "T";
 
-    const scoreText = `${result} ${scoreFor}\u2013${scoreAgainst}`;
-
     return {
       scoreFor,
       scoreAgainst,
       result,
-      scoreText,
+      scoreText: `${result} ${scoreFor}\u2013${scoreAgainst}`,
       homeIsAthlete,
       finalScore: { home, opponent: opp },
     };
@@ -300,9 +282,7 @@ export function UploadButton(props: Props) {
     getStatusLabel(uploaded ? "done" : "idle")
   );
   const [videoProgress, setVideoProgress] = useState<UploadProgress | null>(null);
-  const [sidecarProgress, setSidecarProgress] = useState<UploadProgress | null>(
-    null
-  );
+  const [sidecarProgress, setSidecarProgress] = useState<UploadProgress | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
   const inFlightRef = useRef(false);
@@ -336,8 +316,7 @@ export function UploadButton(props: Props) {
     !!currentProgress &&
     currentProgress.totalBytesExpectedToSend > 0;
 
-  const canCancel =
-    state === "uploadingVideo" || state === "uploadingSidecar";
+  const canCancel = state === "uploadingVideo" || state === "uploadingSidecar";
 
   if (state === "done") {
     return (
@@ -366,14 +345,6 @@ export function UploadButton(props: Props) {
             setState("preparing");
             setStatusText(getStatusLabel("preparing"));
 
-            const current = auth.currentUser;
-            console.log("[UploadButton] starting B2 upload for user:", {
-              uid: current?.uid,
-              email: current?.email,
-              isAnonymous: current?.isAnonymous,
-              localUri,
-            });
-
             let tempVideoUri: string | null = null;
 
             try {
@@ -388,9 +359,7 @@ export function UploadButton(props: Props) {
 
               const creds1: any = await testGetUploadUrl();
               if (!creds1?.uploadUrl || !creds1?.uploadAuthToken) {
-                throw new Error(
-                  `testGetUploadUrl missing creds1: ${JSON.stringify(creds1)}`
-                );
+                throw new Error(`testGetUploadUrl missing creds1: ${JSON.stringify(creds1)}`);
               }
 
               const videoUpload = await uploadVideoToB2({
@@ -406,9 +375,7 @@ export function UploadButton(props: Props) {
                 },
               });
 
-              if (cancelRequestedRef.current) {
-                throw new UploadCancelledError();
-              }
+              if (cancelRequestedRef.current) throw new UploadCancelledError();
 
               const b2VideoKey: string | null = videoUpload?.fileName ?? null;
               const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
@@ -426,8 +393,7 @@ export function UploadButton(props: Props) {
                 setStatusText(getStatusLabel("uploadingSidecar"));
                 setSidecarProgress(null);
 
-                const jsonPath =
-                  FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
+                const jsonPath = FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
 
                 const payload = {
                   ...fullSidecar,
@@ -440,19 +406,13 @@ export function UploadButton(props: Props) {
                   },
                 };
 
-                await FileSystem.writeAsStringAsync(
-                  jsonPath,
-                  JSON.stringify(payload),
-                  {
-                    encoding: FileSystem.EncodingType.UTF8,
-                  }
-                );
+                await FileSystem.writeAsStringAsync(jsonPath, JSON.stringify(payload), {
+                  encoding: FileSystem.EncodingType.UTF8,
+                });
 
                 const creds2: any = await testGetUploadUrl();
                 if (!creds2?.uploadUrl || !creds2?.uploadAuthToken) {
-                  throw new Error(
-                    `testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`
-                  );
+                  throw new Error(`testGetUploadUrl missing creds2: ${JSON.stringify(creds2)}`);
                 }
 
                 const sidecarUpload = await uploadVideoToB2({
@@ -468,31 +428,23 @@ export function UploadButton(props: Props) {
                   },
                 });
 
-                if (cancelRequestedRef.current) {
-                  throw new UploadCancelledError();
-                }
+                if (cancelRequestedRef.current) throw new UploadCancelledError();
 
                 b2SidecarKey = sidecarUpload?.fileName ?? null;
                 b2SidecarFileId = sidecarUpload?.fileId ?? null;
               }
 
-              if (cancelRequestedRef.current) {
-                throw new UploadCancelledError();
-              }
+              if (cancelRequestedRef.current) throw new UploadCancelledError();
 
               setState("savingMetadata");
               setStatusText(getStatusLabel("savingMetadata"));
 
               try {
                 const db = getFirestore(app);
-
                 const localName = fileNameFromUri(localUri);
                 const fallbackTitle = stripExt(localName);
 
-                const athleteName = safeString(
-                  fullSidecar?.athlete,
-                  "Unassigned"
-                );
+                const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
                 const sport = safeString(fullSidecar?.sport, "unknown");
                 const style = safeString(fullSidecar?.style, "");
                 const sportStyle =
@@ -504,10 +456,7 @@ export function UploadButton(props: Props) {
                     ? fullSidecar.createdAt
                     : now;
 
-                let title = safeString(
-                  fullSidecar?.displayName ?? fullSidecar?.title,
-                  ""
-                );
+                let title = safeString(fullSidecar?.displayName ?? fullSidecar?.title, "");
 
                 if (!title) {
                   const d = new Date(recordedAt);
@@ -547,8 +496,9 @@ export function UploadButton(props: Props) {
                   scoreBits.finalScore
                 );
 
-                const libraryStyle =
-                  colorRes?.edgeColor ? { edgeColor: colorRes.edgeColor } : null;
+                const libraryStyle = colorRes?.edgeColor
+                  ? { edgeColor: colorRes.edgeColor }
+                  : null;
 
                 const docData: any = {
                   ownerUid: user.uid,
@@ -590,10 +540,7 @@ export function UploadButton(props: Props) {
                 const ref = await addDoc(collection(db, "videos"), docData);
                 console.log("[UploadButton] created VideoDoc:", ref.id, docData);
               } catch (metaErr) {
-                console.warn(
-                  "[UploadButton] upload succeeded but metadata write failed:",
-                  metaErr
-                );
+                console.warn("[UploadButton] upload succeeded but metadata write failed:", metaErr);
               }
 
               setState("done");
@@ -603,6 +550,7 @@ export function UploadButton(props: Props) {
               setIsCancelling(false);
               cancelRequestedRef.current = false;
               inFlightRef.current = false;
+
               onUploaded?.(b2VideoKey ?? shareId, "b2://quickclip-videos");
             } catch (err: any) {
               console.log("[UploadButton(B2) error]", err);
@@ -628,16 +576,11 @@ export function UploadButton(props: Props) {
               cancelRequestedRef.current = false;
               inFlightRef.current = false;
 
-              Alert.alert(
-                "Upload failed",
-                msg || "Please try again while online."
-              );
+              Alert.alert("Upload failed", msg || "Please try again while online.");
             } finally {
               if (tempVideoUri) {
                 try {
-                  await FileSystem.deleteAsync(tempVideoUri, {
-                    idempotent: true,
-                  });
+                  await FileSystem.deleteAsync(tempVideoUri, { idempotent: true });
                 } catch {}
               }
             }
@@ -651,23 +594,19 @@ export function UploadButton(props: Props) {
               state === "failed"
                 ? "tomato"
                 : isBusy
-                ? "rgba(255,255,255,0.45)"
-                : "white",
+                  ? "rgba(255,255,255,0.45)"
+                  : "white",
             backgroundColor:
               state === "failed"
                 ? "rgba(255,99,71,0.12)"
                 : isBusy
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(255,255,255,0.12)",
+                  ? "rgba(255,255,255,0.08)"
+                  : "rgba(255,255,255,0.12)",
             opacity: isBusy ? 0.9 : 1,
           }}
         >
           <Text style={{ color: "white", fontWeight: "700" }}>
-            {isBusy
-              ? "Uploading…"
-              : state === "failed"
-              ? "Retry Upload"
-              : "Upload"}
+            {isBusy ? "Uploading…" : state === "failed" ? "Retry Upload" : "Upload"}
           </Text>
         </Pressable>
 
@@ -724,10 +663,7 @@ export function UploadButton(props: Props) {
           >
             <View
               style={{
-                width: `${Math.max(
-                  2,
-                  Math.min(100, currentProgress.progress * 100)
-                )}%`,
+                width: `${Math.max(2, Math.min(100, currentProgress.progress * 100))}%`,
                 height: "100%",
                 borderRadius: 999,
                 backgroundColor: "white",
