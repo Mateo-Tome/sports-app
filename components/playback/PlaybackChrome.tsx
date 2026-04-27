@@ -753,12 +753,17 @@ export function EventBelt(props: {
 
   useEffect(() => {
     if (!duration) return;
+  
+    // Web desktop needs manual scrolling.
+    // Auto-follow fights the mouse/trackpad and makes the belt feel broken.
+    if (Platform.OS === 'web') return;
+  
     if (userInteracting.current) return;
-
+  
     const playheadX = (current || 0) * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
     const nowMs = Date.now();
-
+  
     if (nowMs - lastAuto.current > 120) {
       scrollRef.current?.scrollTo({ x: targetX, animated: false });
       lastAuto.current = nowMs;
@@ -777,23 +782,37 @@ export function EventBelt(props: {
         elevation: 999,
       }}
     >
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        onScrollBeginDrag={() => lockUser(1400)}
-        onScrollEndDrag={() => lockUser(900)}
-        onMomentumScrollBegin={() => lockUser(1400)}
-        onMomentumScrollEnd={() => lockUser(900)}
-        scrollEventThrottle={16}
-        contentContainerStyle={{
-          height: BELT_H,
-          paddingHorizontal: EDGE_PAD,
-          width: layout.contentW + EDGE_PAD * 2,
-          ...(Platform.OS === 'web' ? ({ userSelect: 'none' } as any) : null),
-        }}
-      >
-        <View style={{ width: layout.contentW, height: BELT_H }}>
+    <ScrollView
+  ref={scrollRef}
+  horizontal
+  showsHorizontalScrollIndicator={false}
+  onScrollBeginDrag={() => lockUser(1400)}
+  onScrollEndDrag={() => lockUser(900)}
+  onMomentumScrollBegin={() => lockUser(1400)}
+  onMomentumScrollEnd={() => lockUser(900)}
+  scrollEventThrottle={16}
+  style={
+    Platform.OS === 'web'
+      ? ({
+          width: '100%',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+        } as any)
+      : undefined
+  }
+  contentContainerStyle={{
+    height: BELT_H,
+    paddingHorizontal: EDGE_PAD,
+    minWidth: layout.contentW + EDGE_PAD * 2,
+    ...(Platform.OS === 'web'
+      ? ({
+          userSelect: 'none',
+          cursor: 'grab',
+        } as any)
+      : null),
+  }}
+>
+  <View style={{ width: layout.contentW, height: BELT_H, flexShrink: 0 }}>
           <View
             style={{
               position: 'absolute',
