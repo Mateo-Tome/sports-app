@@ -9,6 +9,7 @@ import {
   FlashToast,
   HitOutChooser,
   HomerunConfirm,
+  StrikeChooser,
   StrikeoutChooser,
 } from '../modules/baseball/baseballUiParts';
 
@@ -19,7 +20,9 @@ type BeltLane = 'top' | 'bottom' | undefined;
 // balls/top, strikes/bottom
 function beltLaneForPitchingKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
-  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun') return 'top';
+  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun' || k === 'hit_by_pitch') {
+    return 'top';
+  }
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
   return undefined;
 }
@@ -47,6 +50,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   const [outs, setOuts] = React.useState(0);
 
   const [resultChooserOpen, setResultChooserOpen] = React.useState(false);
+  const [strikeChooserOpen, setStrikeChooserOpen] = React.useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = React.useState(false);
 
@@ -68,6 +72,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     out: PITCHER_GOOD,
     homerun: PITCHER_BAD,
     walk: PITCHER_WARN,
+    hit_by_pitch: PITCHER_WARN,
     strikeout: PITCHER_GOOD,
   };
 
@@ -150,14 +155,25 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     });
   };
 
-  const onStrike = () => {
+  const recordStrike = (kind: 'swinging' | 'looking') => {
     if (!isRecording) return;
     setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('strike', 'Strike', { strikesAfter: next });
-      showToast(`Strike ${next}`, KEY_COLOR_PITCHING.strike);
+      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
+        kind,
+        strikesAfter: next,
+      });
+      showToast(
+        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
+        KEY_COLOR_PITCHING.strike,
+      );
       return next;
     });
+  };
+
+  const onStrike = () => {
+    if (!isRecording) return;
+    setStrikeChooserOpen(true);
   };
 
   const onFoul = () => {
@@ -184,6 +200,13 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
     if (!isRecording) return;
     fire('walk', 'Walk', { type: 'walk' });
     showToast('Walk', KEY_COLOR_PITCHING.walk);
+    resetCount();
+  };
+
+  const recordHitByPitch = () => {
+    if (!isRecording) return;
+    fire('hit_by_pitch', 'HBP Allowed', { type: 'hit_by_pitch' });
+    showToast('HBP Allowed', KEY_COLOR_PITCHING.hit_by_pitch);
     resetCount();
   };
 
@@ -328,6 +351,24 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
           setResultChooserOpen(false);
           incrementOuts(label);
         }}
+        onHbp={() => {
+          setResultChooserOpen(false);
+          recordHitByPitch();
+        }}
+        CHOOSER_TOP={CHOOSER_TOP}
+        EDGE_L={EDGE_L}
+        EDGE_R={EDGE_R}
+        screenW={screenW}
+      />
+
+      <StrikeChooser
+        showPalette
+        open={strikeChooserOpen}
+        onClose={() => setStrikeChooserOpen(false)}
+        onPick={(kind) => {
+          setStrikeChooserOpen(false);
+          recordStrike(kind);
+        }}
         CHOOSER_TOP={CHOOSER_TOP}
         EDGE_L={EDGE_L}
         EDGE_R={EDGE_R}
@@ -371,6 +412,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
           onDone={() => setToast(null)}
         />
       ) : null}
+      
 
       <LeftStackPitching />
       <RightStackPitching />

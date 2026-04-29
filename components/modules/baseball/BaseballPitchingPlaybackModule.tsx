@@ -3,22 +3,22 @@ import { Text, TouchableOpacity, useWindowDimensions, View } from 'react-native'
 import type { PlaybackModuleProps } from '../types';
 
 import {
-    FlashToast,
-    HitOutChooser,
-    HomerunConfirm,
-    StrikeoutChooser,
+  FlashToast,
+  HitOutChooser,
+  HomerunConfirm,
+  StrikeChooser,
+  StrikeoutChooser,
 } from './baseballUiParts';
 
 import { deriveCountAtTime, FOUL_COLOR } from './useBaseballHittingLogic';
 
 type BeltLane = 'top' | 'bottom' | undefined;
 
-// Pitcher POV lane rule (optional):
-// you can keep same lanes as hitting, or swap.
-// Here I keep it simple: balls top, strikes bottom.
 function beltLaneForKeyPitching(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
-  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'top';
+  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
+    return 'top';
+  }
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
   return undefined;
 }
@@ -54,34 +54,33 @@ export default function BaseballPitchingPlaybackModule({
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
-  // Pitcher POV colors
-  const PITCHER_GOOD = '#22c55e'; // green
-  const PITCHER_BAD = '#ef4444';  // red
-  const PITCHER_WARN = '#f59e0b'; // amber
+  const PITCHER_GOOD = '#22c55e';
+  const PITCHER_BAD = '#ef4444';
+  const PITCHER_WARN = '#f59e0b';
 
   const KEY_COLOR_PITCHING: Record<string, string> = {
-    ball: PITCHER_BAD,       // ✅ Ball = red
-    strike: PITCHER_GOOD,    // ✅ Strike = green
+    ball: PITCHER_BAD,
+    strike: PITCHER_GOOD,
     foul: FOUL_COLOR,
     hit: PITCHER_BAD,
     out: PITCHER_GOOD,
     homerun: PITCHER_BAD,
     walk: PITCHER_WARN,
+    hit_by_pitch: PITCHER_WARN,
     strikeout: PITCHER_GOOD,
   };
 
-  // derive count from event stream
   const derived = useMemo(() => deriveCountAtTime(events as any[], now as any), [events, now]);
   const derivedBalls = derived.balls;
   const derivedStrikes = derived.strikes;
 
-  // local edit-mode count state
   const [balls, setBalls] = useState(0);
   const [strikes, setStrikes] = useState(0);
   const [fouls, setFouls] = useState(0);
   const [outs, setOuts] = useState(0);
 
   const [resultChooserOpen, setResultChooserOpen] = useState(false);
+  const [strikeChooserOpen, setStrikeChooserOpen] = useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
 
@@ -94,7 +93,6 @@ export default function BaseballPitchingPlaybackModule({
     setFouls(0);
   };
 
-  // simple actor fallback (you can keep neutral)
   const actorForKey = (_key: string): 'home' | 'opponent' | 'neutral' => 'neutral';
 
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
@@ -107,19 +105,17 @@ export default function BaseballPitchingPlaybackModule({
       actor: actorForKey(key),
       value: undefined,
       meta: {
-        baseballMode: 'pitching', // ✅ keep consistent
+        baseballMode: 'pitching',
         beltLane,
         pillColor: color,
         color,
         tint: color,
         buttonColor: color,
         chipColor: color,
-
         balls,
         strikes,
         fouls,
         outs,
-
         ...(extraMeta || {}),
       },
     });
@@ -134,13 +130,23 @@ export default function BaseballPitchingPlaybackModule({
     });
   };
 
-  const onStrike = () => {
+  const recordStrike = (kind: 'swinging' | 'looking') => {
     setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('strike', 'Strike', { strikesAfter: next });
-      showToast(`Strike ${next}`, KEY_COLOR_PITCHING.strike);
+      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
+        kind,
+        strikesAfter: next,
+      });
+      showToast(
+        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
+        KEY_COLOR_PITCHING.strike,
+      );
       return next;
     });
+  };
+
+  const onStrike = () => {
+    setStrikeChooserOpen(true);
   };
 
   const onFoul = () => {
@@ -148,7 +154,10 @@ export default function BaseballPitchingPlaybackModule({
       let nextStrikes = strikes;
       setStrikes((prevStrikes) => {
         nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', { foulsAfter: prevFouls + 1, strikesAfter: nextStrikes });
+        fire('foul', 'Foul Ball', {
+          foulsAfter: prevFouls + 1,
+          strikesAfter: nextStrikes,
+        });
         return nextStrikes;
       });
       const newFouls = prevFouls + 1;
@@ -163,13 +172,22 @@ export default function BaseballPitchingPlaybackModule({
     resetCount();
   };
 
+  const recordHitByPitch = () => {
+    fire('hit_by_pitch', 'HBP Allowed', { type: 'hit_by_pitch' });
+    showToast('HBP Allowed', KEY_COLOR_PITCHING.hit_by_pitch);
+    resetCount();
+  };
+
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
     fire('hit', 'Hit Allowed', { type });
     showToast(
-      type === 'single' ? '1B Allowed' :
-      type === 'double' ? '2B Allowed' :
-      type === 'triple' ? '3B Allowed' :
-      'Bunt Hit',
+      type === 'single'
+        ? '1B Allowed'
+        : type === 'double'
+          ? '2B Allowed'
+          : type === 'triple'
+            ? '3B Allowed'
+            : 'Bunt Hit',
       KEY_COLOR_PITCHING.hit,
     );
     resetCount();
@@ -252,6 +270,24 @@ export default function BaseballPitchingPlaybackModule({
           setResultChooserOpen(false);
           incrementOuts(label);
         }}
+        onHbp={() => {
+          setResultChooserOpen(false);
+          recordHitByPitch();
+        }}
+        CHOOSER_TOP={CHOOSER_TOP}
+        EDGE_L={EDGE_L}
+        EDGE_R={EDGE_R}
+        screenW={screenW}
+      />
+
+      <StrikeChooser
+        showPalette={showPalette}
+        open={strikeChooserOpen}
+        onClose={() => setStrikeChooserOpen(false)}
+        onPick={(kind) => {
+          setStrikeChooserOpen(false);
+          recordStrike(kind);
+        }}
         CHOOSER_TOP={CHOOSER_TOP}
         EDGE_L={EDGE_L}
         EDGE_R={EDGE_R}
@@ -296,7 +332,6 @@ export default function BaseballPitchingPlaybackModule({
         />
       ) : null}
 
-      {/* Left buttons */}
       {showPalette ? (
         <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: TOP, bottom: BOTTOM, justifyContent: 'center' }}>
           <View style={{ gap: GAP }}>
@@ -307,7 +342,6 @@ export default function BaseballPitchingPlaybackModule({
         </View>
       ) : null}
 
-      {/* Right buttons */}
       {showPalette ? (
         <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: TOP, bottom: BOTTOM, justifyContent: 'center', alignItems: 'flex-end' }}>
           <View style={{ gap: GAP }}>

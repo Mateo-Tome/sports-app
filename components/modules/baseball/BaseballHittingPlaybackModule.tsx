@@ -9,6 +9,7 @@ import {
   HomerunConfirm,
   LeftStack,
   RightStack,
+  StrikeChooser,
   StrikeoutChooser,
 } from './baseballUiParts';
 
@@ -25,17 +26,13 @@ import {
   WALK_COLOR,
 } from './useBaseballHittingLogic';
 
-/**
- * Lane rule:
- * - TOP: balls + hitter-positive (hit/walk/hr)
- * - BOTTOM: strikes + fouls + outs
- * Stored in meta.beltLane so EventBelt can read it.
- */
 type BeltLane = 'top' | 'bottom' | undefined;
 
 function beltLaneForKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
-  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'top';
+  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
+    return 'top';
+  }
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
   return undefined;
 }
@@ -71,18 +68,17 @@ export default function BaseballHittingPlaybackModule({
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
-  // derive count from event stream (for playback mode)
   const derived = useMemo(() => deriveCountAtTime(events as any[], now as any), [events, now]);
   const derivedBalls = derived.balls;
   const derivedStrikes = derived.strikes;
 
-  // Local state for edit mode
   const [balls, setBalls] = useState(0);
   const [strikes, setStrikes] = useState(0);
   const [fouls, setFouls] = useState(0);
   const [outs, setOuts] = useState(0);
 
   const [resultChooserOpen, setResultChooserOpen] = useState(false);
+  const [strikeChooserOpen, setStrikeChooserOpen] = useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
   const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
@@ -95,16 +91,22 @@ export default function BaseballHittingPlaybackModule({
     setFouls(0);
   };
 
-  // actor fallback (still fine to keep)
   const actorForKey = (key: string): 'home' | 'opponent' | 'neutral' => {
     const k = String(key || '').toLowerCase();
-    if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun') return 'home';
+    if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
+      return 'home';
+    }
     if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'opponent';
     return 'neutral';
   };
 
+  const colorForKey = (key: string) => {
+    if (key === 'hit_by_pitch') return WALK_COLOR;
+    return KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+  };
+
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
-    const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+    const color = colorForKey(key);
     const beltLane = beltLaneForKey(key);
 
     onOverlayEvent?.({
@@ -113,7 +115,8 @@ export default function BaseballHittingPlaybackModule({
       actor: actorForKey(key),
       value: undefined,
       meta: {
-        beltLane, // ✅ EventBelt will use this (when present)
+        beltLane,
+        pillColor: color,
         color,
         tint: color,
         buttonColor: color,
@@ -127,9 +130,8 @@ export default function BaseballHittingPlaybackModule({
     });
   };
 
-  // actions
   const onBall = () => {
-    setBalls(prev => {
+    setBalls((prev) => {
       const next = Math.min(prev + 1, 4);
       fire('ball', 'Ball', { ballsAfter: next });
       showToast(`Ball ${next}`, BALL_COLOR);
@@ -137,21 +139,34 @@ export default function BaseballHittingPlaybackModule({
     });
   };
 
-  const onStrike = () => {
-    setStrikes(prev => {
+  const recordStrike = (kind: 'swinging' | 'looking') => {
+    setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('strike', 'Strike', { strikesAfter: next });
-      showToast(`Strike ${next}`, STRIKE_COLOR);
+      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
+        kind,
+        strikesAfter: next,
+      });
+      showToast(
+        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
+        STRIKE_COLOR,
+      );
       return next;
     });
   };
 
+  const onStrike = () => {
+    setStrikeChooserOpen(true);
+  };
+
   const onFoul = () => {
-    setFouls(prevFouls => {
+    setFouls((prevFouls) => {
       let nextStrikes = strikes;
-      setStrikes(prevStrikes => {
+      setStrikes((prevStrikes) => {
         nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', { foulsAfter: prevFouls + 1, strikesAfter: nextStrikes });
+        fire('foul', 'Foul Ball', {
+          foulsAfter: prevFouls + 1,
+          strikesAfter: nextStrikes,
+        });
         return nextStrikes;
       });
       const newFouls = prevFouls + 1;
@@ -161,7 +176,7 @@ export default function BaseballHittingPlaybackModule({
   };
 
   const incrementOuts = (type: string) => {
-    setOuts(prev => {
+    setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('out', 'Out', { type, outsAfter: next });
       showToast(type, OUT_COLOR);
@@ -173,9 +188,21 @@ export default function BaseballHittingPlaybackModule({
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
     fire('hit', 'Hit', { type });
     showToast(
-      type === 'single' ? 'Single' : type === 'double' ? 'Double' : type === 'triple' ? 'Triple' : 'Bunt',
+      type === 'single'
+        ? 'Single'
+        : type === 'double'
+          ? 'Double'
+          : type === 'triple'
+            ? 'Triple'
+            : 'Bunt',
       HIT_COLOR,
     );
+    resetCount();
+  };
+
+  const recordHitByPitch = () => {
+    fire('hit_by_pitch', 'HBP', { type: 'hit_by_pitch' });
+    showToast('Hit By Pitch', WALK_COLOR);
     resetCount();
   };
 
@@ -192,7 +219,7 @@ export default function BaseballHittingPlaybackModule({
   };
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
-    setOuts(prev => {
+    setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
       fire('strikeout', 'Strikeout', { kind, outsAfter: next });
       showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', K_COLOR);
@@ -219,6 +246,24 @@ export default function BaseballHittingPlaybackModule({
         onOut={(label) => {
           setResultChooserOpen(false);
           incrementOuts(label);
+        }}
+        onHbp={() => {
+          setResultChooserOpen(false);
+          recordHitByPitch();
+        }}
+        CHOOSER_TOP={CHOOSER_TOP}
+        EDGE_L={EDGE_L}
+        EDGE_R={EDGE_R}
+        screenW={screenW}
+      />
+
+      <StrikeChooser
+        showPalette={showPalette}
+        open={strikeChooserOpen}
+        onClose={() => setStrikeChooserOpen(false)}
+        onPick={(kind) => {
+          setStrikeChooserOpen(false);
+          recordStrike(kind);
         }}
         CHOOSER_TOP={CHOOSER_TOP}
         EDGE_L={EDGE_L}

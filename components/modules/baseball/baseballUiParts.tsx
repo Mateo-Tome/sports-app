@@ -151,6 +151,7 @@ export function HitOutChooser(props: {
   onClose: () => void;
   onHit: (type: 'single' | 'double' | 'triple' | 'bunt') => void;
   onOut: (label: string) => void;
+  onHbp?: () => void;
   CHOOSER_TOP: number;
   EDGE_L: number;
   EDGE_R: number;
@@ -214,6 +215,31 @@ export function HitOutChooser(props: {
     </TouchableOpacity>
   );
 
+  const HbpChip = () => (
+    <TouchableOpacity
+      onPress={props.onHbp}
+      style={{
+        height: 40,
+        paddingHorizontal: 14,
+        borderRadius: 999,
+        backgroundColor: WALK_COLOR,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: 6,
+        marginVertical: 4,
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 3,
+        elevation: 2,
+      }}
+    >
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+        HBP
+      </OverlayCompactText>
+    </TouchableOpacity>
+  );
+
   return (
     <PopupFrame
       CHOOSER_TOP={props.CHOOSER_TOP}
@@ -231,7 +257,7 @@ export function HitOutChooser(props: {
         <OverlayCompactText
           style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '700', marginTop: 4, marginBottom: 2 }}
         >
-          Hits
+          On Base / Hits
         </OverlayCompactText>
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
@@ -239,6 +265,7 @@ export function HitOutChooser(props: {
           <HitChip label="Double" type="double" />
           <HitChip label="Triple" type="triple" />
           <HitChip label="Bunt" type="bunt" />
+          {props.onHbp ? <HbpChip /> : null}
         </View>
 
         <OverlayCompactText
@@ -251,6 +278,87 @@ export function HitOutChooser(props: {
           <OutChip label="Ground Out" />
           <OutChip label="Flyout" />
           <OutChip label="Fielder's Choice" />
+        </View>
+
+        <TouchableOpacity
+          onPress={props.onClose}
+          style={{
+            marginTop: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.1)',
+          }}
+        >
+          <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
+            Cancel
+          </OverlayCompactText>
+        </TouchableOpacity>
+      </View>
+    </PopupFrame>
+  );
+}
+
+export function StrikeChooser(props: {
+  showPalette: boolean;
+  open: boolean;
+  onClose: () => void;
+  onPick: (kind: 'swinging' | 'looking') => void;
+  CHOOSER_TOP: number;
+  EDGE_L: number;
+  EDGE_R: number;
+  screenW: number;
+}) {
+  if (!props.showPalette || !props.open) return null;
+
+  const StrikeChip = ({
+    label,
+    kind,
+  }: {
+    label: string;
+    kind: 'swinging' | 'looking';
+  }) => (
+    <TouchableOpacity
+      onPress={() => props.onPick(kind)}
+      style={{
+        height: 40,
+        paddingHorizontal: 14,
+        borderRadius: 999,
+        backgroundColor: STRIKE_COLOR,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: 6,
+        marginVertical: 4,
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 3,
+        elevation: 2,
+      }}
+    >
+      <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
+        {label}
+      </OverlayCompactText>
+    </TouchableOpacity>
+  );
+
+  return (
+    <PopupFrame
+      CHOOSER_TOP={props.CHOOSER_TOP}
+      EDGE_L={props.EDGE_L}
+      EDGE_R={props.EDGE_R}
+      screenW={props.screenW}
+    >
+      <View style={{ alignItems: 'center' }}>
+        <OverlayTitleText
+          style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 6, textAlign: 'center' }}
+        >
+          Strike Type
+        </OverlayTitleText>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
+          <StrikeChip label="Swinging" kind="swinging" />
+          <StrikeChip label="Looking" kind="looking" />
         </View>
 
         <TouchableOpacity

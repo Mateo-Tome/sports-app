@@ -2,6 +2,10 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import { sportTitle } from '../sportMeta';
 
+import BaseballHittingStatsCard from './cards/BaseballHittingStatsCard';
+import BaseballPitchingStatsCard from './cards/BaseballPitchingStatsCard';
+import BasketballStatsCard from './cards/BasketballStatsCard';
+
 function CardShell({
   title,
   children,
@@ -163,7 +167,13 @@ function BarRow({
           gap: 10,
         }}
       >
-        <Text style={{ color: 'rgba(255,255,255,0.78)', fontWeight: '900', flex: 1 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.78)',
+            fontWeight: '900',
+            flex: 1,
+          }}
+        >
           {label}
         </Text>
         <Text style={{ color: 'white', fontWeight: '900' }}>{value}</Text>
@@ -358,165 +368,6 @@ function normalizeGreco(gs: any) {
   };
 }
 
-function normalizeBaseballHitting(b: any) {
-  const derivedHits =
-    b?.derived?.hits != null
-      ? clamp0(b.derived.hits)
-      : clamp0(b?.counts?.hit) + clamp0(b?.counts?.homerun);
-
-  const derivedAtBats =
-    b?.derived?.atBats != null ? clamp0(b.derived.atBats) : 0;
-
-  const baText = String(b?.derived?.battingAverageText ?? '.000');
-
-  return {
-    clips: clamp0(b?.totals?.clips),
-    events: clamp0(b?.totals?.events),
-
-    hitsTotal: derivedHits,
-    atBats: derivedAtBats,
-    baText,
-
-    balls: clamp0(b?.counts?.ball),
-    strikes: clamp0(b?.counts?.strike),
-    fouls: clamp0(b?.counts?.foul),
-
-    walks: clamp0(b?.counts?.walk),
-    strikeouts: clamp0(b?.counts?.strikeout),
-
-    hits: clamp0(b?.counts?.hit),
-    single: clamp0(b?.counts?.hitTypes?.single),
-    double: clamp0(b?.counts?.hitTypes?.double),
-    triple: clamp0(b?.counts?.hitTypes?.triple),
-    homerun: clamp0(b?.counts?.homerun),
-    bunt: clamp0(b?.counts?.hitTypes?.bunt),
-
-    outs: clamp0(b?.counts?.out),
-  };
-}
-
-function normalizeBaseballPitching(p: any) {
-  const balls = clamp0(p?.counts?.ball);
-  const strikes = clamp0(p?.counts?.strike);
-  const fouls = clamp0(p?.counts?.foul);
-
-  const ipText = safeStr(p?.derived?.inningsPitchedText, '');
-  const bf =
-    p?.derived?.battersFaced != null ? clamp0(p?.derived?.battersFaced) : 0;
-  const pitches =
-    p?.derived?.totalPitches != null
-      ? clamp0(p?.derived?.totalPitches)
-      : balls + strikes + fouls;
-
-  const strikePct = safeStr(p?.derived?.strikePctText, '');
-  const ballPct = safeStr(p?.derived?.ballPctText, '');
-  const kPct = safeStr(p?.derived?.kPctText, '');
-  const bbPct = safeStr(p?.derived?.bbPctText, '');
-  const kbb = safeStr(p?.derived?.kbbText, '');
-  const whip = safeStr(p?.derived?.whipText, '');
-  const pPerBF = safeStr(p?.derived?.pitchesPerBFText, '');
-  const pPerInning = safeStr(p?.derived?.pitchesPerInningText, '');
-
-  const hitsAllowed = clamp0(p?.counts?.hitAllowed);
-  const hrAllowed = clamp0(p?.counts?.homerunAllowed);
-  const hitsTotalAllowed =
-    p?.derived?.hitsTotalAllowed != null
-      ? clamp0(p?.derived?.hitsTotalAllowed)
-      : hitsAllowed + hrAllowed;
-
-  const walksIssued = clamp0(p?.counts?.walk);
-  const strikeouts = clamp0(p?.counts?.strikeout);
-
-  const outsRecordedTotal =
-    p?.derived?.outsRecordedTotal != null
-      ? clamp0(p?.derived?.outsRecordedTotal)
-      : clamp0(p?.counts?.outRecorded) + strikeouts;
-
-  return {
-    clips: clamp0(p?.totals?.clips),
-    events: clamp0(p?.totals?.events),
-
-    balls,
-    strikes,
-    fouls,
-
-    walksIssued,
-    strikeouts,
-
-    hitsAllowed,
-    hitsTotalAllowed,
-
-    singleAllowed: clamp0(p?.counts?.hitTypes?.single),
-    doubleAllowed: clamp0(p?.counts?.hitTypes?.double),
-    tripleAllowed: clamp0(p?.counts?.hitTypes?.triple),
-    buntAllowed: clamp0(p?.counts?.hitTypes?.bunt),
-
-    hrAllowed,
-
-    outsRecordedTotal,
-    ipText,
-    bf,
-    pitches,
-
-    strikePct,
-    ballPct,
-    kPct,
-    bbPct,
-    kbb,
-    whip,
-    pPerBF,
-    pPerInning,
-  };
-}
-
-function normalizeGeneric(s: any) {
-  const clips =
-    s?.totals?.clips ??
-    s?.totals?.videos ??
-    s?.totals?.matches ??
-    s?.totals?.games ??
-    s?.totals?.sessions ??
-    null;
-
-  const events = s?.totals?.events ?? s?.totals?.eventCount ?? null;
-
-  const myPoints =
-    s?.points?.myKid ?? s?.points?.athlete ?? s?.points?.home ?? null;
-
-  const oppPoints = s?.points?.opp ?? s?.points?.opponent ?? null;
-
-  return {
-    clips: clips != null ? clamp0(clips) : null,
-    events: events != null ? clamp0(events) : null,
-    myPoints: myPoints != null ? clamp0(myPoints) : null,
-    oppPoints: oppPoints != null ? clamp0(oppPoints) : null,
-  };
-}
-
-function normalizeBasketballDefault(b: any) {
-  return {
-    clips: clamp0(b?.totals?.clips),
-    events: clamp0(b?.totals?.events),
-
-    points: clamp0(b?.points?.total),
-
-    fgM: clamp0(b?.shooting?.fgM),
-    fgA: clamp0(b?.shooting?.fgA),
-    t3M: clamp0(b?.shooting?.t3M),
-    t3A: clamp0(b?.shooting?.t3A),
-    ftM: clamp0(b?.shooting?.ftM),
-    ftA: clamp0(b?.shooting?.ftA),
-
-    ast: clamp0(b?.counts?.assist),
-    stl: clamp0(b?.counts?.steal),
-    blk: clamp0(b?.counts?.block),
-    rebO: clamp0(b?.counts?.reboundOff),
-    rebD: clamp0(b?.counts?.reboundDef),
-    tov: clamp0(b?.counts?.turnover),
-    foul: clamp0(b?.counts?.foul),
-  };
-}
-
 function normalizeVolleyballDefault(v: any) {
   return {
     clips: clamp0(v?.totals?.clips),
@@ -577,16 +428,23 @@ function normalizeBjjDefault(b: any) {
   };
 }
 
-function pct(m: number, a: number) {
-  if (!a) return '0%';
-  return `${Math.round((m / a) * 100)}%`;
-}
-
 export function renderSportStatsCard(
   sportKey: string,
   sportStats: any,
   athleteName: string,
 ) {
+  if (sportKey === 'basketball:default') {
+    return <BasketballStatsCard stats={sportStats} athleteName={athleteName} />;
+  }
+
+  if (sportKey === 'baseball:hitting') {
+    return <BaseballHittingStatsCard stats={sportStats} athleteName={athleteName} />;
+  }
+
+  if (sportKey === 'baseball:pitching') {
+    return <BaseballPitchingStatsCard stats={sportStats} athleteName={athleteName} />;
+  }
+
   if (sportKey.startsWith('bjj:')) {
     const b = normalizeBjjDefault(sportStats);
 
@@ -610,120 +468,6 @@ export function renderSportStatsCard(
           <Chip label="Adv" value={b.advantage} />
           <Chip label="Pen" value={b.penalty} />
           <Chip label="Finishes" value={b.finish} />
-        </View>
-      </CardShell>
-    );
-  }
-
-  if (sportKey === 'baseball:hitting') {
-    const b = normalizeBaseballHitting(sportStats);
-    return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={b.clips} />
-          <Chip label="Events" value={b.events} />
-          <Chip label="BA" value={b.baText} />
-          <Chip label="AB" value={b.atBats} />
-          <Chip label="H" value={b.hitsTotal} />
-          <Chip label="Balls" value={b.balls} />
-          <Chip label="Strikes" value={b.strikes} />
-          <Chip label="Fouls" value={b.fouls} />
-          <Chip label="Walks" value={b.walks} />
-          <Chip label="Strikeouts" value={b.strikeouts} />
-          <Chip label="Hits (non-HR)" value={b.hits} />
-          <Chip label="1B" value={b.single} />
-          <Chip label="2B" value={b.double} />
-          <Chip label="3B" value={b.triple} />
-          <Chip label="HR" value={b.homerun} />
-          <Chip label="Bunt" value={b.bunt} />
-          <Chip label="Outs" value={b.outs} />
-        </View>
-      </CardShell>
-    );
-  }
-
-  if (sportKey === 'baseball:pitching') {
-    const p = normalizeBaseballPitching(sportStats);
-    const hasDerived =
-      !!p.ipText || p.bf > 0 || p.pitches > 0 || !!p.whip || !!p.kPct || !!p.bbPct;
-
-    return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={p.clips} />
-          <Chip label="Events" value={p.events} />
-          {hasDerived ? <Chip label="IP" value={p.ipText || '0.0'} /> : null}
-          {hasDerived ? <Chip label="BF" value={p.bf || 0} /> : null}
-          {hasDerived ? <Chip label="Pitches" value={p.pitches || 0} /> : null}
-          <Chip label="Balls" value={p.balls} />
-          <Chip label="Strikes" value={p.strikes} />
-          <Chip label="Fouls" value={p.fouls} />
-          {hasDerived && p.strikePct ? <Chip label="Strike %" value={p.strikePct} /> : null}
-          {hasDerived && p.ballPct ? <Chip label="Ball %" value={p.ballPct} /> : null}
-          <Chip label="Walks Issued" value={p.walksIssued} />
-          <Chip label="Strikeouts" value={p.strikeouts} />
-          {hasDerived && p.kPct ? <Chip label="K%" value={p.kPct} /> : null}
-          {hasDerived && p.bbPct ? <Chip label="BB%" value={p.bbPct} /> : null}
-          {hasDerived && p.kbb ? <Chip label="K/BB" value={p.kbb} /> : null}
-          <Chip label="Hits Allowed (non-HR)" value={p.hitsAllowed} />
-          <Chip label="Hits Allowed (total)" value={p.hitsTotalAllowed} />
-          <Chip label="1B Allowed" value={p.singleAllowed} />
-          <Chip label="2B Allowed" value={p.doubleAllowed} />
-          <Chip label="3B Allowed" value={p.tripleAllowed} />
-          <Chip label="HR Allowed" value={p.hrAllowed} />
-          <Chip label="Bunt Allowed" value={p.buntAllowed} />
-          {hasDerived && p.whip ? <Chip label="WHIP" value={p.whip} /> : null}
-          {hasDerived && p.pPerBF ? <Chip label="Pitches/BF" value={p.pPerBF} /> : null}
-          {hasDerived && p.pPerInning ? <Chip label="Pitches/Inning" value={p.pPerInning} /> : null}
-          <Chip label="Outs Recorded" value={p.outsRecordedTotal} />
-        </View>
-      </CardShell>
-    );
-  }
-
-  if (sportKey === 'volleyball:default') {
-    const v = normalizeVolleyballDefault(sportStats);
-    const serveTotal = v.serveIn + v.ace + v.serveError;
-    const passTotal = v.pass3 + v.pass2 + v.pass1 + v.pass0;
-
-    return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={v.clips} />
-          <Chip label="Events" value={v.events} />
-          <Chip label="Kills" value={v.kill} />
-          <Chip label="Attacks" value={v.attack + v.kill} />
-          <Chip label="Kill %" value={v.killPct} />
-          <Chip label="Serve Total" value={serveTotal} />
-          <Chip label="Aces" value={v.ace} />
-          <Chip label="Ace %" value={v.acePct} />
-          <Chip label="Serve In %" value={v.serveInPct} />
-          <Chip label="Serve Err %" value={v.serveErrorPct} />
-          <Chip label="Blocks" value={v.block} />
-          <Chip label="Digs" value={v.dig} />
-          <Chip label="Pass Total" value={passTotal} />
-          <Chip label="Pass Avg" value={v.passAvg} />
-          <Chip label="3s" value={`${v.pass3} (${v.pass3Pct})`} />
-          <Chip label="2s" value={`${v.pass2} (${v.pass2Pct})`} />
-          <Chip label="1s" value={`${v.pass1} (${v.pass1Pct})`} />
-          <Chip label="0s" value={`${v.pass0} (${v.pass0Pct})`} />
-          <Chip label="Errors" value={v.error} />
-          <Chip label="Net" value={v.net} />
-          <Chip label="Touch" value={v.touch} />
-          <Chip label="1st Ball" value={v.firstBall} />
-          <Chip label="Bump" value={v.bump} />
         </View>
       </CardShell>
     );
@@ -790,8 +534,6 @@ export function renderSportStatsCard(
           value={`${w.pointBreakdown.penalty + w.pointBreakdown.other} pts`}
           pct={w.pointBreakdownPct.penalty + w.pointBreakdownPct.other}
         />
-
-       
 
         <SectionTitle>Period breakdown</SectionTitle>
 
@@ -880,8 +622,10 @@ export function renderSportStatsCard(
     );
   }
 
-  if (sportKey === 'basketball:default') {
-    const b = normalizeBasketballDefault(sportStats);
+  if (sportKey === 'volleyball:default') {
+    const v = normalizeVolleyballDefault(sportStats);
+    const serveTotal = v.serveIn + v.ace + v.serveError;
+    const passTotal = v.pass3 + v.pass2 + v.pass1 + v.pass0;
 
     return (
       <CardShell title={sportTitle(sportKey)}>
@@ -890,25 +634,43 @@ export function renderSportStatsCard(
         </Text>
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={b.clips} />
-          <Chip label="Events" value={b.events} />
-          <Chip label="Points" value={b.points} />
-          <Chip label="FG" value={`${b.fgM}/${b.fgA} (${pct(b.fgM, b.fgA)})`} />
-          <Chip label="3PT" value={`${b.t3M}/${b.t3A} (${pct(b.t3M, b.t3A)})`} />
-          <Chip label="FT" value={`${b.ftM}/${b.ftA} (${pct(b.ftM, b.ftA)})`} />
-          <Chip label="AST" value={b.ast} />
-          <Chip label="STL" value={b.stl} />
-          <Chip label="BLK" value={b.blk} />
-          <Chip label="REB (O)" value={b.rebO} />
-          <Chip label="REB (D)" value={b.rebD} />
-          <Chip label="TO" value={b.tov} />
-          <Chip label="Fouls" value={b.foul} />
+          <Chip label="Clips" value={v.clips} />
+          <Chip label="Events" value={v.events} />
+          <Chip label="Kills" value={v.kill} />
+          <Chip label="Attacks" value={v.attack + v.kill} />
+          <Chip label="Kill %" value={v.killPct} />
+          <Chip label="Serve Total" value={serveTotal} />
+          <Chip label="Aces" value={v.ace} />
+          <Chip label="Ace %" value={v.acePct} />
+          <Chip label="Serve In %" value={v.serveInPct} />
+          <Chip label="Serve Err %" value={v.serveErrorPct} />
+          <Chip label="Blocks" value={v.block} />
+          <Chip label="Digs" value={v.dig} />
+          <Chip label="Pass Total" value={passTotal} />
+          <Chip label="Pass Avg" value={v.passAvg} />
+          <Chip label="3s" value={`${v.pass3} (${v.pass3Pct})`} />
+          <Chip label="2s" value={`${v.pass2} (${v.pass2Pct})`} />
+          <Chip label="1s" value={`${v.pass1} (${v.pass1Pct})`} />
+          <Chip label="0s" value={`${v.pass0} (${v.pass0Pct})`} />
+          <Chip label="Errors" value={v.error} />
+          <Chip label="Net" value={v.net} />
+          <Chip label="Touch" value={v.touch} />
+          <Chip label="1st Ball" value={v.firstBall} />
+          <Chip label="Bump" value={v.bump} />
         </View>
       </CardShell>
     );
   }
 
-  const g = normalizeGeneric(sportStats);
+  const clips =
+    sportStats?.totals?.clips ??
+    sportStats?.totals?.videos ??
+    sportStats?.totals?.matches ??
+    sportStats?.totals?.games ??
+    sportStats?.totals?.sessions ??
+    null;
+
+  const events = sportStats?.totals?.events ?? sportStats?.totals?.eventCount ?? null;
 
   return (
     <CardShell title={sportTitle(sportKey)}>
@@ -918,10 +680,8 @@ export function renderSportStatsCard(
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         <Chip label="sportKey" value={sportKey} />
-        {g.clips != null ? <Chip label="Clips" value={g.clips} /> : null}
-        {g.events != null ? <Chip label="Events" value={g.events} /> : null}
-        {g.myPoints != null ? <Chip label="My Points" value={g.myPoints} /> : null}
-        {g.oppPoints != null ? <Chip label="Opp Points" value={g.oppPoints} /> : null}
+        {clips != null ? <Chip label="Clips" value={clamp0(clips)} /> : null}
+        {events != null ? <Chip label="Events" value={clamp0(events)} /> : null}
       </View>
 
       <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 10 }}>

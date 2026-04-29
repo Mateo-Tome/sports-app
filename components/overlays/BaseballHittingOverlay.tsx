@@ -11,6 +11,7 @@ import {
   HomerunConfirm,
   LeftStack,
   RightStack,
+  StrikeChooser,
   StrikeoutChooser,
 } from '../modules/baseball/baseballUiParts';
 
@@ -32,7 +33,9 @@ type BeltLane = 'top' | 'bottom' | undefined;
 function beltLaneForHittingKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'top';
-  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun') return 'bottom';
+  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun' || k === 'hit_by_pitch') {
+    return 'bottom';
+  }
   return undefined;
 }
 
@@ -60,6 +63,7 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
   const [outs, setOuts] = React.useState(0);
 
   const [resultChooserOpen, setResultChooserOpen] = React.useState(false);
+  const [strikeChooserOpen, setStrikeChooserOpen] = React.useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = React.useState(false);
 
@@ -75,10 +79,15 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
     setFouls(0);
   };
 
+  const colorForKey = (key: string) => {
+    if (key === 'hit_by_pitch') return WALK_COLOR;
+    return KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+  };
+
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
     if (!isRecording) return;
 
-    const color = KEY_COLOR[key] ?? 'rgba(148,163,184,0.9)';
+    const color = colorForKey(key);
     const beltLane = beltLaneForHittingKey(key);
 
     onEvent({
@@ -111,14 +120,25 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
     });
   };
 
-  const onStrike = () => {
+  const recordStrike = (kind: 'swinging' | 'looking') => {
     if (!isRecording) return;
     setStrikes((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('strike', 'Strike', { strikesAfter: next });
-      showToast(`Strike ${next}`, STRIKE_COLOR);
+      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
+        kind,
+        strikesAfter: next,
+      });
+      showToast(
+        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
+        STRIKE_COLOR,
+      );
       return next;
     });
+  };
+
+  const onStrike = () => {
+    if (!isRecording) return;
+    setStrikeChooserOpen(true);
   };
 
   const onFoul = () => {
@@ -145,6 +165,13 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
     if (!isRecording) return;
     fire('walk', 'Walk', { type: 'walk' });
     showToast('Walk', WALK_COLOR);
+    resetCount();
+  };
+
+  const recordHitByPitch = () => {
+    if (!isRecording) return;
+    fire('hit_by_pitch', 'HBP', { type: 'hit_by_pitch' });
+    showToast('Hit By Pitch', WALK_COLOR);
     resetCount();
   };
 
@@ -211,6 +238,24 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
         onOut={(label) => {
           setResultChooserOpen(false);
           incrementOuts(label);
+        }}
+        onHbp={() => {
+          setResultChooserOpen(false);
+          recordHitByPitch();
+        }}
+        CHOOSER_TOP={CHOOSER_TOP}
+        EDGE_L={EDGE_L}
+        EDGE_R={EDGE_R}
+        screenW={screenW}
+      />
+
+      <StrikeChooser
+        showPalette
+        open={strikeChooserOpen}
+        onClose={() => setStrikeChooserOpen(false)}
+        onPick={(kind) => {
+          setStrikeChooserOpen(false);
+          recordStrike(kind);
         }}
         CHOOSER_TOP={CHOOSER_TOP}
         EDGE_L={EDGE_L}

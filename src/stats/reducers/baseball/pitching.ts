@@ -8,38 +8,40 @@ export type BaseballPitchingStats = {
     strike: number;
     foul: number;
 
-    // Outcomes
     walk: number;
-    hitAllowed: number; // non-HR hits
+    hitByPitch: number;
+    hitAllowed: number;
     homerunAllowed: number;
-    outRecorded: number; // ONLY "out" events (kept for backward compat)
+    outRecorded: number;
     strikeout: number;
 
-    // Optional detail by type (if you store meta.type)
+    strikeTypes: { swinging: number; looking: number; unknown: number };
     hitTypes: { single: number; double: number; triple: number; bunt: number; unknown: number };
     outTypes: Record<string, number>;
     strikeoutTypes: { swinging: number; looking: number; unknown: number };
   };
 
-  // ✅ NEW: derived pitching metrics (safe/backward compatible)
   derived?: {
     totalPitches: number;
-    strikesTotal: number; // strikes + fouls
+    strikesTotal: number;
     balls: number;
 
-    outsRecordedTotal: number; // outRecorded + strikeout
+    outsRecordedTotal: number;
     inningsPitchedOuts: number;
-    inningsPitchedText: string; // e.g. "2.1" means 2 and 1/3 innings
+    inningsPitchedText: string;
 
     battersFaced: number;
 
-    hitsTotalAllowed: number; // hitAllowed + homerunAllowed
-    baserunners: number; // hitsTotalAllowed + walks
+    hitsTotalAllowed: number;
+    baserunners: number;
 
     strikePctText: string;
     ballPctText: string;
+    calledStrikePctText: string;
+    swingingStrikePctText: string;
     kPctText: string;
     bbPctText: string;
+    hbpPctText: string;
     kbbText: string;
 
     whipText: string;
@@ -52,12 +54,19 @@ export type BaseballPitchingStats = {
 };
 
 function clamp0(n: any) {
-  const x = typeof n === 'number' ? n : 0;
+  const x = typeof n === 'number' ? n : Number(n);
   return Number.isFinite(x) ? Math.max(0, x) : 0;
 }
 
 function readKey(e: any) {
   return String(e?.key ?? e?.kind ?? '').trim().toLowerCase();
+}
+
+function readKind(meta: any) {
+  const k = String(meta?.kind ?? meta?.type ?? '').trim().toLowerCase();
+  if (k === 'swinging') return 'swinging';
+  if (k === 'looking') return 'looking';
+  return 'unknown';
 }
 
 function pctText(num: number, den: number) {
@@ -73,7 +82,7 @@ function fixedText(num: number, digits = 2) {
 function inningsTextFromOuts(outs: number) {
   const o = Math.max(0, Math.floor(outs || 0));
   const whole = Math.floor(o / 3);
-  const rem = o % 3; // 0,1,2 outs
+  const rem = o % 3;
   return `${whole}.${rem}`;
 }
 
@@ -87,11 +96,13 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
       foul: 0,
 
       walk: 0,
+      hitByPitch: 0,
       hitAllowed: 0,
       homerunAllowed: 0,
       outRecorded: 0,
       strikeout: 0,
 
+      strikeTypes: { swinging: 0, looking: 0, unknown: 0 },
       hitTypes: { single: 0, double: 0, triple: 0, bunt: 0, unknown: 0 },
       outTypes: {},
       strikeoutTypes: { swinging: 0, looking: 0, unknown: 0 },
@@ -103,18 +114,25 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
     const events: any[] = (clip as any).events ?? [];
     base.totals.events += events.length;
 
-    const createdAt = clamp0((clip as any).createdAt);
-    base.lastUpdatedAt = Math.max(base.lastUpdatedAt, createdAt);
+    base.lastUpdatedAt = Math.max(base.lastUpdatedAt, clamp0((clip as any).createdAt));
 
     for (const e of events) {
       const key = readKey(e);
       const meta = (e?.meta ?? {}) as any;
 
-      if (key === 'ball') base.counts.ball += 1;
-      else if (key === 'strike') base.counts.strike += 1;
-      else if (key === 'foul') base.counts.foul += 1;
-      else if (key === 'walk') base.counts.walk += 1;
-      else if (key === 'hit') {
+      if (key === 'ball') {
+        base.counts.ball += 1;
+      } else if (key === 'strike') {
+        base.counts.strike += 1;
+        const kind = readKind(meta);
+        base.counts.strikeTypes[kind] += 1;
+      } else if (key === 'foul') {
+        base.counts.foul += 1;
+      } else if (key === 'walk') {
+        base.counts.walk += 1;
+      } else if (key === 'hit_by_pitch') {
+        base.counts.hitByPitch += 1;
+      } else if (key === 'hit') {
         base.counts.hitAllowed += 1;
         const t = String(meta?.type ?? '').toLowerCase();
         if (t === 'single') base.counts.hitTypes.single += 1;
@@ -130,17 +148,12 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
         if (t) base.counts.outTypes[t] = (base.counts.outTypes[t] ?? 0) + 1;
       } else if (key === 'strikeout') {
         base.counts.strikeout += 1;
-        const kind = String(meta?.kind ?? '').toLowerCase();
-        if (kind === 'swinging') base.counts.strikeoutTypes.swinging += 1;
-        else if (kind === 'looking') base.counts.strikeoutTypes.looking += 1;
-        else base.counts.strikeoutTypes.unknown += 1;
+        const kind = readKind(meta);
+        base.counts.strikeoutTypes[kind] += 1;
       }
     }
   }
 
-  // -------------------------
-  // ✅ Derived metrics (safe)
-  // -------------------------
   const balls = base.counts.ball;
   const strikes = base.counts.strike;
   const fouls = base.counts.foul;
@@ -148,18 +161,19 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
   const totalPitches = balls + strikes + fouls;
   const strikesTotal = strikes + fouls;
 
-  // ✅ IMPORTANT: strikeouts are outs too for IP/BF/WHIP
   const outsRecordedTotal = base.counts.outRecorded + base.counts.strikeout;
-
   const hitsTotalAllowed = base.counts.hitAllowed + base.counts.homerunAllowed;
 
-  // BF approximation based on what you actually log as plate appearance outcomes
-  const battersFaced = outsRecordedTotal + hitsTotalAllowed + base.counts.walk;
+  const battersFaced =
+    outsRecordedTotal +
+    hitsTotalAllowed +
+    base.counts.walk +
+    base.counts.hitByPitch;
 
   const inningsPitchedOuts = outsRecordedTotal;
   const inningsPitchedText = inningsTextFromOuts(inningsPitchedOuts);
 
-  const baserunners = hitsTotalAllowed + base.counts.walk;
+  const baserunners = hitsTotalAllowed + base.counts.walk + base.counts.hitByPitch;
 
   const whip =
     inningsPitchedOuts > 0 ? baserunners / (inningsPitchedOuts / 3) : 0;
@@ -167,9 +181,6 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
   const pitchesPerBF = battersFaced > 0 ? totalPitches / battersFaced : 0;
   const pitchesPerInning =
     inningsPitchedOuts > 0 ? totalPitches / (inningsPitchedOuts / 3) : 0;
-
-  const kPct = battersFaced > 0 ? base.counts.strikeout / battersFaced : 0;
-  const bbPct = battersFaced > 0 ? base.counts.walk / battersFaced : 0;
 
   const kbb =
     base.counts.walk > 0 ? base.counts.strikeout / base.counts.walk : Infinity;
@@ -190,8 +201,11 @@ export function reduceBaseballPitching(clips: ClipSidecar[]): BaseballPitchingSt
 
     strikePctText: pctText(strikesTotal, totalPitches),
     ballPctText: pctText(balls, totalPitches),
+    calledStrikePctText: pctText(base.counts.strikeTypes.looking, totalPitches),
+    swingingStrikePctText: pctText(base.counts.strikeTypes.swinging, totalPitches),
     kPctText: pctText(base.counts.strikeout, battersFaced),
     bbPctText: pctText(base.counts.walk, battersFaced),
+    hbpPctText: pctText(base.counts.hitByPitch, battersFaced),
     kbbText: kbb === Infinity ? '∞' : fixedText(kbb, 2),
 
     whipText: inningsPitchedOuts > 0 ? fixedText(whip, 2) : '0.00',
