@@ -1,7 +1,7 @@
-// src/hooks/library/useLibraryDataSource.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { getThumbnailViewUrl } from '../../../lib/backend';
 import { fetchMyVideos, type VideoRow } from '../../../lib/videos';
 
 export type LibraryStyle = {
@@ -30,14 +30,14 @@ export type LibraryRowLike = {
   highlightGold?: boolean;
   edgeColor?: string;
 
-  // ✅ sport-agnostic style
   libraryStyle?: LibraryStyle | null;
 
-  // ✅ keep cloud metadata so delete/share/playback can work safely
   videoId?: string;
   shareId?: string | null;
   b2VideoKey?: string | null;
   b2SidecarKey?: string | null;
+  b2ThumbnailKey?: string | null;
+  thumbnailUrl?: string | null;
 };
 
 const DS_KEY = 'library:dataSource';
@@ -82,9 +82,6 @@ function computeEdgeColorFromWL(o: 'W' | 'L' | '') {
   return 'rgba(255,255,255,0.18)';
 }
 
-/**
- * Map Firestore VideoRow -> LibraryRow-like
- */
 function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
   const videoId = safeStr((v as any).id, '');
   const shareId = safeStr((v as any).shareId, videoId);
@@ -168,7 +165,32 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     shareId: shareId || null,
     b2VideoKey: (v as any).b2VideoKey ?? null,
     b2SidecarKey: (v as any).b2SidecarKey ?? null,
+    b2ThumbnailKey: (v as any).b2ThumbnailKey ?? null,
+    thumbnailUrl: null,
   };
+}
+
+async function attachSignedThumbnails(rows: LibraryRowLike[]) {
+  return Promise.all(
+    rows.map(async (row) => {
+      const key = safeStr(row.b2ThumbnailKey, '');
+
+      if (!key) return row;
+
+      try {
+        const signed = await getThumbnailViewUrl(key);
+
+        return {
+          ...row,
+          thumbUri: signed.thumbnailUrl,
+          thumbnailUrl: signed.thumbnailUrl,
+        };
+      } catch (e) {
+        console.log('[useLibraryDataSource] thumbnail signed URL failed:', e);
+        return row;
+      }
+    }),
+  );
 }
 
 export function useLibraryDataSource(router: any, localRows: any[]) {
@@ -205,7 +227,9 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     (async () => {
       try {
         const vids = await fetchMyVideos();
-        const mapped = vids.map(toCloudLibraryRow).filter(Boolean) as LibraryRowLike[];
+        const mappedBase = vids.map(toCloudLibraryRow).filter(Boolean) as LibraryRowLike[];
+        const mapped = await attachSignedThumbnails(mappedBase);
+
         mapped.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
 
         if (cancelled) return;

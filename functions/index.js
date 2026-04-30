@@ -971,3 +971,62 @@ exports.getB2DownloadAuthForPath = onRequest((req, res) => {
     }
   });
 });
+
+exports.getThumbnailUrl = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'GET') {
+        return res.status(405).json({ error: 'Use GET' });
+      }
+
+      const authHeader = (req.headers.authorization || '').toString();
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const uid = decoded.uid;
+
+      const path = (req.query.path ?? '').toString().trim();
+
+      if (!path) {
+        return res.status(400).json({ error: 'Missing path' });
+      }
+
+      if (!path.startsWith('videos/')) {
+        return res.status(400).json({ error: 'Invalid path' });
+      }
+
+      if (!path.endsWith('.jpg') && !path.endsWith('.jpeg') && !path.endsWith('.png')) {
+        return res.status(400).json({ error: 'Path must be an image' });
+      }
+
+      const parts = path.split('/');
+      const uidInPath = parts[1];
+
+      if (!uidInPath || uidInPath !== uid) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const expiresInSec = 60 * 60;
+      const { downloadAuthToken } = await getB2DownloadAuth('videos/', expiresInSec);
+
+      const thumbnailUrl = buildCdnUrl(path, downloadAuthToken);
+
+      return res.json({
+        ok: true,
+        thumbnailUrl,
+        expiresInSec,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'getThumbnailUrl failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});

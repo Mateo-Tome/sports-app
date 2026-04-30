@@ -1,18 +1,20 @@
 import * as FileSystem from "expo-file-system";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { addDoc, collection, getFirestore } from "firebase/firestore";
 
-import { app, auth, ensureAnonymous } from "../firebase";
 import { testGetUploadUrl } from "../backend";
+import { app, auth, ensureAnonymous } from "../firebase";
+import { computeSportColor } from "../sportColors/computeSportColor";
 import {
   UploadCancelledError,
   uploadVideoToB2,
   type UploadProgress,
 } from "../uploadVideoToB2";
-import { computeSportColor } from "../sportColors/computeSportColor";
 
 export type UploadClipPhase =
   | "preparing"
   | "uploadingVideo"
+  | "uploadingThumbnail"
   | "uploadingSidecar"
   | "savingMetadata";
 
@@ -35,6 +37,9 @@ export type UploadClipToCloudResult = {
   b2VideoFileId: string | null;
   b2SidecarKey: string | null;
   b2SidecarFileId: string | null;
+  b2ThumbnailKey: string | null;
+  b2ThumbnailFileId: string | null;
+  thumbnailUrl: string | null;
   cloudKey: string;
   url: string;
 };
@@ -79,6 +84,17 @@ function throwIfCancelled(isCancelRequested?: () => boolean) {
   if (isCancelRequested?.()) {
     throw new UploadCancelledError();
   }
+}
+
+function b2FriendlyUrl(bucketName: string | null | undefined, key: string | null | undefined) {
+  const bucket = String(bucketName ?? "quickclip-videos").trim();
+  const fileKey = String(key ?? "").trim();
+  if (!bucket || !fileKey) return null;
+
+  return `https://f005.backblazeb2.com/file/${encodeURIComponent(bucket)}/${fileKey
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
 }
 
 async function readSidecarForUpload(videoUri: string): Promise<any | null> {
@@ -146,6 +162,43 @@ async function makeFreshTempUploadCopy(
   }
 
   return tempUri;
+}
+
+async function makeUploadThumbnail(videoUri: string, shareId: string): Promise<string | null> {
+  try {
+    const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    if (!baseDir) return null;
+
+    let generated: { uri: string } | null = null;
+
+    try {
+      generated = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: 900,
+        quality: 0.7,
+      });
+    } catch {
+      generated = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: 0,
+        quality: 0.7,
+      });
+    }
+
+    if (!generated?.uri) return null;
+
+    const dest = `${baseDir}thumb-${shareId}.jpg`;
+
+    try {
+      await FileSystem.deleteAsync(dest, { idempotent: true });
+    } catch {}
+
+    await FileSystem.copyAsync({ from: generated.uri, to: dest });
+
+    const info: any = await FileSystem.getInfoAsync(dest);
+    return info?.exists ? dest : null;
+  } catch (e) {
+    console.log("[uploadClipToCloud] thumbnail generation failed", e);
+    return null;
+  }
 }
 
 function computeScoreBits(fullSidecar: any | null): {
@@ -224,6 +277,8 @@ export async function uploadClipToCloud({
   isCancelRequested,
 }: UploadClipToCloudParams): Promise<UploadClipToCloudResult> {
   let tempVideoUri: string | null = null;
+  let tempThumbUri: string | null = null;
+  let tempJsonPath: string | null = null;
 
   try {
     onProgress?.({ phase: "preparing", message: "Preparing clip…" });
@@ -233,6 +288,8 @@ export async function uploadClipToCloud({
     const shareId = randomShareId();
 
     throwIfCancelled(isCancelRequested);
+
+    tempThumbUri = await makeUploadThumbnail(localUri, shareId);
 
     onProgress?.({ phase: "uploadingVideo", message: "Uploading video…" });
 
@@ -264,6 +321,36 @@ export async function uploadClipToCloud({
     const b2VideoKey: string | null = videoUpload?.fileName ?? null;
     const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
 
+    let b2ThumbnailKey: string | null = null;
+    let b2ThumbnailFileId: string | null = null;
+    let thumbnailUrl: string | null = null;
+
+    if (tempThumbUri) {
+      onProgress?.({ phase: "uploadingThumbnail", message: "Uploading thumbnail…" });
+
+      try {
+        const credsThumb: any = await testGetUploadUrl();
+        if (!credsThumb?.uploadUrl || !credsThumb?.uploadAuthToken) {
+          throw new Error(`testGetUploadUrl missing thumbnail creds: ${JSON.stringify(credsThumb)}`);
+        }
+
+        const thumbUpload = await uploadVideoToB2({
+          uploadUrl: credsThumb.uploadUrl,
+          uploadAuthToken: credsThumb.uploadAuthToken,
+          uid: user.uid,
+          localFileUri: tempThumbUri,
+          originalFileName: `${shareId}.jpg`,
+          mimeType: "image/jpeg",
+        });
+
+        b2ThumbnailKey = thumbUpload?.fileName ?? null;
+        b2ThumbnailFileId = thumbUpload?.fileId ?? null;
+        thumbnailUrl = b2FriendlyUrl(credsThumb.bucketName ?? creds1.bucketName, b2ThumbnailKey);
+      } catch (thumbErr) {
+        console.warn("[uploadClipToCloud] thumbnail upload failed; continuing without thumbnail", thumbErr);
+      }
+    }
+
     let b2SidecarKey: string | null = null;
     let b2SidecarFileId: string | null = null;
 
@@ -276,6 +363,7 @@ export async function uploadClipToCloud({
       onProgress?.({ phase: "uploadingSidecar", message: "Uploading stats…" });
 
       const jsonPath = FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
+      tempJsonPath = jsonPath;
 
       const payload = {
         ...fullSidecar,
@@ -284,6 +372,9 @@ export async function uploadClipToCloud({
           shareId,
           b2VideoKey,
           b2VideoFileId,
+          b2ThumbnailKey,
+          b2ThumbnailFileId,
+          thumbnailUrl,
           bucket: creds1.bucketName,
         },
       };
@@ -406,6 +497,11 @@ export async function uploadClipToCloud({
         b2SidecarKey,
         b2SidecarFileId,
 
+        b2ThumbnailKey,
+        b2ThumbnailFileId,
+        thumbnailUrl,
+        thumbUri: thumbnailUrl,
+
         shareId,
         isPublic: true,
 
@@ -437,6 +533,9 @@ export async function uploadClipToCloud({
       b2VideoFileId,
       b2SidecarKey,
       b2SidecarFileId,
+      b2ThumbnailKey,
+      b2ThumbnailFileId,
+      thumbnailUrl,
       cloudKey: b2VideoKey ?? shareId,
       url: "b2://quickclip-videos",
     };
@@ -444,6 +543,22 @@ export async function uploadClipToCloud({
     if (tempVideoUri) {
       try {
         await FileSystem.deleteAsync(tempVideoUri, {
+          idempotent: true,
+        });
+      } catch {}
+    }
+
+    if (tempThumbUri) {
+      try {
+        await FileSystem.deleteAsync(tempThumbUri, {
+          idempotent: true,
+        });
+      } catch {}
+    }
+
+    if (tempJsonPath) {
+      try {
+        await FileSystem.deleteAsync(tempJsonPath, {
           idempotent: true,
         });
       } catch {}

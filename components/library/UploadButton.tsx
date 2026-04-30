@@ -1,6 +1,5 @@
-// components/library/UploadButton.tsx
-
 import * as FileSystem from "expo-file-system";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
@@ -77,6 +76,54 @@ async function makeFreshTempUploadCopy(
   return tempUri;
 }
 
+async function makeUploadThumbnail(videoUri: string, shareId: string): Promise<string | null> {
+  try {
+    const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    if (!baseDir) return null;
+
+    let generated: { uri: string } | null = null;
+
+    try {
+      generated = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: 900,
+        quality: 0.7,
+      });
+    } catch {
+      generated = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: 0,
+        quality: 0.7,
+      });
+    }
+
+    if (!generated?.uri) return null;
+
+    const dest = `${baseDir}thumb-${shareId}.jpg`;
+
+    try {
+      await FileSystem.deleteAsync(dest, { idempotent: true });
+    } catch {}
+
+    await FileSystem.copyAsync({ from: generated.uri, to: dest });
+
+    const info: any = await FileSystem.getInfoAsync(dest);
+    return info?.exists ? dest : null;
+  } catch (e) {
+    console.log("[UploadButton] thumbnail generation failed", e);
+    return null;
+  }
+}
+
+function b2FriendlyUrl(bucketName: string | null | undefined, key: string | null | undefined) {
+  const bucket = String(bucketName ?? "quickclip-videos").trim();
+  const fileKey = String(key ?? "").trim();
+  if (!bucket || !fileKey) return null;
+
+  return `https://f005.backblazeb2.com/file/${encodeURIComponent(bucket)}/${fileKey
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+}
+
 type OldStyleProps = {
   row: {
     uri: string;
@@ -104,6 +151,7 @@ type UploadState =
   | "idle"
   | "preparing"
   | "uploadingVideo"
+  | "uploadingThumbnail"
   | "uploadingSidecar"
   | "savingMetadata"
   | "done"
@@ -233,6 +281,8 @@ function getStatusLabel(state: UploadState) {
       return "Preparing clip…";
     case "uploadingVideo":
       return "Uploading video…";
+    case "uploadingThumbnail":
+      return "Uploading thumbnail…";
     case "uploadingSidecar":
       return "Uploading stats…";
     case "savingMetadata":
@@ -305,6 +355,7 @@ export function UploadButton(props: Props) {
   const isBusy =
     state === "preparing" ||
     state === "uploadingVideo" ||
+    state === "uploadingThumbnail" ||
     state === "uploadingSidecar" ||
     state === "savingMetadata";
 
@@ -346,11 +397,15 @@ export function UploadButton(props: Props) {
             setStatusText(getStatusLabel("preparing"));
 
             let tempVideoUri: string | null = null;
+            let tempThumbUri: string | null = null;
+            let tempJsonPath: string | null = null;
 
             try {
               const user = await getCurrentOrAnonUser();
               const now = Date.now();
               const shareId = randomShareId();
+
+              tempThumbUri = await makeUploadThumbnail(localUri, shareId);
 
               setState("uploadingVideo");
               setStatusText(getStatusLabel("uploadingVideo"));
@@ -380,6 +435,37 @@ export function UploadButton(props: Props) {
               const b2VideoKey: string | null = videoUpload?.fileName ?? null;
               const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
 
+              let b2ThumbnailKey: string | null = null;
+              let b2ThumbnailFileId: string | null = null;
+              let thumbnailUrl: string | null = null;
+
+              if (tempThumbUri) {
+                setState("uploadingThumbnail");
+                setStatusText(getStatusLabel("uploadingThumbnail"));
+
+                try {
+                  const credsThumb: any = await testGetUploadUrl();
+                  if (!credsThumb?.uploadUrl || !credsThumb?.uploadAuthToken) {
+                    throw new Error(`testGetUploadUrl missing thumbnail creds: ${JSON.stringify(credsThumb)}`);
+                  }
+
+                  const thumbUpload = await uploadVideoToB2({
+                    uploadUrl: credsThumb.uploadUrl,
+                    uploadAuthToken: credsThumb.uploadAuthToken,
+                    uid: user.uid,
+                    localFileUri: tempThumbUri,
+                    originalFileName: `${shareId}.jpg`,
+                    mimeType: "image/jpeg",
+                  });
+
+                  b2ThumbnailKey = thumbUpload?.fileName ?? null;
+                  b2ThumbnailFileId = thumbUpload?.fileId ?? null;
+                  thumbnailUrl = b2FriendlyUrl(credsThumb.bucketName ?? creds1.bucketName, b2ThumbnailKey);
+                } catch (thumbErr) {
+                  console.warn("[UploadButton] thumbnail upload failed; continuing without thumbnail", thumbErr);
+                }
+              }
+
               let b2SidecarKey: string | null = null;
               let b2SidecarFileId: string | null = null;
 
@@ -394,6 +480,7 @@ export function UploadButton(props: Props) {
                 setSidecarProgress(null);
 
                 const jsonPath = FileSystem.cacheDirectory + `sidecar-${shareId}.json`;
+                tempJsonPath = jsonPath;
 
                 const payload = {
                   ...fullSidecar,
@@ -402,6 +489,9 @@ export function UploadButton(props: Props) {
                     shareId,
                     b2VideoKey,
                     b2VideoFileId,
+                    b2ThumbnailKey,
+                    b2ThumbnailFileId,
+                    thumbnailUrl,
                     bucket: creds1.bucketName,
                   },
                 };
@@ -521,6 +611,11 @@ export function UploadButton(props: Props) {
                   b2SidecarKey,
                   b2SidecarFileId,
 
+                  b2ThumbnailKey,
+                  b2ThumbnailFileId,
+                  thumbnailUrl,
+                  thumbUri: thumbnailUrl,
+
                   shareId,
                   isPublic: true,
 
@@ -581,6 +676,16 @@ export function UploadButton(props: Props) {
               if (tempVideoUri) {
                 try {
                   await FileSystem.deleteAsync(tempVideoUri, { idempotent: true });
+                } catch {}
+              }
+              if (tempThumbUri) {
+                try {
+                  await FileSystem.deleteAsync(tempThumbUri, { idempotent: true });
+                } catch {}
+              }
+              if (tempJsonPath) {
+                try {
+                  await FileSystem.deleteAsync(tempJsonPath, { idempotent: true });
                 } catch {}
               }
             }

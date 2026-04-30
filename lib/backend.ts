@@ -24,6 +24,9 @@ const LIST_LARGE_VIDEO_PARTS_URL =
 const CANCEL_LARGE_VIDEO_UPLOAD_URL =
   "https://us-central1-sports-app-9efb3.cloudfunctions.net/cancelLargeVideoUpload";
 
+const GET_THUMBNAIL_URL =
+  "https://us-central1-sports-app-9efb3.cloudfunctions.net/getThumbnailUrl";
+
 async function getFreshIdToken() {
   const user = auth.currentUser;
   if (!user) {
@@ -55,6 +58,31 @@ async function authedJsonFetch(url: string, body: unknown) {
   return { res, data };
 }
 
+async function authedGetJsonFetch(url: string, params: Record<string, string>) {
+  const idToken = await getFreshIdToken();
+
+  const qs = new URLSearchParams(params).toString();
+  const fullUrl = `${url}?${qs}`;
+
+  const res = await fetch(fullUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+    },
+  });
+
+  const text = await res.text();
+  let data: any;
+
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  return { res, data };
+}
+
 export async function testGetUploadUrl() {
   const { res, data } = await authedJsonFetch(UPLOAD_FUNCTION_URL, {});
 
@@ -67,6 +95,31 @@ export async function testGetUploadUrl() {
   }
 
   return data;
+}
+
+export async function getThumbnailViewUrl(path: string) {
+  const cleanPath = String(path ?? "").trim();
+
+  if (!cleanPath) {
+    throw new Error("Missing thumbnail path");
+  }
+
+  const { res, data } = await authedGetJsonFetch(GET_THUMBNAIL_URL, {
+    path: cleanPath,
+  });
+
+  console.log("[getThumbnailViewUrl] status:", res.status);
+  console.log("[getThumbnailViewUrl] body:", data);
+
+  if (!res.ok) {
+    throw new Error(`getThumbnailViewUrl failed (${res.status}): ${JSON.stringify(data)}`);
+  }
+
+  return data as {
+    ok: true;
+    thumbnailUrl: string;
+    expiresInSec: number;
+  };
 }
 
 export async function startLargeVideoUpload(params: {

@@ -1,4 +1,3 @@
-// lib/videos.ts
 import {
   collection,
   getDocs,
@@ -18,14 +17,9 @@ export type LibraryStyle = {
 
 export type VideoRow = {
   id: string;
-
-  // identity
   shareId: string;
-
-  // timestamps
   createdAt: any;
 
-  // naming/grouping
   athleteName?: string | null;
   athlete?: string | null;
   sport?: string | null;
@@ -33,28 +27,27 @@ export type VideoRow = {
   title?: string | null;
   originalFileName?: string | null;
 
-  // scoring (legacy / optional)
   result?: 'W' | 'L' | 'T' | string | null;
   scoreFor?: number | null;
   scoreAgainst?: number | null;
   scoreText?: string | null;
 
-  // ✅ NEW: generic, sport-agnostic presentation bundle
   libraryStyle?: LibraryStyle | null;
-
-  // ✅ legacy presentation fields (optional)
   edgeColor?: string | null;
   highlightGold?: boolean | null;
 
-  // storage pointers (any era)
   b2VideoKey?: string | null;
   b2SidecarKey?: string | null;
+  b2ThumbnailKey?: string | null;
+  b2ThumbnailFileId?: string | null;
+  thumbnailUrl?: string | null;
+  thumbUri?: string | null;
+
   storageKey?: string | null;
   sidecarRef?: string | null;
   url?: string | null;
   storagePath?: string | null;
 
-  // misc
   bytes?: number | null;
 };
 
@@ -91,15 +84,19 @@ export async function fetchMyVideos(): Promise<VideoRow[]> {
       scoreAgainst: data.scoreAgainst ?? null,
       scoreText: data.scoreText ?? null,
 
-      // ✅ NEW
       libraryStyle: (data.libraryStyle ?? null) as any,
 
-      // ✅ legacy
       edgeColor: data.edgeColor ?? null,
       highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
 
       b2VideoKey: data.b2VideoKey ?? null,
       b2SidecarKey: data.b2SidecarKey ?? null,
+
+      b2ThumbnailKey: data.b2ThumbnailKey ?? null,
+      b2ThumbnailFileId: data.b2ThumbnailFileId ?? null,
+      thumbnailUrl: data.thumbnailUrl ?? data.thumbUrl ?? null,
+      thumbUri: data.thumbUri ?? data.thumbnailUrl ?? data.thumbUrl ?? null,
+
       storageKey: data.storageKey ?? null,
       sidecarRef: data.sidecarRef ?? null,
       url: data.url ?? null,
