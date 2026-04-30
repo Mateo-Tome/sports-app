@@ -1,8 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 
 import { getThumbnailViewUrl } from '../../../lib/backend';
-import { fetchMyVideos, type VideoRow } from '../../../lib/videos';
+import {
+  fetchMyVideosPage,
+  type VideoPageCursor,
+  type VideoRow,
+} from '../../../lib/videos';
 
 export type LibraryStyle = {
   edgeColor?: string | null;
@@ -41,6 +45,16 @@ export type LibraryRowLike = {
 };
 
 const DS_KEY = 'library:dataSource';
+
+// Test with 7. Production: 20.
+const CLOUD_PAGE_SIZE = 20;
+
+const THUMB_CACHE_MS = 45 * 60 * 1000;
+
+type ThumbCacheEntry = {
+  url: string;
+  expiresAt: number;
+};
 
 function safeStr(v: any, fallback = '') {
   const s = (v ?? '').toString().trim();
@@ -136,11 +150,9 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
   return {
     uri: `cloud:${shareId}`,
     displayName: titleParts.join(' • '),
-
     athlete: athleteName,
     sport: sportStyle,
     mtime: createdAt,
-
     assetId: null,
     size: (v as any).bytes ?? null,
     thumbUri: null,
@@ -148,7 +160,6 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     outcome: outcomeWL || undefined,
     myScore,
     oppScore,
-
     finalScore: finalScoreText || null,
 
     homeIsAthlete:
@@ -157,7 +168,6 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
         : undefined,
 
     highlightGold: !!(v as any).highlightGold,
-
     edgeColor,
     libraryStyle: libStyle,
 
@@ -170,15 +180,33 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
   };
 }
 
-async function attachSignedThumbnails(rows: LibraryRowLike[]) {
+async function attachSignedThumbnails(
+  rows: LibraryRowLike[],
+  cacheRef: MutableRefObject<Map<string, ThumbCacheEntry>>,
+) {
   return Promise.all(
     rows.map(async (row) => {
       const key = safeStr(row.b2ThumbnailKey, '');
-
       if (!key) return row;
+
+      const now = Date.now();
+      const cached = cacheRef.current.get(key);
+
+      if (cached && cached.expiresAt > now) {
+        return {
+          ...row,
+          thumbUri: cached.url,
+          thumbnailUrl: cached.url,
+        };
+      }
 
       try {
         const signed = await getThumbnailViewUrl(key);
+
+        cacheRef.current.set(key, {
+          url: signed.thumbnailUrl,
+          expiresAt: Date.now() + THUMB_CACHE_MS,
+        });
 
         return {
           ...row,
@@ -198,6 +226,12 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
   const [cloudRows, setCloudRows] = useState<LibraryRowLike[]>([]);
   const [cloudCount, setCloudCount] = useState<number>(0);
   const [cloudRefreshNonce, setCloudRefreshNonce] = useState(0);
+  const [loadingMoreCloudRows, setLoadingMoreCloudRows] = useState(false);
+  const [hasMoreCloudRows, setHasMoreCloudRows] = useState(false);
+
+  const thumbCacheRef = useRef<Map<string, ThumbCacheEntry>>(new Map());
+  const loadingMoreRef = useRef(false);
+  const cursorRef = useRef<VideoPageCursor>(null);
 
   useEffect(() => {
     (async () => {
@@ -216,7 +250,37 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
   }, []);
 
   const refreshCloudRows = useCallback(async () => {
+    cursorRef.current = null;
+    setCloudRows([]);
+    setCloudCount(0);
+    setHasMoreCloudRows(false);
     setCloudRefreshNonce((n) => n + 1);
+  }, []);
+
+  const loadInitialCloudRows = useCallback(async () => {
+    const page = await fetchMyVideosPage({
+      pageSize: CLOUD_PAGE_SIZE,
+      cursor: null,
+    });
+
+    const mappedBase = page.rows
+      .map(toCloudLibraryRow)
+      .filter(Boolean) as LibraryRowLike[];
+
+    const mappedWithThumbs = await attachSignedThumbnails(
+      mappedBase,
+      thumbCacheRef,
+    );
+
+    cursorRef.current = page.cursor;
+
+    setCloudRows(mappedWithThumbs);
+    setCloudCount(mappedWithThumbs.length);
+    setHasMoreCloudRows(page.hasMore);
+
+    console.log(
+      `[useLibraryDataSource] initial cloud page loaded rows=${mappedWithThumbs.length}, hasMore=${page.hasMore}`,
+    );
   }, []);
 
   useEffect(() => {
@@ -226,20 +290,43 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
 
     (async () => {
       try {
-        const vids = await fetchMyVideos();
-        const mappedBase = vids.map(toCloudLibraryRow).filter(Boolean) as LibraryRowLike[];
-        const mapped = await attachSignedThumbnails(mappedBase);
-
-        mapped.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
-
-        if (cancelled) return;
-        setCloudRows(mapped);
-        setCloudCount(mapped.length);
-      } catch (e) {
-        if (cancelled) return;
+        cursorRef.current = null;
         setCloudRows([]);
         setCloudCount(0);
-        console.log('[useLibraryDataSource] fetchMyVideos failed:', e);
+        setHasMoreCloudRows(false);
+
+        const page = await fetchMyVideosPage({
+          pageSize: CLOUD_PAGE_SIZE,
+          cursor: null,
+        });
+
+        const mappedBase = page.rows
+          .map(toCloudLibraryRow)
+          .filter(Boolean) as LibraryRowLike[];
+
+        const mappedWithThumbs = await attachSignedThumbnails(
+          mappedBase,
+          thumbCacheRef,
+        );
+
+        if (cancelled) return;
+
+        cursorRef.current = page.cursor;
+
+        setCloudRows(mappedWithThumbs);
+        setCloudCount(mappedWithThumbs.length);
+        setHasMoreCloudRows(page.hasMore);
+
+        console.log(
+          `[useLibraryDataSource] cloud loaded page rows=${mappedWithThumbs.length}, hasMore=${page.hasMore}`,
+        );
+      } catch (e) {
+        if (cancelled) return;
+        cursorRef.current = null;
+        setCloudRows([]);
+        setCloudCount(0);
+        setHasMoreCloudRows(false);
+        console.log('[useLibraryDataSource] fetchMyVideosPage failed:', e);
       }
     })();
 
@@ -247,6 +334,46 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
       cancelled = true;
     };
   }, [dataSource, cloudRefreshNonce]);
+
+  const loadMoreCloudRows = useCallback(async () => {
+    if (dataSource !== 'cloud') return;
+    if (loadingMoreRef.current) return;
+    if (!hasMoreCloudRows) return;
+
+    loadingMoreRef.current = true;
+    setLoadingMoreCloudRows(true);
+
+    try {
+      const page = await fetchMyVideosPage({
+        pageSize: CLOUD_PAGE_SIZE,
+        cursor: cursorRef.current,
+      });
+
+      const mappedBase = page.rows
+        .map(toCloudLibraryRow)
+        .filter(Boolean) as LibraryRowLike[];
+
+      const mappedWithThumbs = await attachSignedThumbnails(
+        mappedBase,
+        thumbCacheRef,
+      );
+
+      cursorRef.current = page.cursor;
+
+      setCloudRows((prev) => [...prev, ...mappedWithThumbs]);
+      setCloudCount((prev) => prev + mappedWithThumbs.length);
+      setHasMoreCloudRows(page.hasMore);
+
+      console.log(
+        `[useLibraryDataSource] loaded more cloud rows add=${mappedWithThumbs.length}, hasMore=${page.hasMore}`,
+      );
+    } catch (e) {
+      console.log('[useLibraryDataSource] loadMoreCloudRows failed:', e);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMoreCloudRows(false);
+    }
+  }, [dataSource, hasMoreCloudRows]);
 
   const sourceRows = useMemo(() => {
     return dataSource === 'cloud' ? cloudRows : (localRows as any);
@@ -292,5 +419,8 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     cloudCount,
     routerPushPlayback,
     refreshCloudRows,
+    loadMoreCloudRows,
+    loadingMoreCloudRows,
+    hasMoreCloudRows,
   };
 }

@@ -92,6 +92,7 @@ async function mapLimit<T, R>(
 }
 
 let __fsQueue: Promise<any> = Promise.resolve();
+
 function enqueueFs<T>(fn: () => Promise<T>): Promise<T> {
   const task = __fsQueue.then(fn, fn);
   __fsQueue = task.then(
@@ -132,9 +133,13 @@ export default function LibraryScreen() {
     cloudCount,
     routerPushPlayback,
     refreshCloudRows,
+    loadMoreCloudRows,
+    loadingMoreCloudRows,
+    hasMoreCloudRows,
   } = useLibraryDataSource(router as any, rows);
 
   const rowsRef = useRef<Row[]>([]);
+
   useEffect(() => {
     rowsRef.current = sourceRows as any;
   }, [sourceRows]);
@@ -608,8 +613,10 @@ export default function LibraryScreen() {
   );
 
   const thumbQueueRef = useRef<Set<string>>(new Set());
+
   const onViewableItemsChanged = useRef(({ changed }: { changed: ViewToken[] }) => {
     const toFetch: string[] = [];
+
     changed.forEach((vt) => {
       const row = vt.item as Row;
       if (!row?.uri) return;
@@ -621,6 +628,7 @@ export default function LibraryScreen() {
         toFetch.push(row.uri);
       }
     });
+
     if (!toFetch.length) return;
 
     (async () => {
@@ -683,6 +691,9 @@ export default function LibraryScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewConfigRef.current}
         photoFor={photoFor}
+        onEndReached={dataSource === 'cloud' ? loadMoreCloudRows : undefined}
+        hasMore={dataSource === 'cloud' ? hasMoreCloudRows : false}
+        loadingMore={dataSource === 'cloud' ? loadingMoreCloudRows : false}
       />
 
       <Modal visible={false} />

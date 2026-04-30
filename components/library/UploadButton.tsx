@@ -14,6 +14,9 @@ import {
   type UploadProgress,
 } from "../../lib/uploadVideoToB2";
 
+import { getSportKeyFromSidecar } from "../../lib/library/sidecars";
+import "../../lib/library/sportLibraryBitsInit";
+import { buildSportLibraryBits } from "../../lib/library/sportLibraryStyleRegistry";
 import { computeSportColor } from "../../lib/sportColors/computeSportColor";
 
 async function readSidecarForUpload(videoUri: string): Promise<any | null> {
@@ -537,8 +540,17 @@ export function UploadButton(props: Props) {
                 const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
                 const sport = safeString(fullSidecar?.sport, "unknown");
                 const style = safeString(fullSidecar?.style, "");
+
+                const effectiveSport = fullSidecar
+                  ? getSportKeyFromSidecar(fullSidecar)
+                  : sport;
+
                 const sportStyle =
-                  style && style !== "unknown" ? `${sport}-${style}` : sport;
+                  effectiveSport && effectiveSport !== "unknown"
+                    ? effectiveSport
+                    : style && style !== "unknown"
+                      ? `${sport}:${style}`
+                      : sport;
 
                 const recordedAt =
                   typeof fullSidecar?.createdAt === "number" &&
@@ -566,16 +578,21 @@ export function UploadButton(props: Props) {
 
                 const scoreBits = computeScoreBits(fullSidecar);
 
-                const scSport = String(fullSidecar?.sport ?? sport ?? "");
+                const scSport = String(effectiveSport ?? sport ?? "");
                 const scEvents = Array.isArray(fullSidecar?.events)
                   ? fullSidecar.events
-                  : [];
+                  : Array.isArray(fullSidecar?.overlayEvents)
+                    ? fullSidecar.overlayEvents
+                    : Array.isArray(fullSidecar?.data?.events)
+                      ? fullSidecar.data.events
+                      : [];
+
                 const scHomeIsAthlete =
                   typeof fullSidecar?.homeIsAthlete === "boolean"
                     ? fullSidecar.homeIsAthlete
                     : true;
 
-                const colorRes = computeSportColor(
+                const fallbackColorRes = computeSportColor(
                   {
                     sport: scSport,
                     events: scEvents,
@@ -586,9 +603,35 @@ export function UploadButton(props: Props) {
                   scoreBits.finalScore
                 );
 
-                const libraryStyle = colorRes?.edgeColor
-                  ? { edgeColor: colorRes.edgeColor }
-                  : null;
+                const sportBits = buildSportLibraryBits(scSport, fullSidecar);
+
+                const finalEdgeColor =
+                  sportBits.edgeColor ??
+                  fallbackColorRes?.edgeColor ??
+                  null;
+
+                const finalBadgeText = sportBits.badgeText ?? null;
+
+                const finalBadgeColor =
+                  sportBits.badgeColor ??
+                  sportBits.edgeColor ??
+                  finalEdgeColor ??
+                  null;
+
+                const finalHighlightGold =
+                  typeof sportBits.highlightGold === "boolean"
+                    ? sportBits.highlightGold
+                    : !!fallbackColorRes?.highlightGold;
+
+                const libraryStyle =
+                  finalEdgeColor || finalBadgeText || finalBadgeColor
+                    ? {
+                        edgeColor: finalEdgeColor,
+                        badgeText: finalBadgeText,
+                        badgeColor: finalBadgeColor,
+                        highlight: finalHighlightGold,
+                      }
+                    : null;
 
                 const docData: any = {
                   ownerUid: user.uid,
@@ -628,8 +671,8 @@ export function UploadButton(props: Props) {
 
                   libraryStyle,
 
-                  edgeColor: colorRes?.edgeColor ?? null,
-                  highlightGold: !!colorRes?.highlightGold,
+                  edgeColor: finalEdgeColor,
+                  highlightGold: finalHighlightGold,
                 };
 
                 const ref = await addDoc(collection(db, "videos"), docData);

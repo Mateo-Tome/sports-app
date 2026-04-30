@@ -751,6 +751,7 @@ exports.deleteVideo = onRequest((req, res) => {
 
       const v = vidSnap.data() || {};
       const ownerUid = (v.ownerUid || '').toString().trim();
+
       if (!ownerUid || ownerUid !== uid) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -760,19 +761,40 @@ exports.deleteVideo = onRequest((req, res) => {
 
       const b2VideoKey = (v.b2VideoKey || '').toString().trim();
       const b2SidecarKey = (v.b2SidecarKey || '').toString().trim();
+      const b2ThumbnailKey = (v.b2ThumbnailKey || '').toString().trim();
       const shareId = (v.shareId || '').toString().trim();
 
       const deleteResults = {
         video: null,
         sidecar: null,
+        thumbnail: null,
       };
 
       if (b2VideoKey) {
-        deleteResults.video = await deleteB2FileByName(apiUrl, authToken, B2_BUCKET_ID, b2VideoKey);
+        deleteResults.video = await deleteB2FileByName(
+          apiUrl,
+          authToken,
+          B2_BUCKET_ID,
+          b2VideoKey
+        );
       }
 
       if (b2SidecarKey) {
-        deleteResults.sidecar = await deleteB2FileByName(apiUrl, authToken, B2_BUCKET_ID, b2SidecarKey);
+        deleteResults.sidecar = await deleteB2FileByName(
+          apiUrl,
+          authToken,
+          B2_BUCKET_ID,
+          b2SidecarKey
+        );
+      }
+
+      if (b2ThumbnailKey) {
+        deleteResults.thumbnail = await deleteB2FileByName(
+          apiUrl,
+          authToken,
+          B2_BUCKET_ID,
+          b2ThumbnailKey
+        );
       }
 
       await vidRef.delete();

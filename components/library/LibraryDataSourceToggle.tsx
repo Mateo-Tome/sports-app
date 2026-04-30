@@ -10,26 +10,85 @@ export default function LibraryDataSourceToggle({
   onChange: (v: 'local' | 'cloud') => void;
   cloudCount?: number;
 }) {
-  const pill = (active: boolean) => ({
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'white',
-    opacity: active ? 1 : 0.45,
-  });
+  const activeIsLocal = dataSource === 'local';
 
   return (
-    <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
-      <Pressable onPress={() => onChange('local')} style={pill(dataSource === 'local')}>
-        <Text style={{ color: 'white' }}>Local</Text>
-      </Pressable>
+    <View
+      style={{
+        marginHorizontal: 12,
+        marginTop: 10,
+        height: 56,
+        borderRadius: 999,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.18)',
+        backgroundColor: '#0b0b0b',
+        padding: 4,
+        overflow: 'hidden',
+      }}
+    >
+      <View style={{ flex: 1, flexDirection: 'row', position: 'relative' }}>
+        {/* active slider */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: activeIsLocal ? 0 : '50%',
+            width: '50%',
+            borderRadius: 999,
+            backgroundColor: '#dc2626',
+          }}
+        />
 
-      <Pressable onPress={() => onChange('cloud')} style={pill(dataSource === 'cloud')}>
-        <Text style={{ color: 'white' }}>
-          Cloud{typeof cloudCount === 'number' ? ` (${cloudCount})` : ''}
-        </Text>
-      </Pressable>
+        <Pressable
+          onPress={() => onChange('local')}
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 999,
+          }}
+        >
+          <Text
+            style={{
+              color: 'white',
+              fontSize: 16,
+              fontWeight: '900',
+              textAlign: 'center',
+              includeFontPadding: false,
+              lineHeight: 20,
+              opacity: activeIsLocal ? 1 : 0.62,
+            }}
+          >
+            Local
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => onChange('cloud')}
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 999,
+          }}
+        >
+          <Text
+            style={{
+              color: 'white',
+              fontSize: 16,
+              fontWeight: '900',
+              textAlign: 'center',
+              includeFontPadding: false,
+              lineHeight: 20,
+              opacity: activeIsLocal ? 0.62 : 1,
+            }}
+          >
+            Cloud{typeof cloudCount === 'number' ? ` (${cloudCount})` : ''}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

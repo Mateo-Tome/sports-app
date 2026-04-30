@@ -1,10 +1,14 @@
 import {
   collection,
+  limit as firestoreLimit,
   getDocs,
   getFirestore,
   orderBy,
   query,
+  startAfter,
   where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { app, ensureAnonymous } from './firebase';
 
@@ -51,58 +55,107 @@ export type VideoRow = {
   bytes?: number | null;
 };
 
-export async function fetchMyVideos(): Promise<VideoRow[]> {
+export type VideoPageCursor = QueryDocumentSnapshot<DocumentData> | null;
+
+export type FetchMyVideosPageResult = {
+  rows: VideoRow[];
+  cursor: VideoPageCursor;
+  hasMore: boolean;
+};
+
+function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
+  const data = d.data() as any;
+
+  return {
+    id: d.id,
+    shareId: data.shareId ?? d.id,
+
+    createdAt: data.createdAt ?? null,
+
+    athleteName: data.athleteName ?? null,
+    athlete: data.athlete ?? null,
+    sport: data.sport ?? null,
+    sportStyle: data.sportStyle ?? data.style ?? null,
+    title: data.title ?? null,
+    originalFileName: data.originalFileName ?? null,
+
+    result: data.result ?? null,
+    scoreFor: data.scoreFor ?? null,
+    scoreAgainst: data.scoreAgainst ?? null,
+    scoreText: data.scoreText ?? null,
+
+    libraryStyle: (data.libraryStyle ?? null) as any,
+
+    edgeColor: data.edgeColor ?? null,
+    highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
+
+    b2VideoKey: data.b2VideoKey ?? null,
+    b2SidecarKey: data.b2SidecarKey ?? null,
+
+    b2ThumbnailKey: data.b2ThumbnailKey ?? null,
+    b2ThumbnailFileId: data.b2ThumbnailFileId ?? null,
+    thumbnailUrl: data.thumbnailUrl ?? data.thumbUrl ?? null,
+    thumbUri: data.thumbUri ?? data.thumbnailUrl ?? data.thumbUrl ?? null,
+
+    storageKey: data.storageKey ?? null,
+    sidecarRef: data.sidecarRef ?? null,
+    url: data.url ?? null,
+    storagePath: data.storagePath ?? null,
+
+    bytes: data.bytes ?? null,
+  };
+}
+
+export async function fetchMyVideosPage(params?: {
+  pageSize?: number;
+  cursor?: VideoPageCursor;
+}): Promise<FetchMyVideosPageResult> {
   const user = await ensureAnonymous();
   const db = getFirestore(app);
 
-  const q = query(
+  const pageSize = Math.max(1, params?.pageSize ?? 20);
+  const cursor = params?.cursor ?? null;
+
+  const baseParts = [
     collection(db, 'videos'),
     where('ownerUid', '==', user.uid),
     orderBy('createdAt', 'desc'),
-  );
+  ] as const;
+
+  const q = cursor
+    ? query(...baseParts, startAfter(cursor), firestoreLimit(pageSize + 1))
+    : query(...baseParts, firestoreLimit(pageSize + 1));
 
   const snap = await getDocs(q);
 
-  return snap.docs.map((d) => {
-    const data = d.data() as any;
+  const docs = snap.docs;
+  const pageDocs = docs.slice(0, pageSize);
+  const hasMore = docs.length > pageSize;
+  const nextCursor = pageDocs.length ? pageDocs[pageDocs.length - 1] : cursor;
 
-    return {
-      id: d.id,
-      shareId: data.shareId ?? d.id,
+  return {
+    rows: pageDocs.map(docToVideoRow),
+    cursor: nextCursor,
+    hasMore,
+  };
+}
 
-      createdAt: data.createdAt ?? null,
+// Keep old function for anything else in your app that still imports fetchMyVideos.
+export async function fetchMyVideos(): Promise<VideoRow[]> {
+  const out: VideoRow[] = [];
+  let cursor: VideoPageCursor = null;
+  let hasMore = true;
 
-      athleteName: data.athleteName ?? null,
-      athlete: data.athlete ?? null,
-      sport: data.sport ?? null,
-      sportStyle: data.sportStyle ?? data.style ?? null,
-      title: data.title ?? null,
-      originalFileName: data.originalFileName ?? null,
+  while (hasMore) {
+    const page = await fetchMyVideosPage({
+      pageSize: 50,
+      cursor,
+    });
 
-      result: data.result ?? null,
-      scoreFor: data.scoreFor ?? null,
-      scoreAgainst: data.scoreAgainst ?? null,
-      scoreText: data.scoreText ?? null,
+    out.push(...page.rows);
+    cursor = page.cursor;
+    hasMore = page.hasMore;
+  }
 
-      libraryStyle: (data.libraryStyle ?? null) as any,
-
-      edgeColor: data.edgeColor ?? null,
-      highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
-
-      b2VideoKey: data.b2VideoKey ?? null,
-      b2SidecarKey: data.b2SidecarKey ?? null,
-
-      b2ThumbnailKey: data.b2ThumbnailKey ?? null,
-      b2ThumbnailFileId: data.b2ThumbnailFileId ?? null,
-      thumbnailUrl: data.thumbnailUrl ?? data.thumbUrl ?? null,
-      thumbUri: data.thumbUri ?? data.thumbnailUrl ?? data.thumbUrl ?? null,
-
-      storageKey: data.storageKey ?? null,
-      sidecarRef: data.sidecarRef ?? null,
-      url: data.url ?? null,
-      storagePath: data.storagePath ?? null,
-
-      bytes: data.bytes ?? null,
-    };
-  });
+  return out;
 }

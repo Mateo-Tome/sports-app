@@ -3,19 +3,18 @@
 import { Image } from 'expo-image';
 import React from 'react';
 import {
-    FlatList,
-    Pressable,
-    Text,
-    TouchableOpacity,
-    View,
-    ViewToken,
+  FlatList,
+  Pressable,
+  Text,
+  TouchableOpacity,
+  View,
+  ViewToken,
 } from 'react-native';
 
 import AllVideosList from './AllVideosList';
 import type { LibraryRow } from './LibraryVideoRow';
 
 type Row = LibraryRow;
-
 type ViewKey = 'all' | 'athletes' | 'sports';
 
 interface LibraryGroupedViewsProps {
@@ -36,7 +35,6 @@ interface LibraryGroupedViewsProps {
   tabBarHeight: number;
   topInset: number;
 
-  // Fixed type: use React.ReactElement instead of JSX.Element
   renderVideoRow: ({ item }: { item: Row }) => React.ReactElement | null;
 
   refreshing: boolean;
@@ -46,6 +44,10 @@ interface LibraryGroupedViewsProps {
   viewabilityConfig: { itemVisiblePercentThreshold: number };
 
   photoFor: (name: string) => string | null;
+
+  onEndReached?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }
 
 const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
@@ -67,8 +69,37 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
   onViewableItemsChanged,
   viewabilityConfig,
   photoFor,
+  onEndReached,
+  hasMore,
+  loadingMore,
 }) => {
-  // ---- header ----
+  const canLoadMore = !!onEndReached && !!hasMore && !loadingMore;
+
+  const renderLoadMoreFooter = () => {
+    if (!hasMore) return null;
+
+    return (
+      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        <Pressable
+          disabled={!canLoadMore}
+          onPress={onEndReached}
+          style={{
+            paddingVertical: 14,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: 'white',
+            alignItems: 'center',
+            opacity: canLoadMore ? 1 : 0.45,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '900' }}>
+            {loadingMore ? 'Loading more clips...' : 'Load more clips'}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  };
+
   const renderHeader = () => (
     <View
       style={{
@@ -98,7 +129,6 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
     </View>
   );
 
-  // ---- segmented tabs ----
   const renderSegmentedTabs = () => (
     <View
       style={{
@@ -120,8 +150,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
             paddingVertical: 8,
             paddingHorizontal: 12,
             borderRadius: 999,
-            backgroundColor:
-              view === k ? 'white' : 'rgba(255,255,255,0.12)',
+            backgroundColor: view === k ? 'white' : 'rgba(255,255,255,0.12)',
             borderWidth: 1,
             borderColor: 'white',
           }}
@@ -139,7 +168,6 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
     </View>
   );
 
-  // ---- Athletes root ----
   const renderAthletesRoot = () => (
     <FlatList
       data={Object.keys(rowsByAthlete).sort((a, b) => {
@@ -176,14 +204,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
               justifyContent: 'space-between',
             }}
           >
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-                flex: 1,
-              }}
-            >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
               {photoUri ? (
                 <Image
                   source={{ uri: photoUri }}
@@ -207,30 +228,18 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
                     justifyContent: 'center',
                   }}
                 >
-                  <Text
-                    style={{
-                      color: 'white',
-                      opacity: 0.7,
-                      fontSize: 20,
-                    }}
-                  >
+                  <Text style={{ color: 'white', opacity: 0.7, fontSize: 20 }}>
                     👤
                   </Text>
                 </View>
               )}
 
               <View style={{ flex: 1 }}>
-                <Text
-                  style={{ color: 'white', fontWeight: '800' }}
-                  numberOfLines={1}
-                >
+                <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
                   {name}
                 </Text>
                 <Text
-                  style={{
-                    color: 'rgba(255,255,255,0.7)',
-                    marginTop: 4,
-                  }}
+                  style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }}
                   numberOfLines={1}
                 >
                   {count} {count === 1 ? 'video' : 'videos'} • last {last}
@@ -238,19 +247,16 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
               </View>
             </View>
 
-            <Text
-              style={{
-                color: 'rgba(255,255,255,0.5)',
-                fontSize: 20,
-                marginLeft: 8,
-              }}
-            >
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>
               ›
             </Text>
           </Pressable>
         );
       }}
       contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.2}
+      ListFooterComponent={renderLoadMoreFooter}
       ListEmptyComponent={
         <Text
           style={{
@@ -266,21 +272,12 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
     />
   );
 
-  // ---- Athlete ➜ sports list ----
   const renderAthleteSports = () => {
     if (selectedAthlete == null) return null;
 
     return (
       <View style={{ flex: 1 }}>
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-          }}
-        >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
           <TouchableOpacity
             onPress={() => setSelectedAthlete(null)}
             style={{
@@ -294,28 +291,24 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           >
             <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
           </TouchableOpacity>
-          <Text
-            style={{
-              color: 'white',
-              fontWeight: '900',
-              marginLeft: 6,
-            }}
-          >
+          <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>
             {selectedAthlete}
           </Text>
         </View>
 
         <FlatList
-          data={Object.keys(athleteSportsMap[selectedAthlete] || {}).sort(
-            (a, b) => a.localeCompare(b),
+          data={Object.keys(athleteSportsMap[selectedAthlete] || {}).sort((a, b) =>
+            a.localeCompare(b),
           )}
           keyExtractor={(s) => s}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.2}
+          ListFooterComponent={renderLoadMoreFooter}
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
           renderItem={({ item: sport }) => {
             const list = athleteSportsMap[selectedAthlete]?.[sport] ?? [];
             const count = list.length;
-            const last = list[0]?.mtime
-              ? new Date(list[0].mtime!).toLocaleString()
-              : '—';
+            const last = list[0]?.mtime ? new Date(list[0].mtime!).toLocaleString() : '—';
             const preview = list[0]?.thumbUri ?? null;
 
             return (
@@ -335,14 +328,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
                   justifyContent: 'space-between',
                 }}
               >
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 12,
-                    flex: 1,
-                  }}
-                >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
                   {preview ? (
                     <Image
                       source={{ uri: preview }}
@@ -366,73 +352,39 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
                         justifyContent: 'center',
                       }}
                     >
-                      <Text
-                        style={{
-                          color: 'white',
-                          opacity: 0.6,
-                          fontSize: 12,
-                        }}
-                      >
-                        No preview
+                      <Text style={{ color: 'white', opacity: 0.6, fontSize: 12 }}>
+                        Loading...
                       </Text>
                     </View>
                   )}
 
                   <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        color: 'white',
-                        fontWeight: '800',
-                      }}
-                      numberOfLines={1}
-                    >
+                    <Text style={{ color: 'white', fontWeight: '800' }} numberOfLines={1}>
                       {sport}
                     </Text>
-                    <Text
-                      style={{
-                        color: 'rgba(255,255,255,0.7)',
-                        marginTop: 4,
-                      }}
-                      numberOfLines={1}
-                    >
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
                       {count} {count === 1 ? 'video' : 'videos'} • last {last}
                     </Text>
                   </View>
                 </View>
 
-                <Text
-                  style={{
-                    color: 'rgba(255,255,255,0.5)',
-                    fontSize: 20,
-                    marginLeft: 8,
-                  }}
-                >
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, marginLeft: 8 }}>
                   ›
                 </Text>
               </Pressable>
             );
           }}
-          contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
         />
       </View>
     );
   };
 
-  // ---- Athlete ➜ sport ➜ videos ----
   const renderAthleteSportVideos = () => {
     if (selectedAthlete == null || selectedSport == null) return null;
 
     return (
       <View style={{ flex: 1 }}>
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-          }}
-        >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
           <TouchableOpacity
             onPress={() => setSelectedSport(null)}
             style={{
@@ -446,13 +398,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           >
             <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
           </TouchableOpacity>
-          <Text
-            style={{
-              color: 'white',
-              fontWeight: '900',
-              marginLeft: 6,
-            }}
-          >
+          <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>
             {selectedAthlete} • {selectedSport}
           </Text>
         </View>
@@ -469,16 +415,22 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           removeClippedSubviews
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.2}
+          ListFooterComponent={renderLoadMoreFooter}
         />
       </View>
     );
   };
 
-  // ---- Sports root ----
   const renderSportsRoot = () => (
     <FlatList
       data={Object.keys(rowsBySport).sort((a, b) => a.localeCompare(b))}
       keyExtractor={(k) => k}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.2}
+      ListFooterComponent={renderLoadMoreFooter}
+      contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
       renderItem={({ item: s }) => (
         <Pressable
           onPress={() => setSelectedSport(s)}
@@ -501,25 +453,15 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           </Text>
         </Pressable>
       )}
-      contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
     />
   );
 
-  // ---- Sports ➜ videos ----
   const renderSportsVideos = () => {
     if (selectedSport == null) return null;
 
     return (
       <View style={{ flex: 1 }}>
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-          }}
-        >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
           <TouchableOpacity
             onPress={() => setSelectedSport(null)}
             style={{
@@ -533,13 +475,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           >
             <Text style={{ color: 'white', fontWeight: '800' }}>Back</Text>
           </TouchableOpacity>
-          <Text
-            style={{
-              color: 'white',
-              fontWeight: '900',
-              marginLeft: 6,
-            }}
-          >
+          <Text style={{ color: 'white', fontWeight: '900', marginLeft: 6 }}>
             {selectedSport}
           </Text>
         </View>
@@ -555,6 +491,9 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           removeClippedSubviews
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.2}
+          ListFooterComponent={renderLoadMoreFooter}
         />
       </View>
     );
@@ -574,6 +513,9 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
           tabBarHeight={tabBarHeight}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          onEndReached={onEndReached}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
         />
       )}
 
