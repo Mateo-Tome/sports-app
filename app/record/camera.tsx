@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   InteractionManager,
   Platform,
   StyleSheet,
@@ -32,7 +33,10 @@ import { getRecordingOverlay } from '../../components/overlays/RecordingOverlayR
 import { startNewSegment, stopCurrentSegment } from '../../lib/recording/segmentManager';
 import { useRecordingStartGuard } from '../../src/hooks/useRecordingStartGuard';
 
-import type { MatchEvent } from '../../lib/recording/finalizeRecording';
+import type {
+  MatchEvent,
+  RecordingOrientationKind,
+} from '../../lib/recording/finalizeRecording';
 
 type RouteParams = {
   athlete?: string | string[];
@@ -61,7 +65,7 @@ export default function CameraScreen() {
 
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
-  const [remountKey] = useState(0);
+  const [remountKey, setRemountKey] = useState(0);
 
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
   const camOpacity = useRef(new Animated.Value(0)).current;
@@ -88,7 +92,10 @@ export default function CameraScreen() {
   const totalPausedMsRef = useRef(0);
   const pauseStartedAtRef = useRef<number | null>(null);
 
-  const { showRotateHelper } = useRecordingStartGuard();
+  const recordingOrientationRef = useRef<RecordingOrientationKind>('unknown');
+  const recordingViewportRef = useRef({ width: 0, height: 0 });
+
+  const { orientation, isLandscapeReady, showRotateHelper } = useRecordingStartGuard();
 
   useEffect(() => {
     if (cameraPermission && !cameraPermission.granted && cameraPermission.canAskAgain) {
@@ -98,24 +105,66 @@ export default function CameraScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      let mounted = true;
+      let cancelled = false;
 
-      const lockOrientation = async () => {
+      const enterLandscapeThenMountCamera = async () => {
+        setShouldRenderCamera(false);
+        setCameraReady(false);
+        camOpacity.setValue(0);
+
         try {
-          if (Platform.OS === 'android') {
-            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT);
-          } else {
-            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-          }
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         } catch (e) {
           console.log('[camera] failed to lock landscape', e);
         }
+
+        const waitUntilLandscape = async () => {
+          const start = Date.now();
+
+          while (!cancelled) {
+            const win = Dimensions.get('window');
+            if (win.width > win.height) return true;
+
+            if (Date.now() - start > 3000) {
+              console.log('[camera] landscape wait timed out', win);
+              return false;
+            }
+
+            await new Promise((r) => setTimeout(r, 80));
+          }
+
+          return false;
+        };
+
+        const landscapeReady = await waitUntilLandscape();
+        if (cancelled) return;
+
+        if (landscapeReady) {
+          setRemountKey((k) => k + 1);
+
+          InteractionManager.runAfterInteractions(() => {
+            if (!cancelled && cameraPermission?.granted) {
+              setShouldRenderCamera(true);
+            }
+          });
+        }
       };
 
-      lockOrientation();
+      if (cameraPermission?.granted) {
+        enterLandscapeThenMountCamera();
+      }
 
       return () => {
-        mounted = false;
+        cancelled = true;
+
+        setShouldRenderCamera(false);
+        setCameraReady(false);
+        camOpacity.setValue(0);
+
+        if (segmentActiveRef.current) {
+          stopCurrentSegment(cameraRef, segmentActiveRef);
+        }
+
         const unlockOrientation = async () => {
           try {
             await ScreenOrientation.unlockAsync();
@@ -123,11 +172,10 @@ export default function CameraScreen() {
             console.log('[camera] failed to unlock orientation', e);
           }
         };
-        if (mounted === false) {
-          unlockOrientation();
-        }
+
+        unlockOrientation();
       };
-    }, []),
+    }, [cameraPermission?.granted, camOpacity]),
   );
 
   useEffect(() => {
@@ -143,7 +191,7 @@ export default function CameraScreen() {
   }, [cameraReady, isRecording, pulseAnim]);
 
   useEffect(() => {
-    if (!cameraReady || isRecording || !showRotateHelper) {
+    if (!shouldRenderCamera || cameraReady || isRecording || !showRotateHelper) {
       rotateAnim.stopAnimation();
       rotateAnim.setValue(0);
       return;
@@ -167,7 +215,7 @@ export default function CameraScreen() {
 
     loop.start();
     return () => loop.stop();
-  }, [cameraReady, isRecording, showRotateHelper, rotateAnim]);
+  }, [shouldRenderCamera, cameraReady, isRecording, showRotateHelper, rotateAnim]);
 
   const deviceRotateStyle = {
     transform: [
@@ -206,36 +254,14 @@ export default function CameraScreen() {
     return { ActiveOverlay: res.Overlay, preRollSec: res.preRollSec || 3 };
   }, [sportParam, styleParam]);
 
-  useFocusEffect(
-    useCallback(() => {
-      let isCancelled = false;
-
-      const task = InteractionManager.runAfterInteractions(() => {
-        if (!isCancelled && cameraPermission?.granted) {
-          setShouldRenderCamera(true);
-        }
-      });
-
-      return () => {
-        isCancelled = true;
-        task.cancel();
-
-        setShouldRenderCamera(false);
-        setCameraReady(false);
-        camOpacity.setValue(0);
-
-        if (segmentActiveRef.current) {
-          stopCurrentSegment(cameraRef, segmentActiveRef);
-        }
-      };
-    }, [cameraPermission, camOpacity]),
-  );
-
   const getCurrentTSec = useCallback(() => {
     if (!startMs.current) return 0;
+
     const pausedNow =
       isPaused && pauseStartedAtRef.current ? Date.now() - pauseStartedAtRef.current : 0;
+
     const elapsed = Date.now() - startMs.current - totalPausedMsRef.current - pausedNow;
+
     return Math.max(0, Math.round(elapsed / 1000 - preRollSec));
   }, [isPaused, preRollSec]);
 
@@ -271,10 +297,28 @@ export default function CameraScreen() {
     requestMicrophonePermission,
   ]);
 
+  const captureRecordingSnapshot = () => {
+    const win = Dimensions.get('window');
+
+    recordingOrientationRef.current = orientation === 'landscape' ? 'landscape' : 'unknown';
+    recordingViewportRef.current = {
+      width: win.width,
+      height: win.height,
+    };
+
+    console.log('[camera] recording snapshot', {
+      recordingOrientation: recordingOrientationRef.current,
+      viewport: recordingViewportRef.current,
+      platform: Platform.OS,
+    });
+  };
+
   const handleStart = async () => {
     const hasPermissions = await ensureRecordingPermissions();
     if (!hasPermissions) return;
     if (!cameraReady || isTransitioning) return;
+
+    captureRecordingSnapshot();
 
     setIsTransitioning(true);
 
@@ -294,6 +338,7 @@ export default function CameraScreen() {
       setIsRecording(true);
       setIsPaused(false);
     } catch (e) {
+      console.log('[camera] start recording failed', e);
       Alert.alert('Error', 'Could not start camera hardware.');
     } finally {
       setIsTransitioning(false);
@@ -302,8 +347,10 @@ export default function CameraScreen() {
 
   const handlePause = async () => {
     if (!isRecording || isPaused || isTransitioning) return;
+
     setIsTransitioning(true);
     pauseStartedAtRef.current = Date.now();
+
     try {
       await stopCurrentSegment(cameraRef, segmentActiveRef);
       setIsPaused(true);
@@ -314,10 +361,13 @@ export default function CameraScreen() {
 
   const handleResume = async () => {
     if (!isPaused || isTransitioning) return;
+
     setIsTransitioning(true);
+
     if (pauseStartedAtRef.current) {
       totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
     }
+
     pauseStartedAtRef.current = null;
 
     try {
@@ -340,6 +390,7 @@ export default function CameraScreen() {
       await new Promise((r) => setTimeout(r, 800));
 
       const mod = await import('../../lib/recording/finalizeRecording');
+
       await mod.finalizeRecording(
         segmentsRef.current,
         athleteName,
@@ -347,6 +398,13 @@ export default function CameraScreen() {
         markers,
         eventsRef.current,
         scoreRef.current,
+        {
+          recordingOrientation: recordingOrientationRef.current,
+          windowOrientation: recordingOrientationRef.current,
+          viewportWidth: recordingViewportRef.current.width,
+          viewportHeight: recordingViewportRef.current.height,
+          orientationOverride: 0,
+        },
       );
 
       try {
@@ -355,6 +413,7 @@ export default function CameraScreen() {
 
       navigation.goBack();
     } catch (error) {
+      console.log('[camera] save failed', error);
       Alert.alert('Save failed', 'The recording was interrupted.');
     } finally {
       setIsProcessing(false);
@@ -362,8 +421,11 @@ export default function CameraScreen() {
     }
   };
 
+  const showWaitingForLandscape =
+    cameraPermission?.granted && !shouldRenderCamera && !isProcessing;
+
   const showReadyHud = cameraReady && !isRecording && !isProcessing;
-  const showRotateHint = showReadyHud && showRotateHelper;
+  const recordDisabled = !cameraReady || isTransitioning;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -401,7 +463,15 @@ export default function CameraScreen() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <ActivityIndicator color="white" />
+                <View style={{ alignItems: 'center', paddingHorizontal: 24 }}>
+                  <ActivityIndicator color="white" style={{ marginBottom: 18 }} />
+                  <View style={styles.hudPill}>
+                    <Text style={styles.hudStatusText}>ROTATE PHONE SIDEWAYS</Text>
+                  </View>
+                  <Text style={styles.waitText}>
+                    Camera will open after the screen is landscape.
+                  </Text>
+                </View>
               )}
             </View>
           )}
@@ -420,19 +490,19 @@ export default function CameraScreen() {
             </TouchableOpacity>
           )}
 
+          {showWaitingForLandscape && (
+            <View style={styles.rotateHintCenterWrap} pointerEvents="none">
+              <View style={styles.rotateHintCard}>
+                <Animated.View style={[styles.rotateDeviceShell, deviceRotateStyle]}>
+                  <View style={styles.rotateDeviceScreen} />
+                </Animated.View>
+                <Text style={styles.rotateHintText}>Rotate device</Text>
+              </View>
+            </View>
+          )}
+
           {showReadyHud && (
             <View style={styles.centerHudWrap} pointerEvents="none">
-              {showRotateHint && (
-                <View style={styles.rotateHintTopWrap}>
-                  <View style={styles.rotateHintCard}>
-                    <Animated.View style={[styles.rotateDeviceShell, deviceRotateStyle]}>
-                      <View style={styles.rotateDeviceScreen} />
-                    </Animated.View>
-                    <Text style={styles.rotateHintText}>Rotate device</Text>
-                  </View>
-                </View>
-              )}
-
               <View style={styles.hudPill}>
                 <Text style={styles.hudAthleteName}>{athleteName.toUpperCase()}</Text>
                 <View style={styles.hudDivider} />
@@ -459,6 +529,7 @@ export default function CameraScreen() {
                 isRecording={isRecording}
                 onEvent={(evt: any) => {
                   if (!isRecording || isPaused) return;
+
                   const t = getCurrentTSec();
 
                   if (evt.value) {
@@ -488,9 +559,9 @@ export default function CameraScreen() {
           <View style={[styles.controls, { bottom: insets.bottom + 40 }]}>
             {!isRecording ? (
               <TouchableOpacity
-                style={styles.recordBtnOuter}
+                style={[styles.recordBtnOuter, recordDisabled && styles.recordBtnDisabled]}
                 onPress={handleStart}
-                disabled={!cameraReady || isTransitioning}
+                disabled={recordDisabled}
               >
                 <View style={styles.recordBtnInner} />
               </TouchableOpacity>
@@ -551,10 +622,15 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  rotateHintTopWrap: {
-    marginBottom: 12,
+  rotateHintCenterWrap: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    top: '36%',
     alignItems: 'center',
+    zIndex: 10,
   },
+
   rotateHintCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -625,6 +701,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.5,
   },
+  waitText: {
+    color: 'rgba(255,255,255,0.72)',
+    marginTop: 12,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
 
   pausedPillWrap: {
     ...StyleSheet.absoluteFillObject,
@@ -675,6 +758,9 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  recordBtnDisabled: {
+    opacity: 0.35,
   },
   recordBtnInner: { width: 58, height: 58, borderRadius: 30, backgroundColor: '#FF3B30' },
   stopIcon: { width: 30, height: 30, backgroundColor: 'white', borderRadius: 4 },

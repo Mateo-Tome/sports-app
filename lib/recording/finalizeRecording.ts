@@ -1,13 +1,10 @@
 // lib/recording/finalizeRecording.ts
-// Takes finished segments + metadata, creates the final match file,
-// writes the JSON payload, and *optionally* post-processes (Photos import, highlights).
 
 import * as FileSystem from 'expo-file-system';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import { stitchSegmentsWithFallback } from './segmentStitcher';
 import {
-  importToPhotosAndAlbums,
   processHighlights,
   runPostSaveTasksSafe,
   saveToAppStorage,
@@ -28,6 +25,17 @@ export type MatchEvent = {
   scoreAfter?: { home: number; opponent: number };
 };
 
+export type OrientationOverride = 0 | 90 | 180 | 270;
+export type RecordingOrientationKind = 'portrait' | 'landscape' | 'unknown';
+
+type FinalizeRecordingOptions = {
+  recordingOrientation?: RecordingOrientationKind;
+  windowOrientation?: RecordingOrientationKind;
+  orientationOverride?: OrientationOverride;
+  viewportWidth?: number;
+  viewportHeight?: number;
+};
+
 type SidecarPayload = {
   athlete: string;
   sport: string;
@@ -38,8 +46,29 @@ type SidecarPayload = {
   homeIsAthlete: boolean;
   highlights: Array<{ t: number; duration: number }>;
   processedClips: Array<{ url: string; markerTime: number }>;
-  orientationOverride: 0 | 90 | 180 | 270;
+  orientationOverride: OrientationOverride;
+  recordingOrientation: RecordingOrientationKind;
+  recordingWindowOrientation: RecordingOrientationKind;
+  recordingPlatform: typeof Platform.OS;
+  recordingViewport?: {
+    width: number;
+    height: number;
+  };
+  recordingMeta: {
+    appSidecarVersion: number;
+    cameraMountedOnlyAfterLandscape: boolean;
+    playbackAutoRotationApplied: boolean;
+  };
 };
+
+function normalizeOrientationOverride(value: unknown): OrientationOverride {
+  return value === 90 || value === 180 || value === 270 ? value : 0;
+}
+
+function normalizeRecordingOrientation(value: unknown): RecordingOrientationKind {
+  if (value === 'landscape' || value === 'portrait') return value;
+  return 'unknown';
+}
 
 export async function finalizeRecording(
   segments: string[],
@@ -48,6 +77,7 @@ export async function finalizeRecording(
   markers: number[],
   events: MatchEvent[],
   score: { home: number; opponent: number },
+  options: FinalizeRecordingOptions = {},
 ) {
   const HILITE_DURATION_SEC = 10;
   const t0 = Date.now();
@@ -62,13 +92,17 @@ export async function finalizeRecording(
 
   log(`begin segments=${segments.length} markers=${markers.length} events=${events.length}`);
 
-  // 1) Choose final path (stitch if multiple)
   if (segments.length === 1) {
     finalPath = segments[0];
     log('single segment: no stitch');
   } else {
     const stitchRes = await stitchSegmentsWithFallback(segments);
-    log(`stitch done stage=${stitchRes.stitchStage ?? 'unknown'} usedFallback=${Boolean(stitchRes.usedFallback)}`);
+
+    log(
+      `stitch done stage=${stitchRes.stitchStage ?? 'unknown'} usedFallback=${Boolean(
+        stitchRes.usedFallback,
+      )}`,
+    );
 
     if (!stitchRes.ok || !stitchRes.finalPath) {
       Alert.alert('Save error', 'Failed to stitch segments.');
@@ -78,96 +112,104 @@ export async function finalizeRecording(
     finalPath = stitchRes.finalPath;
   }
 
-  // 2) Save to app storage FAST (do NOT block on Photos)
   const athlete = (chosenAthlete || '').trim() || 'Unassigned';
   const sport = (sportKey || '').trim() || 'unknown';
 
   const { appUri } = await saveToAppStorage(finalPath, athlete, sport, {
-    importToPhotos: false, // critical for instant Stop UX
+    importToPhotos: false,
   });
 
   log('saveToAppStorage done');
 
-  // 3) Write sidecar JSON next to appUri (fast)
   let jsonUri: string | null = null;
 
   if (appUri) {
     jsonUri = appUri.replace(/\.[^/.]+$/, '') + '.json';
 
+    const [sportOnlyRaw, styleRaw] = sportKey.split(':');
+
     const payload: SidecarPayload = {
       athlete,
-      sport: sportKey.split(':')[0],
-      style: sportKey.split(':')[1],
+      sport: sportOnlyRaw || 'unknown',
+      style: styleRaw || 'default',
       createdAt: Date.now(),
       events,
       finalScore: score,
       homeIsAthlete: true,
       highlights: markers.map((t) => ({ t, duration: HILITE_DURATION_SEC })),
-      processedClips: [], // populated by post tasks later (best-effort)
-      orientationOverride: 0,
+      processedClips: [],
+      orientationOverride: normalizeOrientationOverride(options.orientationOverride),
+      recordingOrientation: normalizeRecordingOrientation(options.recordingOrientation),
+      recordingWindowOrientation: normalizeRecordingOrientation(options.windowOrientation),
+      recordingPlatform: Platform.OS,
+      recordingViewport:
+        typeof options.viewportWidth === 'number' && typeof options.viewportHeight === 'number'
+          ? {
+              width: options.viewportWidth,
+              height: options.viewportHeight,
+            }
+          : undefined,
+      recordingMeta: {
+        appSidecarVersion: 3,
+        cameraMountedOnlyAfterLandscape: true,
+        playbackAutoRotationApplied: false,
+      },
     };
 
     await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(payload, null, 2));
-    log('sidecar written');
+    log(`sidecar written orientationOverride=${payload.orientationOverride}`);
   } else {
     console.log('[finalize] no appUri -> no json written');
   }
 
-  // 4) Clean up original segments (best-effort)
   for (const seg of segments) {
     try {
       await FileSystem.deleteAsync(seg, { idempotent: true });
     } catch {}
   }
+
   log('segments cleaned');
 
-  // SHOW QUICK CONFIRMATION (fast)
   Alert.alert(
     'Recording saved',
     `Athlete: ${athlete}\nSegments: ${segments.length}\nHighlights queued: ${markers.length}`,
   );
 
-  // 5) Post-processing (safe fire-and-forget)
-  // - Photos import for full match (optional)
-  // - Highlights generation (optional)
-  //
-  // We do this AFTER returning, so Stop feels instant.
-  if (appUri) {
-    const sportName = sportKey; // keep your current convention
-
+  if (appUri && markers.length > 0) {
     runPostSaveTasksSafe([
       async () => {
-        log('post: photos import begin');
-        const assetId = await importToPhotosAndAlbums(appUri, athlete, sportName);
-        log(`post: photos import done assetId=${assetId ? 'yes' : 'no'}`);
-      },
-      async () => {
-        if (!markers.length) return;
         log('post: highlights begin');
 
-        // Highlights are stored in app storage either way.
-        // We keep Photos import OFF for highlights to avoid stalls.
         const clips = await processHighlights(appUri, markers, HILITE_DURATION_SEC, athlete, {
           importHighlightsToPhotos: false,
-          maxClips: 12, // safety cap; raise if you want
+          maxClips: 12,
         });
 
         log(`post: highlights done clips=${clips.length}`);
 
-        // Optional: patch sidecar with processedClips list (best-effort)
         if (jsonUri) {
           try {
             const txt = await FileSystem.readAsStringAsync(jsonUri);
             const parsed = JSON.parse(txt) as SidecarPayload;
-            parsed.processedClips = clips.map((c: any) => ({ url: c.url, markerTime: c.markerTime }));
-            if (
-              parsed.orientationOverride !== 0 &&
-              parsed.orientationOverride !== 90 &&
-              parsed.orientationOverride !== 180 &&
-              parsed.orientationOverride !== 270
-            ) {
-              parsed.orientationOverride = 0;
-            }
+
+            parsed.processedClips = clips.map((c: any) => ({
+              url: c.url,
+              markerTime: c.markerTime,
+            }));
+
+            parsed.orientationOverride = normalizeOrientationOverride(parsed.orientationOverride);
+            parsed.recordingOrientation = normalizeRecordingOrientation(parsed.recordingOrientation);
+            parsed.recordingWindowOrientation = normalizeRecordingOrientation(
+              parsed.recordingWindowOrientation,
+            );
+            parsed.recordingPlatform = parsed.recordingPlatform ?? Platform.OS;
+            parsed.recordingMeta = {
+              ...(parsed.recordingMeta ?? {}),
+              appSidecarVersion: 3,
+              cameraMountedOnlyAfterLandscape: true,
+              playbackAutoRotationApplied: false,
+            };
+
             await FileSystem.writeAsStringAsync(jsonUri, JSON.stringify(parsed, null, 2));
             log('post: sidecar updated with clips');
           } catch (e) {
