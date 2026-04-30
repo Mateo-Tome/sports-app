@@ -69,7 +69,6 @@ export default function CameraScreen() {
 
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
   const camOpacity = useRef(new Animated.Value(0)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
 
   const [zoom, setZoom] = useState(0);
   const baseZoomRef = useRef(0);
@@ -95,7 +94,7 @@ export default function CameraScreen() {
   const recordingOrientationRef = useRef<RecordingOrientationKind>('unknown');
   const recordingViewportRef = useRef({ width: 0, height: 0 });
 
-  const { orientation, isLandscapeReady, showRotateHelper } = useRecordingStartGuard();
+  const { orientation } = useRecordingStartGuard();
 
   useEffect(() => {
     if (cameraPermission && !cameraPermission.granted && cameraPermission.canAskAgain) {
@@ -123,6 +122,7 @@ export default function CameraScreen() {
 
           while (!cancelled) {
             const win = Dimensions.get('window');
+
             if (win.width > win.height) return true;
 
             if (Date.now() - start > 3000) {
@@ -147,6 +147,9 @@ export default function CameraScreen() {
               setShouldRenderCamera(true);
             }
           });
+        } else {
+          setRemountKey((k) => k + 1);
+          setShouldRenderCamera(true);
         }
       };
 
@@ -189,50 +192,6 @@ export default function CameraScreen() {
     if (cameraReady && !isRecording) pulse.start();
     return () => pulse.stop();
   }, [cameraReady, isRecording, pulseAnim]);
-
-  useEffect(() => {
-    if (!shouldRenderCamera || cameraReady || isRecording || !showRotateHelper) {
-      rotateAnim.stopAnimation();
-      rotateAnim.setValue(0);
-      return;
-    }
-
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(rotateAnim, {
-          toValue: 1,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-        Animated.timing(rotateAnim, {
-          toValue: 0,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-        Animated.delay(200),
-      ]),
-    );
-
-    loop.start();
-    return () => loop.stop();
-  }, [shouldRenderCamera, cameraReady, isRecording, showRotateHelper, rotateAnim]);
-
-  const deviceRotateStyle = {
-    transform: [
-      {
-        rotate: rotateAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0deg', '90deg'],
-        }),
-      },
-      {
-        scale: rotateAnim.interpolate({
-          inputRange: [0, 0.5, 1],
-          outputRange: [1, 1.06, 1],
-        }),
-      },
-    ],
-  };
 
   const onPinchGestureEvent = (event: PinchGestureHandlerGestureEvent) => {
     let newZoom = baseZoomRef.current + (event.nativeEvent.scale - 1) * 0.2;
@@ -421,9 +380,7 @@ export default function CameraScreen() {
     }
   };
 
-  const showWaitingForLandscape =
-    cameraPermission?.granted && !shouldRenderCamera && !isProcessing;
-
+  const showWaitingForCamera = cameraPermission?.granted && !shouldRenderCamera && !isProcessing;
   const showReadyHud = cameraReady && !isRecording && !isProcessing;
   const recordDisabled = !cameraReady || isTransitioning;
 
@@ -465,12 +422,7 @@ export default function CameraScreen() {
               ) : (
                 <View style={{ alignItems: 'center', paddingHorizontal: 24 }}>
                   <ActivityIndicator color="white" style={{ marginBottom: 18 }} />
-                  <View style={styles.hudPill}>
-                    <Text style={styles.hudStatusText}>ROTATE PHONE SIDEWAYS</Text>
-                  </View>
-                  <Text style={styles.waitText}>
-                    Camera will open after the screen is landscape.
-                  </Text>
+                  <Text style={styles.openingText}>Opening camera…</Text>
                 </View>
               )}
             </View>
@@ -490,13 +442,10 @@ export default function CameraScreen() {
             </TouchableOpacity>
           )}
 
-          {showWaitingForLandscape && (
-            <View style={styles.rotateHintCenterWrap} pointerEvents="none">
-              <View style={styles.rotateHintCard}>
-                <Animated.View style={[styles.rotateDeviceShell, deviceRotateStyle]}>
-                  <View style={styles.rotateDeviceScreen} />
-                </Animated.View>
-                <Text style={styles.rotateHintText}>Rotate device</Text>
+          {showWaitingForCamera && (
+            <View style={styles.loadingNoteWrap} pointerEvents="none">
+              <View style={styles.loadingNotePill}>
+                <Text style={styles.loadingNoteText}>Preparing camera</Text>
               </View>
             </View>
           )}
@@ -622,7 +571,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  rotateHintCenterWrap: {
+  loadingNoteWrap: {
     position: 'absolute',
     left: 24,
     right: 24,
@@ -630,39 +579,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-
-  rotateHintCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  loadingNotePill: {
     backgroundColor: 'rgba(0,0,0,0.46)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     borderRadius: 999,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 8,
   },
-  rotateDeviceShell: {
-    width: 14,
-    height: 24,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: '#fff',
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rotateDeviceScreen: {
-    width: 7,
-    height: 12,
-    borderRadius: 1,
-    backgroundColor: '#fff',
-    opacity: 0.9,
-  },
-  rotateHintText: {
+  loadingNoteText: {
     color: '#fff',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  openingText: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
 
   hudPill: {
@@ -700,13 +635,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.5,
-  },
-  waitText: {
-    color: 'rgba(255,255,255,0.72)',
-    marginTop: 12,
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
   },
 
   pausedPillWrap: {
