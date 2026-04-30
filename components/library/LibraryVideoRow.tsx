@@ -2,15 +2,11 @@
 
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Pressable, Text, TouchableOpacity, View } from 'react-native';
 
-// ✅ Robust import: avoids TS error if the registry's export name differs
-import * as SportCardRegistry from './SportCardRegistry';
-
-// ✅ FIX: ShareButton is a default export (not a named export)
 import ShareButton from './ShareButton';
-
+import * as SportCardRegistry from './SportCardRegistry';
 import { UploadButton } from './UploadButton';
 
 type FinalScore = { home: number; opponent: number };
@@ -41,11 +37,8 @@ export type LibraryRow = {
 
   highlightGold?: boolean | null;
   edgeColor?: string | null;
-
-  // ✅ Generic style bundle (sport-agnostic)
   libraryStyle?: LibraryStyle | null;
 
-  // ✅ Cloud metadata
   videoId?: string;
   shareId?: string | null;
   storageKey?: string | null;
@@ -71,15 +64,14 @@ const outcomeColor = (o?: Outcome | null) =>
   o === 'W'
     ? '#16a34a'
     : o === 'L'
-    ? '#dc2626'
-    : o === 'T'
-    ? '#eab308'
-    : 'rgba(255,255,255,0.25)';
+      ? '#dc2626'
+      : o === 'T'
+        ? '#eab308'
+        : 'rgba(255,255,255,0.25)';
 
 function formatWhen(ms?: number | null) {
   if (!ms) return '—';
   const d = new Date(ms);
-
   const month = d.toLocaleString(undefined, { month: 'short' });
   const day = d.getDate();
   const time = d.toLocaleTimeString(undefined, {
@@ -106,7 +98,6 @@ function formatRowTitle(row: LibraryRow) {
   };
 }
 
-// ----- SportCard types + default fallback -----
 type Chip = { text: string; color: string };
 
 type SportCardProps = {
@@ -133,12 +124,18 @@ const DefaultSportCard = ({ row, subtitle, chip }: SportCardProps) => {
         {t.primary}
       </Text>
 
-      <Text style={{ color: 'rgba(255,255,255,0.75)', marginTop: 6 }} numberOfLines={1}>
+      <Text
+        style={{ color: 'rgba(255,255,255,0.75)', marginTop: 6 }}
+        numberOfLines={1}
+      >
         {t.secondary}
       </Text>
 
       {!!subtitle && (
-        <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }} numberOfLines={1}>
+        <Text
+          style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }}
+          numberOfLines={1}
+        >
           {subtitle}
         </Text>
       )}
@@ -178,11 +175,6 @@ function resolveShareId(row: LibraryRow, uploaded: boolean): string {
   return '';
 }
 
-/**
- * Clean “confirmed uploaded” status:
- * - "Uploaded" label
- * - white circle with green check
- */
 function UploadedStatus() {
   return (
     <View
@@ -215,7 +207,6 @@ function UploadedStatus() {
   );
 }
 
-// ----- Main row component -----
 function LibraryVideoRowComponent({
   row,
   uploaded,
@@ -226,6 +217,8 @@ function LibraryVideoRowComponent({
   onPressSaveToPhotos,
   onUploaded,
 }: Props) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
   const subtitleBits = [
     clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
     clean(row.sport) ? `Sport: ${clean(row.sport)}` : null,
@@ -262,6 +255,10 @@ function LibraryVideoRowComponent({
     row.libraryStyle?.edgeColor?.trim() ||
     'rgba(255,255,255,0.35)';
 
+  const isLongBadge = badgeText.length > 18 || badgeText.includes(' • ');
+  const showInlineBadge = badgeText && !isLongBadge;
+  const showDetailsButton = badgeText && isLongBadge;
+
   const SportCard =
     (SportCardRegistry as any).getSportCardComponent?.(safeRow as any) ??
     (SportCardRegistry as any).getSportCard?.(safeRow as any) ??
@@ -269,7 +266,6 @@ function LibraryVideoRowComponent({
     null;
 
   const SportCardComponent = (SportCard ?? DefaultSportCard) as any;
-
   const shareId = resolveShareId(row, uploaded);
 
   return (
@@ -366,15 +362,16 @@ function LibraryVideoRowComponent({
           )}
 
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <SportCardComponent row={safeRow} subtitle={subtitle} chip={chip} />
               </View>
 
-              {badgeText ? (
+              {showInlineBadge ? (
                 <View
                   style={{
                     alignSelf: 'flex-start',
+                    maxWidth: 120,
                     paddingHorizontal: 10,
                     paddingVertical: 6,
                     borderRadius: 999,
@@ -383,10 +380,80 @@ function LibraryVideoRowComponent({
                     borderColor: badgeColor,
                   }}
                 >
-                  <Text style={{ color: 'white', fontWeight: '900' }}>{badgeText}</Text>
+                  <Text
+                    style={{ color: 'white', fontWeight: '900', fontSize: 12 }}
+                    numberOfLines={1}
+                  >
+                    {badgeText}
+                  </Text>
                 </View>
               ) : null}
+
+              {showDetailsButton ? (
+                <TouchableOpacity
+                  onPress={(e: any) => {
+                    e?.stopPropagation?.();
+                    setDetailsOpen((v) => !v);
+                  }}
+                  style={{
+                    alignSelf: 'flex-start',
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    backgroundColor: detailsOpen
+                      ? 'rgba(255,255,255,0.18)'
+                      : 'rgba(0,0,0,0.45)',
+                    borderWidth: 1,
+                    borderColor: badgeColor,
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
+                    Details
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
+
+            {showDetailsButton && detailsOpen ? (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={(e: any) => {
+                  e?.stopPropagation?.();
+                  setDetailsOpen(false);
+                }}
+                style={{
+                  marginTop: 10,
+                  alignSelf: 'stretch',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 14,
+                  backgroundColor: 'rgba(0,0,0,0.55)',
+                  borderWidth: 1,
+                  borderColor: badgeColor,
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'white',
+                    fontWeight: '900',
+                    fontSize: 13,
+                    lineHeight: 18,
+                  }}
+                >
+                  {badgeText}
+                </Text>
+                <Text
+                  style={{
+                    color: 'rgba(255,255,255,0.55)',
+                    fontWeight: '700',
+                    fontSize: 11,
+                    marginTop: 6,
+                  }}
+                >
+                  Tap to close
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
               <TouchableOpacity
