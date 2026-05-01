@@ -377,12 +377,18 @@ function normalizeVolleyballDefault(v: any) {
     kill: clamp0(v?.counts?.kill),
     killPct: safeStr(v?.derived?.killPctText, '0%'),
 
+    attackAttempts: clamp0(v?.derived?.attackAttempts),
+    hittingPct: safeStr(v?.derived?.hittingPctText, '.000'),
+
     serveIn: clamp0(v?.counts?.serveIn),
     ace: clamp0(v?.counts?.ace),
     serveError: clamp0(v?.counts?.serveError),
+    serveTotal: clamp0(v?.derived?.serveTotal),
     acePct: safeStr(v?.derived?.acePctText, '0%'),
+    aceErrorRatio: safeStr(v?.derived?.aceErrorRatioText, '0:0'),
     serveInPct: safeStr(v?.derived?.serveInPctText, '0%'),
     serveErrorPct: safeStr(v?.derived?.serveErrorPctText, '0%'),
+    serveEfficiency: safeStr(v?.derived?.serveEfficiencyText, '.000'),
 
     block: clamp0(v?.counts?.block),
     dig: clamp0(v?.counts?.dig),
@@ -391,18 +397,24 @@ function normalizeVolleyballDefault(v: any) {
     pass2: clamp0(v?.counts?.pass2),
     pass1: clamp0(v?.counts?.pass1),
     pass0: clamp0(v?.counts?.pass0),
+    passTotal: clamp0(v?.derived?.passTotal),
     passAvg: safeStr(v?.derived?.passAvgText, '0.00'),
     pass3Pct: safeStr(v?.derived?.pass3PctText, '0%'),
     pass2Pct: safeStr(v?.derived?.pass2PctText, '0%'),
     pass1Pct: safeStr(v?.derived?.pass1PctText, '0%'),
     pass0Pct: safeStr(v?.derived?.pass0PctText, '0%'),
 
+    attackError: clamp0(v?.counts?.attackError),
+    ballHandlingError: clamp0(v?.counts?.ballHandlingError),
     error: clamp0(v?.counts?.error),
     net: clamp0(v?.counts?.net),
 
     touch: clamp0(v?.counts?.touch),
     firstBall: clamp0(v?.counts?.firstBall),
     bump: clamp0(v?.counts?.bump),
+
+    totalErrors: clamp0(v?.derived?.totalErrors),
+    defenseImpact: clamp0(v?.derived?.defenseImpact),
   };
 }
 
@@ -622,41 +634,152 @@ export function renderSportStatsCard(
     );
   }
 
-  if (sportKey === 'volleyball:default') {
+  if (sportKey === 'volleyball:default' || sportKey === 'volleyball:match') {
     const v = normalizeVolleyballDefault(sportStats);
-    const serveTotal = v.serveIn + v.ace + v.serveError;
-    const passTotal = v.pass3 + v.pass2 + v.pass1 + v.pass0;
+
+    const attackAttempts = v.attackAttempts || v.attack + v.kill + v.attackError;
+    const serveTotal = v.serveTotal || v.serveIn + v.ace + v.serveError;
+    const passTotal = v.passTotal || v.pass3 + v.pass2 + v.pass1 + v.pass0;
+    const totalErrors =
+      v.totalErrors || v.error + v.net + v.serveError + v.attackError + v.ballHandlingError;
+    const defenseImpact =
+      v.defenseImpact || v.dig + v.block + v.touch + v.firstBall;
+
+    const passAvgNum = Number(v.passAvg);
+    const passGrade =
+      passTotal === 0
+        ? 'No pass data yet'
+        : passAvgNum >= 2.4
+          ? 'Strong passing'
+          : passAvgNum >= 1.7
+            ? 'Playable passing'
+            : 'Needs cleaner first contact';
+
+    const hittingGrade =
+      attackAttempts === 0
+        ? 'No attack data yet'
+        : String(v.hittingPct).startsWith('-')
+          ? 'Too many errors'
+          : Number(String(v.hittingPct).replace('+', '')) >= 0.25
+            ? 'Strong attacking'
+            : 'Needs cleaner swings';
+
+    const serveGrade =
+      serveTotal === 0
+        ? 'No serve data yet'
+        : String(v.serveEfficiency).startsWith('-')
+          ? 'Errors outweigh aces'
+          : 'Positive serve pressure';
 
     return (
       <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.75)',
+            fontWeight: '800',
+            marginBottom: 12,
+          }}
+        >
           Athlete: {athleteName}
         </Text>
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={v.clips} />
-          <Chip label="Events" value={v.events} />
-          <Chip label="Kills" value={v.kill} />
-          <Chip label="Attacks" value={v.attack + v.kill} />
-          <Chip label="Kill %" value={v.killPct} />
+          <HeroStat
+            label="Hitting %"
+            value={v.hittingPct}
+            sub={hittingGrade}
+          />
+          <HeroStat label="Pass Avg" value={v.passAvg} sub={passGrade} />
+          <HeroStat
+            label="Serve Eff"
+            value={v.serveEfficiency}
+            sub={serveGrade}
+          />
+        </View>
+
+        <SectionTitle>Offense</SectionTitle>
+
+        <BarRow
+          label="Hitting percentage"
+          value={`${v.kill} K - ${v.attackError} E / ${attackAttempts} attempts`}
+          pct={attackAttempts ? Math.max(0, Math.round(Number(String(v.hittingPct).replace('+', '')) * 100)) : 0}
+        />
+
+        <BarRow
+          label="Kill percentage"
+          value={`${v.kill} kills • ${v.killPct}`}
+          pct={attackAttempts ? Math.round((v.kill / attackAttempts) * 100) : 0}
+        />
+
+        <BarRow
+          label="Attack errors"
+          value={`${v.attackError} errors`}
+          pct={attackAttempts ? Math.round((v.attackError / attackAttempts) * 100) : 0}
+        />
+
+        <SectionTitle>Serving</SectionTitle>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
           <Chip label="Serve Total" value={serveTotal} />
           <Chip label="Aces" value={v.ace} />
+          <Chip label="Ace/Error" value={v.aceErrorRatio} />
           <Chip label="Ace %" value={v.acePct} />
           <Chip label="Serve In %" value={v.serveInPct} />
           <Chip label="Serve Err %" value={v.serveErrorPct} />
+        </View>
+
+        <SectionTitle>Passing</SectionTitle>
+
+        <BarRow
+          label="3-pass rate"
+          value={`${v.pass3} perfect • ${v.pass3Pct}`}
+          pct={passTotal ? Math.round((v.pass3 / passTotal) * 100) : 0}
+        />
+        <BarRow
+          label="2-pass rate"
+          value={`${v.pass2} good • ${v.pass2Pct}`}
+          pct={passTotal ? Math.round((v.pass2 / passTotal) * 100) : 0}
+        />
+        <BarRow
+          label="1-pass rate"
+          value={`${v.pass1} okay • ${v.pass1Pct}`}
+          pct={passTotal ? Math.round((v.pass1 / passTotal) * 100) : 0}
+        />
+        <BarRow
+          label="0-pass / error rate"
+          value={`${v.pass0} errors • ${v.pass0Pct}`}
+          pct={passTotal ? Math.round((v.pass0 / passTotal) * 100) : 0}
+        />
+
+        <SectionTitle>Defense & Ball Control</SectionTitle>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Defense Impact" value={defenseImpact} />
           <Chip label="Blocks" value={v.block} />
           <Chip label="Digs" value={v.dig} />
-          <Chip label="Pass Total" value={passTotal} />
-          <Chip label="Pass Avg" value={v.passAvg} />
-          <Chip label="3s" value={`${v.pass3} (${v.pass3Pct})`} />
-          <Chip label="2s" value={`${v.pass2} (${v.pass2Pct})`} />
-          <Chip label="1s" value={`${v.pass1} (${v.pass1Pct})`} />
-          <Chip label="0s" value={`${v.pass0} (${v.pass0Pct})`} />
-          <Chip label="Errors" value={v.error} />
-          <Chip label="Net" value={v.net} />
-          <Chip label="Touch" value={v.touch} />
+          <Chip label="Touches" value={v.touch} />
           <Chip label="1st Ball" value={v.firstBall} />
           <Chip label="Bump" value={v.bump} />
+        </View>
+
+        <SectionTitle>Errors</SectionTitle>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Total Errors" value={totalErrors} />
+          <Chip label="Serve Errors" value={v.serveError} />
+          <Chip label="Attack Errors" value={v.attackError} />
+          <Chip label="Net" value={v.net} />
+          <Chip label="Ball Handling" value={v.ballHandlingError} />
+          <Chip label="Other" value={v.error} />
+        </View>
+
+        <SectionTitle>Clip Volume</SectionTitle>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          <Chip label="Clips" value={v.clips} />
+          <Chip label="Events" value={v.events} />
+          <Chip label="Pass Total" value={passTotal} />
+          <Chip label="Attack Attempts" value={attackAttempts} />
         </View>
       </CardShell>
     );
