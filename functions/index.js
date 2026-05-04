@@ -849,6 +849,77 @@ exports.syncShareIndex = onDocumentWritten('videos/{videoId}', async (event) => 
   }
 });
 
+
+exports.getSharePreview = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET' });
+
+      const shareId = (req.query.shareId ?? '').toString().trim();
+      if (!shareId) return res.status(400).json({ error: 'Missing shareId' });
+
+      const shareRef = admin.firestore().doc(`shareIndex/${shareId}`);
+      const shareSnap = await shareRef.get();
+      if (!shareSnap.exists) return res.status(404).json({ error: 'Share not found' });
+
+      const share = shareSnap.data() || {};
+      if (share.isPublic !== true) return res.status(403).json({ error: 'Not public' });
+
+      const videoId = share.videoId;
+      if (!videoId) return res.status(500).json({ error: 'shareIndex missing videoId' });
+
+      const vidRef = admin.firestore().doc(`videos/${videoId}`);
+      const vidSnap = await vidRef.get();
+      if (!vidSnap.exists) return res.status(404).json({ error: 'Video not found' });
+
+      const v = vidSnap.data() || {};
+
+      if (v.shareId && v.shareId !== shareId) {
+        return res.status(403).json({ error: 'shareId mismatch' });
+      }
+
+      const athleteName = (v.athleteName || v.athlete || 'Athlete').toString().trim();
+      const sport = (v.sportStyle || v.sport || 'Sports').toString().trim();
+      const scoreText = (v.scoreText || '').toString().trim();
+
+      const title = v.title
+        ? v.title.toString().trim()
+        : `QuickClip • ${athleteName} ${sport} Clip`;
+
+      const description = scoreText
+        ? `${scoreText} • Watch this tagged sports clip on QuickClip.`
+        : 'Watch this tagged sports clip on QuickClip.';
+
+      let thumbnailUrl = '';
+
+      const b2ThumbnailKey = (v.b2ThumbnailKey || '').toString().trim();
+      if (b2ThumbnailKey) {
+        const { downloadAuthToken } = await getB2DownloadAuth('videos/', 60 * 60);
+        thumbnailUrl = buildCdnUrl(b2ThumbnailKey, downloadAuthToken);
+      }
+
+      return res.json({
+        ok: true,
+        shareId,
+        videoId,
+        title,
+        description,
+        thumbnailUrl,
+        athleteName,
+        sport,
+        scoreText,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'getSharePreview failed',
+        details: String(e?.message || e),
+        code: e?.code,
+        extra: e?.details,
+      });
+    }
+  });
+});
+
 exports.getPlaybackUrls = onRequest((req, res) => {
   corsHandler(req, res, async () => {
     try {
