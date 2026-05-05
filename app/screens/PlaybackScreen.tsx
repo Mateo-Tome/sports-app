@@ -13,6 +13,7 @@ import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 import useWebVideoController from '../../src/hooks/useWebVideoController';
 
+import FrameStepControls from '../../components/playback/FrameStepControls';
 import {
   EditModeMask,
   LoadingErrorOverlay,
@@ -563,6 +564,12 @@ export default function PlaybackScreen() {
   const shouldMountVideoView = isWeb ? isReady : true;
   const beltBlock = showEventBelt ? BELT_H + insets.bottom : 0;
 
+  const bottomControlsOffset =
+    insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN : SAFE_MARGIN);
+
+  const showFrameStepControls =
+    chromeVisible && !isPlaying && !editMode && !atVideoEnd;
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'black' }}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -786,7 +793,7 @@ export default function PlaybackScreen() {
                 style={{
                   position: 'absolute',
                   left: insets.left + SAFE_MARGIN,
-                  bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  bottom: bottomControlsOffset,
                   paddingHorizontal: 14,
                   paddingVertical: 10,
                   borderRadius: 999,
@@ -816,7 +823,7 @@ export default function PlaybackScreen() {
                 style={{
                   position: 'absolute',
                   right: insets.right + SAFE_MARGIN,
-                  bottom: insets.bottom + (showEventBelt ? BELT_H + SAFE_MARGIN : SAFE_MARGIN),
+                  bottom: bottomControlsOffset,
                   paddingHorizontal: 14,
                   paddingVertical: 10,
                   borderRadius: 999,
@@ -839,6 +846,17 @@ export default function PlaybackScreen() {
                 </Text>
               </Pressable>
             )}
+
+            <FrameStepControls
+              visible={showFrameStepControls}
+              current={now}
+              duration={dur}
+              insets={insets}
+              bottomOffset={bottomControlsOffset}
+              fps={30}
+              onSeek={onSeek}
+              onShowChrome={showChrome}
+            />
 
             {showEventBelt && (
               <EventBelt
