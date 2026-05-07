@@ -1,13 +1,12 @@
 // components/overlays/basketball/BasketballOverlay.tsx
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OverlayCompactText } from '../OverlayCompactText';
 import { OverlayTitleText } from '../OverlayTitleText';
 import type { OverlayEvent, OverlayProps } from '../types';
 
-// ✅ basketball-spec (buttons, colors, lanes, shot tint/points)
 import {
   BB_COLORS,
   LEFT_BTNS,
@@ -150,11 +149,6 @@ function ChoiceButton({
   );
 }
 
-/**
- * Center-screen chooser (not a Modal -> no rotation snap)
- * - tap outside closes
- * - slightly bigger than the tiny wrestling chooser
- */
 function CenterChooser({
   title,
   accent,
@@ -253,18 +247,13 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
   const disableTaps = !isRecording;
 
   const [picker, setPicker] = useState<Picker>(null);
-
-  // button flash
   const [litId, setLitId] = useState<string | null>(null);
   const litTimerRef = useRef<any>(null);
 
-  // toast (only after final choice)
   const [toastText, setToastText] = useState<string | null>(null);
   const [toastColor, setToastColor] = useState<string>(BB_COLORS.neutral);
-  const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
 
-  // quick in-overlay totals (UX only)
   const [stats, setStats] = useState({
     pts: 0,
     reb: 0,
@@ -283,6 +272,11 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
   useEffect(() => {
     if (!isRecording) setPicker(null);
+
+    return () => {
+      if (litTimerRef.current) clearTimeout(litTimerRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, [isRecording]);
 
   const flashButton = (id: string) => {
@@ -297,14 +291,8 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     setToastText(text);
     setToastColor(color);
 
-    toastOpacity.stopAnimation();
-    toastOpacity.setValue(0);
-    Animated.timing(toastOpacity, { toValue: 1, duration: 140, useNativeDriver: true }).start();
-
     toastTimerRef.current = setTimeout(() => {
-      Animated.timing(toastOpacity, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
-        setToastText(null);
-      });
+      setToastText(null);
     }, 900);
   };
 
@@ -329,6 +317,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
       value,
       meta: {
         beltLane,
+        pillLabel: label,
         pillColor: tint,
         tint,
         color: tint,
@@ -365,13 +354,13 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     });
 
     const toast = b.sub ?? b.label;
-
     emit(b.action, toast, b.ringColor, { kind: b.action }, toast, b.id);
   };
 
   const shoot = (type: ShotType, made: boolean, btnId: string) => {
     const tint = tintForShot(type, made);
     const pts = pointsForShot(type);
+    const beltLabel = type;
 
     setStats((s) => {
       const next = { ...s };
@@ -394,7 +383,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
     emit(
       'shot',
-      'Shot',
+      beltLabel,
       tint,
       { shotType: type, made, attempt: true },
       `${type} ${made ? 'Make' : 'Miss'}`,
@@ -420,53 +409,52 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     setPicker(null);
   };
 
-const renderPicker = () => {
-  if (!picker) return null;
+  const renderPicker = () => {
+    if (!picker) return null;
 
-  if (picker.kind === 'shot') {
-    const type = picker.type;
-    const accent =
-      type === '2PT' ? BB_COLORS.shot2 : type === '3PT' ? BB_COLORS.shot3 : BB_COLORS.ft;
+    if (picker.kind === 'shot') {
+      const type = picker.type;
+      const accent = type === '2PT' ? BB_COLORS.shot2 : type === '3PT' ? BB_COLORS.shot3 : BB_COLORS.ft;
+
+      return (
+        <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <ChoiceButton
+              label="MAKE"
+              bg="#22c55e"
+              border="#22c55e"
+              onPress={() => shoot(type, true, picker.btnId)}
+            />
+            <ChoiceButton
+              label="MISS"
+              bg="#ef4444"
+              border="#ef4444"
+              onPress={() => shoot(type, false, picker.btnId)}
+            />
+          </View>
+        </CenterChooser>
+      );
+    }
 
     return (
-      <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
+      <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <ChoiceButton
-            label="MAKE"
-            bg="#22c55e" // ✅ GREEN
-            border="#22c55e"
-            onPress={() => shoot(type, true, picker.btnId)}
+            label="OFFENSE"
+            bg={BB_COLORS.rebound}
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('off', picker.btnId)}
           />
           <ChoiceButton
-            label="MISS"
-            bg="#ef4444" // ✅ RED
-            border="#ef4444"
-            onPress={() => shoot(type, false, picker.btnId)}
+            label="DEFENSE"
+            bg="rgba(255,255,255,0.10)"
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('def', picker.btnId)}
           />
         </View>
       </CenterChooser>
     );
-  }
-
-  return (
-    <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
-      <View style={{ flexDirection: 'row', gap: 12 }}>
-        <ChoiceButton
-          label="OFFENSE"
-          bg={BB_COLORS.rebound}
-          border={BB_COLORS.rebound}
-          onPress={() => rebound('off', picker.btnId)}
-        />
-        <ChoiceButton
-          label="DEFENSE"
-          bg="rgba(255,255,255,0.10)"
-          border={BB_COLORS.rebound}
-          onPress={() => rebound('def', picker.btnId)}
-        />
-      </View>
-    </CenterChooser>
-  );
-};
+  };
 
   const BTN = 58;
   const GAP = 10;
@@ -479,7 +467,6 @@ const renderPicker = () => {
       pointerEvents="box-none"
       style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
     >
-      {/* Top mini box-score bar */}
       <View
         pointerEvents="none"
         style={{
@@ -522,9 +509,8 @@ const renderPicker = () => {
         </View>
       </View>
 
-      {/* Last action toast pill */}
       {toastText ? (
-        <Animated.View
+        <View
           pointerEvents="none"
           style={{
             position: 'absolute',
@@ -532,15 +518,6 @@ const renderPicker = () => {
             left: insets.left + 12,
             right: insets.right + 12,
             alignItems: 'center',
-            opacity: toastOpacity,
-            transform: [
-              {
-                translateY: toastOpacity.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-6, 0],
-                }),
-              },
-            ],
           }}
         >
           <View
@@ -557,10 +534,9 @@ const renderPicker = () => {
               {toastText}
             </OverlayCompactText>
           </View>
-        </Animated.View>
+        </View>
       ) : null}
 
-      {/* Left grid */}
       <View
         pointerEvents="box-none"
         style={{
@@ -589,7 +565,6 @@ const renderPicker = () => {
         </View>
       </View>
 
-      {/* Right grid */}
       <View
         pointerEvents="box-none"
         style={{
@@ -628,7 +603,6 @@ const renderPicker = () => {
         </View>
       </View>
 
-      {/* Center chooser */}
       {renderPicker()}
     </View>
   );

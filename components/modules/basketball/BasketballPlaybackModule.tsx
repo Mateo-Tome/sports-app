@@ -3,16 +3,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, Text, View } from 'react-native';
 import type { PlaybackModuleProps } from '../types';
 
-// ✅ single source of truth for colors/buttons/lanes/shot logic
 import {
-    BB_COLORS,
-    LEFT_BTNS,
-    RIGHT_BTNS,
-    laneForAction,
-    pointsForShot,
-    tintForShot,
-    type OverlayBtn,
-    type ShotType,
+  BB_COLORS,
+  LEFT_BTNS,
+  RIGHT_BTNS,
+  laneForAction,
+  pointsForShot,
+  tintForShot,
+  type OverlayBtn,
+  type ShotType,
 } from '../../overlays/basketball/basketballUiSpec';
 
 const THEME = {
@@ -224,27 +223,23 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
   if (!overlayOn) return null;
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
-
   const athleteIsHome = homeIsAthlete !== false;
 
   const athleteLabel = (athleteName ?? '').trim() || 'Athlete';
   const opponentLabel = 'Opponent';
 
-  // Live score (from PlaybackScreen accumulation)
   const homeScore = liveScore?.home ?? 0;
   const oppScore = liveScore?.opponent ?? 0;
 
   const athleteLive = athleteIsHome ? homeScore : oppScore;
   const opponentLive = athleteIsHome ? oppScore : homeScore;
 
-  // If score system isn't wired for basketball yet, hide these so UI doesn't look "wrestling-ish"
   const hasAnyScore =
     homeScore !== 0 ||
     oppScore !== 0 ||
     (finalScore?.home ?? 0) !== 0 ||
     (finalScore?.opponent ?? 0) !== 0;
 
-  // Boxscore totals from events (simple: all events)
   const box = useMemo(() => {
     let pts = 0, reb = 0, ast = 0, stl = 0, blk = 0, to = 0, pf = 0;
     let fgM = 0, fgA = 0, t3M = 0, t3A = 0, ftM = 0, ftA = 0;
@@ -312,7 +307,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
     return `${out} ${a}–${b}`;
   }, [finalScore, athleteIsHome]);
 
-  // -------- edit palette state --------
   const [picker, setPicker] = useState<Picker>(null);
 
   useEffect(() => {
@@ -367,7 +361,7 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
 
     onOverlayEvent?.({
       actor: 'neutral',
-      key: action, // PlaybackScreen uses evt.key -> EventRow.kind
+      key: action,
       label,
       value: typeof points === 'number' ? points : undefined,
       meta: {
@@ -377,7 +371,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
         color: tint,
         chipColor: tint,
         buttonColor: tint,
-
         ...(flatMeta || {}),
         tSec: now,
       },
@@ -402,12 +395,13 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
   };
 
   const shoot = (type: ShotType, made: boolean, btnId: string) => {
-    const tint = tintForShot(type, made); // ✅ miss red, make uses family color
+    const tint = tintForShot(type, made);
     const pts = pointsForShot(type);
+    const beltLabel = type;
 
     emit(
       'shot',
-      'Shot',
+      beltLabel,
       tint,
       { shotType: type, made, attempt: true },
       `${type} ${made ? 'Make' : 'Miss'}`,
@@ -441,11 +435,16 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
       return (
         <CenterChooser title={`${type} Result`} accent={accent} onCancel={() => setPicker(null)}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
-            <ChoiceButton label="MAKE" bg={accent} border={accent} onPress={() => shoot(type, true, picker.btnId)} />
+            <ChoiceButton
+              label="MAKE"
+              bg="#22c55e"
+              border="#22c55e"
+              onPress={() => shoot(type, true, picker.btnId)}
+            />
             <ChoiceButton
               label="MISS"
-              bg="rgba(255,255,255,0.10)"
-              border={accent}
+              bg="#ef4444"
+              border="#ef4444"
               onPress={() => shoot(type, false, picker.btnId)}
             />
           </View>
@@ -456,14 +455,23 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
     return (
       <CenterChooser title="Rebound" accent={BB_COLORS.rebound} onCancel={() => setPicker(null)}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <ChoiceButton label="OFFENSE" bg={BB_COLORS.rebound} border={BB_COLORS.rebound} onPress={() => rebound('off', picker.btnId)} />
-          <ChoiceButton label="DEFENSE" bg="rgba(255,255,255,0.10)" border={BB_COLORS.rebound} onPress={() => rebound('def', picker.btnId)} />
+          <ChoiceButton
+            label="OFFENSE"
+            bg={BB_COLORS.rebound}
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('off', picker.btnId)}
+          />
+          <ChoiceButton
+            label="DEFENSE"
+            bg="rgba(255,255,255,0.10)"
+            border={BB_COLORS.rebound}
+            onPress={() => rebound('def', picker.btnId)}
+          />
         </View>
       </CenterChooser>
     );
   };
 
-  // layout for palette
   const BTN = 58;
   const GAP = 10;
   const COLS = 2;
@@ -472,7 +480,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
-      {/* result pill (hide if scoring not wired yet) */}
       {hasAnyScore && result ? (
         <View
           pointerEvents="none"
@@ -499,7 +506,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
         </View>
       ) : null}
 
-      {/* Top box-score bar */}
       <View
         pointerEvents="none"
         style={{
@@ -542,7 +548,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
         </View>
       </View>
 
-      {/* live score tags (hide if scoring not wired yet so no ugly 0–0 pills) */}
       {hasAnyScore ? (
         <View
           pointerEvents="none"
@@ -587,10 +592,8 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
         </View>
       ) : null}
 
-      {/* ---------- EDIT PALETTE ---------- */}
       {showPalette ? (
         <>
-          {/* toast */}
           {toastText ? (
             <Animated.View
               pointerEvents="none"
@@ -620,7 +623,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
             </Animated.View>
           ) : null}
 
-          {/* left grid (spec) */}
           <View
             pointerEvents="box-none"
             style={{
@@ -650,7 +652,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
             </View>
           </View>
 
-          {/* right grid (spec) */}
           <View
             pointerEvents="box-none"
             style={{
@@ -683,7 +684,6 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
             </View>
           </View>
 
-          {/* chooser */}
           {renderPicker()}
         </>
       ) : null}

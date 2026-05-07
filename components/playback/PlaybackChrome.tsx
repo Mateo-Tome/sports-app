@@ -471,12 +471,24 @@ function readEventType(e: EventRow): string {
 }
 
 function displayKindForPill(e: EventRow): string {
+  const meta: any = (e as any)?.meta ?? {};
+  const inner: any = meta?.meta ?? {};
+
+  const explicit =
+    meta?.pillLabel ??
+    inner?.pillLabel ??
+    meta?.label ??
+    inner?.label ??
+    (e as any)?.label;
+
+  if (explicit && String(explicit).trim()) {
+    return String(explicit).trim();
+  }
+
   const kind = String((e as any)?.kind ?? '');
   if (kind && kind.toLowerCase() !== 'unknown') return kind;
 
-  const meta: any = (e as any)?.meta ?? {};
-  const inner: any = meta?.meta ?? {};
-  const raw = meta?.label ?? inner?.label ?? (e as any)?.key ?? meta?.key ?? inner?.key ?? kind;
+  const raw = (e as any)?.key ?? meta?.key ?? inner?.key ?? kind;
   return String(raw ?? kind);
 }
 
