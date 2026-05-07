@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Dimensions, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
-// Import EventRow as a *type only* so this has no runtime dependency.
 import type { EventRow } from './playbackCore';
 
-// === shared layout constants ===
+export { OverlayModeMenu } from './OverlayModeMenu';
+
 export const BELT_H = 76;
 export const EDGE_PAD = 24;
 export const SAFE_MARGIN = 12;
 
-// === shared types ===
 export type OverlayMode = 'all' | 'noBelt' | 'noScore' | 'off';
 
 export type Insets = {
@@ -19,15 +18,8 @@ export type Insets = {
   left: number;
 };
 
-/**
- * ✅ One knob for now.
- * Later we can make this sport/event specific, but this gets you perfect “lead-up” today.
- */
 const GLOBAL_PREROLL_FALLBACK_SEC = 3;
 
-/**
- * Local helper: format seconds as M:SS
- */
 function fmt(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) sec = 0;
   const m = Math.floor(sec / 60);
@@ -35,9 +27,6 @@ function fmt(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/**
- * Local helper: abbreviate event kind for belt pill
- */
 function abbrKind(kind?: string): string {
   if (!kind) return '';
   const k = kind.toLowerCase();
@@ -47,351 +36,8 @@ function abbrKind(kind?: string): string {
   if (k.startsWith('escape')) return 'E';
   if (k.startsWith('nearfall') || k.startsWith('nf')) return 'NF';
 
-  // generic fallback
   return kind.slice(0, 3).toUpperCase();
 }
-
-/* ==================== Compact menu text helpers ==================== */
-
-function MenuSectionText({
-  children,
-  style,
-}: {
-  children: React.ReactNode;
-  style?: any;
-}) {
-  return (
-    <Text
-      allowFontScaling={false}
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      minimumFontScale={0.85}
-      style={style}
-    >
-      {children}
-    </Text>
-  );
-}
-
-function MenuLabelText({
-  children,
-  style,
-}: {
-  children: React.ReactNode;
-  style?: any;
-}) {
-  return (
-    <Text
-      allowFontScaling={false}
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      minimumFontScale={0.82}
-      style={style}
-    >
-      {children}
-    </Text>
-  );
-}
-
-function MenuButtonText({
-  children,
-  style,
-}: {
-  children: React.ReactNode;
-  style?: any;
-}) {
-  return (
-    <Text
-      allowFontScaling={false}
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      minimumFontScale={0.75}
-      style={style}
-    >
-      {children}
-    </Text>
-  );
-}
-
-/* ==================== Overlay / tools menu ==================== */
-
-export function OverlayModeMenu(props: {
-  visible: boolean;
-  mode: OverlayMode;
-  onSelect: (m: OverlayMode) => void;
-  onClose: () => void;
-  insets: Insets;
-  canEditOrientation?: boolean;
-  rotationLabel?: string;
-  orientationDirty?: boolean;
-  orientationSaving?: boolean;
-  onRotateLeft?: () => void;
-  onRotateRight?: () => void;
-  onResetOrientation?: () => void;
-  onRevertOrientation?: () => void;
-  onSaveOrientation?: () => void;
-}) {
-  const {
-    visible,
-    mode,
-    onSelect,
-    onClose,
-    insets,
-    canEditOrientation = false,
-    rotationLabel = '0°',
-    orientationDirty = false,
-    orientationSaving = false,
-    onRotateLeft,
-    onRotateRight,
-    onResetOrientation,
-    onRevertOrientation,
-    onSaveOrientation,
-  } = props;
-
-  if (!visible) return null;
-
-  const options: { key: OverlayMode; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'noBelt', label: 'Score Only' },
-    { key: 'noScore', label: 'Belt Only' },
-    { key: 'off', label: 'Overlay Off' },
-  ];
-
-  return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 70,
-      }}
-    >
-      <Pressable
-        onPress={onClose}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-      />
-
-      <View
-        pointerEvents="auto"
-        style={{
-          position: 'absolute',
-          top: insets.top + SAFE_MARGIN + 36,
-          right: insets.right + SAFE_MARGIN,
-          borderRadius: 12,
-          backgroundColor: 'rgba(0,0,0,0.9)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.25)',
-          paddingVertical: 8,
-          paddingHorizontal: 8,
-          minWidth: 220,
-          maxWidth: 260,
-        }}
-      >
-        <MenuSectionText
-          style={{
-            color: 'rgba(255,255,255,0.62)',
-            fontWeight: '800',
-            fontSize: 11,
-            letterSpacing: 0.6,
-            marginBottom: 6,
-            paddingHorizontal: 6,
-          }}
-        >
-          DISPLAY
-        </MenuSectionText>
-
-        {options.map((opt) => {
-          const isActive = opt.key === mode;
-          return (
-            <Pressable
-              key={opt.key}
-              onPress={() => onSelect(opt.key)}
-              style={{
-                minHeight: 38,
-                paddingVertical: 8,
-                paddingHorizontal: 8,
-                borderRadius: 8,
-                backgroundColor: isActive ? 'rgba(59,130,246,0.35)' : 'transparent',
-                marginBottom: 2,
-                justifyContent: 'center',
-              }}
-            >
-              <MenuLabelText style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
-                {opt.label}
-              </MenuLabelText>
-            </Pressable>
-          );
-        })}
-
-        {canEditOrientation && (
-          <>
-            <View
-              style={{
-                height: 1,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                marginVertical: 8,
-              }}
-            />
-
-            <MenuSectionText
-              style={{
-                color: 'rgba(255,255,255,0.62)',
-                fontWeight: '800',
-                fontSize: 11,
-                letterSpacing: 0.6,
-                marginBottom: 6,
-                paddingHorizontal: 6,
-              }}
-            >
-              ORIENTATION
-            </MenuSectionText>
-
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 8,
-                paddingHorizontal: 6,
-                gap: 8,
-              }}
-            >
-              <MenuLabelText style={{ color: '#fff', fontWeight: '800', fontSize: 13, flex: 1 }}>
-                Current
-              </MenuLabelText>
-              <MenuLabelText style={{ color: '#fff', fontWeight: '900', fontSize: 13 }}>
-                {rotationLabel}
-              </MenuLabelText>
-            </View>
-
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                gap: 6,
-                marginBottom: 6,
-              }}
-            >
-              <Pressable
-                onPress={onRotateLeft}
-                style={{
-                  flex: 1,
-                  minHeight: 38,
-                  paddingVertical: 8,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.18)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 6,
-                }}
-              >
-                <MenuButtonText style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>
-                  ↺ Left
-                </MenuButtonText>
-              </Pressable>
-
-              <Pressable
-                onPress={onRotateRight}
-                style={{
-                  flex: 1,
-                  minHeight: 38,
-                  paddingVertical: 8,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.18)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 6,
-                }}
-              >
-                <MenuButtonText style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>
-                  Right ↻
-                </MenuButtonText>
-              </Pressable>
-            </View>
-
-            <Pressable
-              onPress={onResetOrientation}
-              style={{
-                minHeight: 38,
-                paddingVertical: 8,
-                paddingHorizontal: 8,
-                borderRadius: 8,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.18)',
-                marginBottom: orientationDirty ? 6 : 0,
-                justifyContent: 'center',
-              }}
-            >
-              <MenuButtonText style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>
-                Reset to 0°
-              </MenuButtonText>
-            </Pressable>
-
-            {orientationDirty && (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6 }}>
-                <Pressable
-                  onPress={onRevertOrientation}
-                  style={{
-                    flex: 1,
-                    minHeight: 38,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(120,120,120,0.35)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.18)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingHorizontal: 6,
-                  }}
-                >
-                  <MenuButtonText style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-                    Cancel
-                  </MenuButtonText>
-                </Pressable>
-
-                <Pressable
-                  onPress={onSaveOrientation}
-                  style={{
-                    flex: 1,
-                    minHeight: 38,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(34,197,94,0.95)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(0,0,0,0.3)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingHorizontal: 6,
-                  }}
-                >
-                  <MenuButtonText
-                    style={{
-                      color: '#062b12',
-                      fontWeight: '900',
-                      textAlign: 'center',
-                    }}
-                  >
-                    {orientationSaving ? 'Saving…' : 'Save'}
-                  </MenuButtonText>
-                </Pressable>
-              </View>
-            )}
-          </>
-        )}
-      </View>
-    </View>
-  );
-}
-
-/* ==================== Event Belt helpers ==================== */
 
 function normalizeBeltToken(raw: any): string {
   let k = String(raw ?? '').toLowerCase().trim();
@@ -411,13 +57,9 @@ function readBeltLaneMeta(e: EventRow): 'top' | 'bottom' | null {
   return null;
 }
 
-/**
- * Merge meta + meta.meta so neutral “chooser” events can resolve side consistently.
- */
 function getMetaFlat(e: EventRow): Record<string, any> {
   const meta: any = (e as any)?.meta ?? {};
   const inner: any = meta?.meta ?? {};
-  // Prefer top-level meta keys when overlapping
   return { ...inner, ...meta };
 }
 
@@ -434,9 +76,6 @@ function toSide(v: any): 'home' | 'opponent' | null {
   return null;
 }
 
-/**
- * Resolve a side for events that are actor:'neutral' but clearly target someone.
- */
 function resolveNeutralSide(e: EventRow): 'home' | 'opponent' | null {
   const m = getMetaFlat(e);
 
@@ -460,10 +99,6 @@ function resolveNeutralSide(e: EventRow): 'home' | 'opponent' | null {
   return null;
 }
 
-/**
- * ✅ Many clips store type in either `kind` or `key`.
- * This makes playback robust across sports + older clips.
- */
 function readEventType(e: EventRow): string {
   const kind = String((e as any)?.kind ?? '').trim().toLowerCase();
   const key = String((e as any)?.key ?? '').trim().toLowerCase();
@@ -492,10 +127,6 @@ function displayKindForPill(e: EventRow): string {
   return String(raw ?? kind);
 }
 
-/**
- * ✅ Read preRollSec from event meta (supports both meta and meta.meta).
- * If missing (old clips), fall back to GLOBAL_PREROLL_FALLBACK_SEC.
- */
 function readPreRollSec(e: EventRow): number {
   const meta: any = (e as any)?.meta ?? {};
   const inner: any = meta?.meta ?? {};
@@ -506,8 +137,6 @@ function readPreRollSec(e: EventRow): number {
   if (!Number.isFinite(n)) return GLOBAL_PREROLL_FALLBACK_SEC;
   return Math.max(0, Math.min(15, n));
 }
-
-/* ==================== Period + Choice (SAFE ADD-ON) ==================== */
 
 function readPeriodNumber(e: EventRow): number | null {
   const meta: any = (e as any)?.meta ?? {};
@@ -570,10 +199,6 @@ function readChoiceToken(e: EventRow): 'top' | 'bottom' | 'neutral' | 'defer' | 
   return null;
 }
 
-/**
- * ✅ Find the LAST NON-DEFER choice event for a period.
- * Robust to choice stored as kind OR key.
- */
 function findLastRealChoiceForPeriod(events: EventRow[], periodNum: number): EventRow | null {
   if (!events?.length) return null;
 
@@ -595,8 +220,6 @@ function findLastRealChoiceForPeriod(events: EventRow[], periodNum: number): Eve
 
   return null;
 }
-
-/* ==================== Event Belt ==================== */
 
 export function EventBelt(props: {
   duration: number;
@@ -742,7 +365,6 @@ export function EventBelt(props: {
   }, [events, screenW, colorFor]);
 
   const scrollRef = useRef<ScrollView>(null);
-
   const userInteracting = useRef(false);
   const unlockTimer = useRef<any>(null);
 
@@ -765,17 +387,13 @@ export function EventBelt(props: {
 
   useEffect(() => {
     if (!duration) return;
-  
-    // Web desktop needs manual scrolling.
-    // Auto-follow fights the mouse/trackpad and makes the belt feel broken.
     if (Platform.OS === 'web') return;
-  
     if (userInteracting.current) return;
-  
+
     const playheadX = (current || 0) * PX_PER_SEC;
     const targetX = Math.max(0, playheadX - screenW * 0.5);
     const nowMs = Date.now();
-  
+
     if (nowMs - lastAuto.current > 120) {
       scrollRef.current?.scrollTo({ x: targetX, animated: false });
       lastAuto.current = nowMs;
@@ -794,37 +412,37 @@ export function EventBelt(props: {
         elevation: 999,
       }}
     >
-    <ScrollView
-  ref={scrollRef}
-  horizontal
-  showsHorizontalScrollIndicator={false}
-  onScrollBeginDrag={() => lockUser(1400)}
-  onScrollEndDrag={() => lockUser(900)}
-  onMomentumScrollBegin={() => lockUser(1400)}
-  onMomentumScrollEnd={() => lockUser(900)}
-  scrollEventThrottle={16}
-  style={
-    Platform.OS === 'web'
-      ? ({
-          width: '100%',
-          overflowX: 'auto',
-          overflowY: 'hidden',
-        } as any)
-      : undefined
-  }
-  contentContainerStyle={{
-    height: BELT_H,
-    paddingHorizontal: EDGE_PAD,
-    minWidth: layout.contentW + EDGE_PAD * 2,
-    ...(Platform.OS === 'web'
-      ? ({
-          userSelect: 'none',
-          cursor: 'grab',
-        } as any)
-      : null),
-  }}
->
-  <View style={{ width: layout.contentW, height: BELT_H, flexShrink: 0 }}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        onScrollBeginDrag={() => lockUser(1400)}
+        onScrollEndDrag={() => lockUser(900)}
+        onMomentumScrollBegin={() => lockUser(1400)}
+        onMomentumScrollEnd={() => lockUser(900)}
+        scrollEventThrottle={16}
+        style={
+          Platform.OS === 'web'
+            ? ({
+                width: '100%',
+                overflowX: 'auto',
+                overflowY: 'hidden',
+              } as any)
+            : undefined
+        }
+        contentContainerStyle={{
+          height: BELT_H,
+          paddingHorizontal: EDGE_PAD,
+          minWidth: layout.contentW + EDGE_PAD * 2,
+          ...(Platform.OS === 'web'
+            ? ({
+                userSelect: 'none',
+                cursor: 'grab',
+              } as any)
+            : null),
+        }}
+      >
+        <View style={{ width: layout.contentW, height: BELT_H, flexShrink: 0 }}>
           <View
             style={{
               position: 'absolute',
@@ -940,8 +558,6 @@ export function EventBelt(props: {
     </View>
   );
 }
-
-/* ==================== Quick Edit sheet ==================== */
 
 export function QuickEditSheet(props: {
   visible: boolean;
