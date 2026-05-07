@@ -5,6 +5,7 @@ import { sportTitle } from '../sportMeta';
 import BaseballHittingStatsCard from './cards/BaseballHittingStatsCard';
 import BaseballPitchingStatsCard from './cards/BaseballPitchingStatsCard';
 import BasketballStatsCard from './cards/BasketballStatsCard';
+import FreestyleStatsCard from './cards/FreestyleStatsCard';
 
 function CardShell({
   title,
@@ -581,31 +582,11 @@ export function renderSportStatsCard(
   }
 
   if (sportKey === 'wrestling:freestyle') {
-    const fs = normalizeFreestyle(sportStats);
     return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={fs.clips} />
-          <Chip label="Events" value={fs.events} />
-          <Chip label="My Points" value={fs.myPoints} />
-          <Chip label="Opp Points" value={fs.oppPoints} />
-          <Chip label="TD2" value={fs.td} />
-          <Chip label="EX2" value={fs.ex} />
-          <Chip label="OB1" value={fs.ob} />
-          <Chip label="FTD4" value={fs.ftd4} />
-          <Chip label="GA4" value={fs.ga4} />
-          <Chip label="GA5" value={fs.ga5} />
-          <Chip label="PASS WARN" value={fs.passWarn} />
-          <Chip label="PASS +1 (given)" value={fs.passP1Given} />
-          <Chip label="PEN +1 (given)" value={fs.penP1Given} />
-          <Chip label="FLEE +1 (given)" value={fs.fleeP1Given} />
-          <Chip label="FLEE +2 (given)" value={fs.fleeP2Given} />
-        </View>
-      </CardShell>
+      <FreestyleStatsCard
+        stats={sportStats}
+        athleteName={athleteName}
+      />
     );
   }
 
