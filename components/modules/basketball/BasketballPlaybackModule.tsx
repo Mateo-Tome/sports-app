@@ -366,6 +366,7 @@ export default function BasketballPlaybackModule(props: PlaybackModuleProps) {
       value: typeof points === 'number' ? points : undefined,
       meta: {
         beltLane,
+        pillLabel: label,
         pillColor: tint,
         tint,
         color: tint,
