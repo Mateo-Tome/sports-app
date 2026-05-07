@@ -2,11 +2,7 @@
 
 import type { EdgeInsets } from 'react-native-safe-area-context';
 
-/**
- * Lightweight copy of OverlayEvent for playback modules.
- * (Structurally compatible with components/overlays/types.ts,
- * but kept separate to avoid circular imports.)
- */
+
 export type OverlayEvent = {
   actor?: 'home' | 'opponent' | 'neutral';
   key?: string;
@@ -17,14 +13,6 @@ export type OverlayEvent = {
   [k: string]: any;
 };
 
-/**
- * Props passed from PlaybackScreen into each sport-specific playback module.
- *
- * Used by:
- * - WrestlingFolkstylePlaybackModule
- * - BaseballHittingPlaybackModule
- * - Any future sport modules
- */
 export type PlaybackModuleProps = {
   /**
    * Current playback time in seconds.

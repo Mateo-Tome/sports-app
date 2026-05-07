@@ -23,6 +23,56 @@ function clean(v) {
     .replace(/^'(.*)'$/, '$1');
 }
 
+function formatSportLabel(raw) {
+  const value = clean(raw).toLowerCase();
+  if (!value) return 'Sports';
+
+  const [sportRaw, styleRaw] = value.split(':');
+  const sport = sportRaw || value;
+  const style = styleRaw || '';
+
+  const title = (s) =>
+    s
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  if (sport === 'baseball') {
+    if (!style || style === 'default') return 'Baseball';
+    if (style === 'hitting') return 'Baseball Hitting';
+    if (style === 'pitching') return 'Baseball Pitching';
+  }
+
+  if (sport === 'softball') {
+    if (!style || style === 'default') return 'Softball';
+    if (style === 'hitting') return 'Softball Hitting';
+    if (style === 'pitching') return 'Softball Pitching';
+  }
+
+  if (sport === 'wrestling') {
+    if (!style || style === 'default') return 'Wrestling';
+    if (style === 'folkstyle') return 'Folkstyle Wrestling';
+    if (style === 'freestyle') return 'Freestyle Wrestling';
+    if (style === 'greco' || style === 'greco-roman' || style === 'greco roman') {
+      return 'Greco-Roman Wrestling';
+    }
+  }
+
+  if (sport === 'bjj') {
+    if (!style || style === 'default') return 'BJJ';
+    if (style === 'gi') return 'BJJ Gi';
+    if (style === 'nogi' || style === 'no-gi' || style === 'no gi') return 'BJJ No-Gi';
+  }
+
+  if (sport === 'basketball') return 'Basketball';
+  if (sport === 'volleyball') return 'Volleyball';
+
+  if (!style || style === 'default') return title(sport);
+
+  return `${title(sport)} ${title(style)}`;
+}
+
 // ⚠️ NOTE: This creates a URL with Authorization in the query string (good for quick testing,
 // but NOT ideal for long-term CDN caching). We'll keep it for now because your app already uses it.
 function buildB2FileUrl(downloadUrl, bucketName, fileName, authToken) {
@@ -879,12 +929,42 @@ exports.getSharePreview = onRequest((req, res) => {
       }
 
       const athleteName = (v.athleteName || v.athlete || 'Athlete').toString().trim();
-      const sport = (v.sportStyle || v.sport || 'Sports').toString().trim();
+      const rawSport = (v.sportStyle || v.sport || 'Sports').toString().trim();
+      const sport = formatSportLabel(rawSport);
       const scoreText = (v.scoreText || '').toString().trim();
 
-      const title = v.title
-        ? v.title.toString().trim()
-        : `QuickClip • ${athleteName} ${sport} Clip`;
+      let whenText = '';
+try {
+  const createdAt = v.createdAt;
+  let ms = 0;
+
+  if (createdAt?.toMillis) ms = createdAt.toMillis();
+  else if (typeof createdAt?.seconds === 'number') ms = createdAt.seconds * 1000;
+  else if (typeof createdAt === 'number') ms = createdAt;
+
+  if (ms) {
+    const d = new Date(ms);
+    const month = d.toLocaleString('en-US', { month: 'short' });
+    const day = d.getDate();
+    const time = d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    whenText = `${month} ${day} at ${time}`;
+  }
+} catch {}
+
+const savedTitle = (v.title || '').toString().trim();
+
+const title = savedTitle
+  ? savedTitle
+      .replace(rawSport, sport)
+      .replace(/:default/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  : whenText
+    ? `${athleteName} • ${sport} • ${whenText}`
+    : `QuickClip • ${athleteName} ${sport} Clip`;
 
       const description = scoreText
         ? `${scoreText} • Watch this tagged sports clip on QuickClip.`

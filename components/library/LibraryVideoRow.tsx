@@ -86,9 +86,59 @@ function clean(str?: string | null) {
   return s.length ? s : '';
 }
 
+function formatSportLabel(raw?: string | null) {
+  const value = clean(raw).toLowerCase();
+  if (!value) return 'Unknown Sport';
+
+  const [sportRaw, styleRaw] = value.split(':');
+  const sport = sportRaw || value;
+  const style = styleRaw || '';
+
+  const title = (s: string) =>
+    s
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  if (sport === 'baseball') {
+    if (!style || style === 'default') return 'Baseball';
+    if (style === 'hitting') return 'Baseball Hitting';
+    if (style === 'pitching') return 'Baseball Pitching';
+  }
+
+  if (sport === 'softball') {
+    if (!style || style === 'default') return 'Softball';
+    if (style === 'hitting') return 'Softball Hitting';
+    if (style === 'pitching') return 'Softball Pitching';
+  }
+
+  if (sport === 'wrestling') {
+    if (!style || style === 'default') return 'Wrestling';
+    if (style === 'folkstyle') return 'Folkstyle Wrestling';
+    if (style === 'freestyle') return 'Freestyle Wrestling';
+    if (style === 'greco' || style === 'greco-roman' || style === 'greco roman') {
+      return 'Greco-Roman Wrestling';
+    }
+  }
+
+  if (sport === 'bjj') {
+    if (!style || style === 'default') return 'BJJ';
+    if (style === 'gi') return 'BJJ Gi';
+    if (style === 'nogi' || style === 'no-gi' || style === 'no gi') return 'BJJ No-Gi';
+  }
+
+  if (sport === 'basketball') return 'Basketball';
+  if (sport === 'volleyball') return 'Volleyball';
+
+  if (!style || style === 'default') return title(sport);
+
+  return `${title(sport)} ${title(style)}`;
+}
+
 function formatRowTitle(row: LibraryRow) {
   const athlete = clean(row.athlete) || 'Unassigned';
-  const sport = clean(row.sport) || 'unknown';
+  const sport = formatSportLabel(row.sport);
   const name = clean(row.displayName) || 'clip';
   const when = formatWhen(row.mtime);
 
@@ -221,7 +271,7 @@ function LibraryVideoRowComponent({
 
   const subtitleBits = [
     clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
-    clean(row.sport) ? `Sport: ${clean(row.sport)}` : null,
+    clean(row.sport) ? `Sport: ${formatSportLabel(row.sport)}` : null,
     `Size: ${bytesToMB(row.size)}`,
   ].filter(Boolean);
 
