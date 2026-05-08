@@ -37,14 +37,27 @@ type PendingRbiEvent =
   | { key: 'hit_by_pitch'; label: string; color: string; meta: Record<string, any>; toastBase: string }
   | { key: 'out'; label: string; color: string; meta: Record<string, any>; toastBase: string };
 
-function beltLaneForKey(key: string): BeltLane {
-  const k = String(key || '').toLowerCase();
-  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
-    return 'top';
+  function beltLaneForKey(key: string): BeltLane {
+    const k = String(key || '').toLowerCase();
+  
+    // Match recording overlay:
+    // strikes/outs on top, positive hitting results on bottom
+    if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') {
+      return 'top';
+    }
+  
+    if (
+      k === 'ball' ||
+      k === 'walk' ||
+      k === 'hit' ||
+      k === 'homerun' ||
+      k === 'hit_by_pitch'
+    ) {
+      return 'bottom';
+    }
+  
+    return undefined;
   }
-  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
-  return undefined;
-}
 
 function RbiChooser({
   open,

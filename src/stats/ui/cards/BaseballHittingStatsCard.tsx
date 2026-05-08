@@ -108,6 +108,14 @@ export default function BaseballHittingStatsCard({
   const kSwinging = clamp0(stats?.counts?.strikeoutTypes?.swinging);
   const kLooking = clamp0(stats?.counts?.strikeoutTypes?.looking);
 
+  const rbiTotal = clamp0(stats?.counts?.rbi?.total);
+  const rbiPerClip = clamp0(stats?.derived?.rbiPerClip);
+  const rbiHit = clamp0(stats?.counts?.rbi?.hit);
+  const rbiHr = clamp0(stats?.counts?.rbi?.homerun);
+  const rbiWalk = clamp0(stats?.counts?.rbi?.walk);
+  const rbiHbp = clamp0(stats?.counts?.rbi?.hitByPitch);
+  const rbiOut = clamp0(stats?.counts?.rbi?.out);
+
   const totalBases = singles + doubles * 2 + triples * 3 + homeruns * 4;
   const slg = atBats ? totalBases / atBats : 0;
   const ops = (Number(`0${obpText}`) || 0) + slg;
@@ -121,7 +129,19 @@ export default function BaseballHittingStatsCard({
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <HeroStat label="BA" value={ba} sub={`${hits}/${atBats}`} />
         <HeroStat label="OBP" value={obpText} sub={`${walks + hbp} free bases`} />
-        <HeroStat label="OPS" value={stat3(ops)} sub={`${totalBases} TB`} />
+        <HeroStat label="RBI" value={rbiTotal} sub={`${rbiPerClip} per clip`} />
+      </View>
+
+      <SectionTitle>Run Production</SectionTitle>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        <Chip label="RBI" value={rbiTotal} />
+        <Chip label="RBI / Clip" value={`${rbiPerClip} avg`} />
+        <Chip label="RBI on Hits" value={rbiHit} />
+        <Chip label="RBI on HR" value={rbiHr} />
+        <Chip label="RBI on Walks" value={rbiWalk} />
+        <Chip label="RBI on HBP" value={rbiHbp} />
+        <Chip label="RBI on Outs" value={rbiOut} />
       </View>
 
       <SectionTitle>Outcome Profile</SectionTitle>
@@ -141,6 +161,8 @@ export default function BaseballHittingStatsCard({
         <Chip label="HR" value={homeruns} />
         <Chip label="Bunt" value={bunt} />
         <Chip label="Total Bases" value={totalBases} />
+        <Chip label="SLG" value={stat3(slg)} />
+        <Chip label="OPS" value={stat3(ops)} />
       </View>
 
       <SectionTitle>Plate Discipline</SectionTitle>

@@ -14,6 +14,15 @@ export type BaseballHittingStats = {
     out: number;
     strikeout: number;
 
+    rbi: {
+      total: number;
+      hit: number;
+      homerun: number;
+      walk: number;
+      hitByPitch: number;
+      out: number;
+    };
+
     strikeTypes: { swinging: number; looking: number; unknown: number };
     hitTypes: { single: number; double: number; triple: number; bunt: number; unknown: number };
     outTypes: Record<string, number>;
@@ -28,6 +37,7 @@ export type BaseballHittingStats = {
     battingAverageText: string;
     onBasePct: number;
     onBasePctText: string;
+    rbiPerClip: number;
   };
 
   lastUpdatedAt: number;
@@ -55,6 +65,12 @@ function readKind(meta: any) {
   return 'unknown';
 }
 
+function readMeta(e: any) {
+  const meta = e?.meta ?? {};
+  const inner = meta?.meta ?? {};
+  return { ...inner, ...meta };
+}
+
 export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStats {
   const base: BaseballHittingStats = {
     sportKey: 'baseball:hitting',
@@ -70,6 +86,15 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       out: 0,
       strikeout: 0,
 
+      rbi: {
+        total: 0,
+        hit: 0,
+        homerun: 0,
+        walk: 0,
+        hitByPitch: 0,
+        out: 0,
+      },
+
       strikeTypes: { swinging: 0, looking: 0, unknown: 0 },
       hitTypes: { single: 0, double: 0, triple: 0, bunt: 0, unknown: 0 },
       outTypes: {},
@@ -83,6 +108,7 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       battingAverageText: '.000',
       onBasePct: 0,
       onBasePctText: '.000',
+      rbiPerClip: 0,
     },
     lastUpdatedAt: 0,
   };
@@ -95,7 +121,18 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
 
     for (const e of events) {
       const key = readKey(e);
-      const meta = (e?.meta ?? {}) as any;
+      const meta = readMeta(e);
+
+      const rbi = clamp0(meta?.rbi);
+      if (rbi > 0) {
+        base.counts.rbi.total += rbi;
+
+        if (key === 'hit') base.counts.rbi.hit += rbi;
+        else if (key === 'homerun') base.counts.rbi.homerun += rbi;
+        else if (key === 'walk') base.counts.rbi.walk += rbi;
+        else if (key === 'hit_by_pitch') base.counts.rbi.hitByPitch += rbi;
+        else if (key === 'out') base.counts.rbi.out += rbi;
+      }
 
       if (key === 'ball') {
         base.counts.ball += 1;
@@ -147,6 +184,9 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
 
   base.derived.onBasePct = plateAppearances > 0 ? onBase / plateAppearances : 0;
   base.derived.onBasePctText = format3(base.derived.onBasePct);
+
+  base.derived.rbiPerClip =
+    clips.length > 0 ? Math.round((base.counts.rbi.total / clips.length) * 10) / 10 : 0;
 
   return base;
 }
