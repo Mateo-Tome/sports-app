@@ -9,6 +9,7 @@ import { reduceBaseballPitching } from './reducers/baseball/pitching';
 
 import { reduceBasketballDefault } from './reducers/basketball/reduceBasketball';
 
+import { reduceBjjDefault, reduceBjjGi, reduceBjjNoGi } from './reducers/bjj/default';
 import { reduceVolleyballDefault } from './reducers/volleyball/default';
 
 export type SportStatsReducer = (clips: ClipSidecar[]) => any;
@@ -38,3 +39,6 @@ registerSportStats('basketball:default', reduceBasketballDefault);
 
 registerSportStats('volleyball:default', reduceVolleyballDefault);
 registerSportStats('volleyball:match', reduceVolleyballDefault);
+registerSportStats('bjj:default', reduceBjjDefault);
+registerSportStats('bjj:gi', reduceBjjGi);
+registerSportStats('bjj:nogi', reduceBjjNoGi);

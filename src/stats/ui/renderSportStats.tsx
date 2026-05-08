@@ -5,6 +5,7 @@ import { sportTitle } from '../sportMeta';
 import BaseballHittingStatsCard from './cards/BaseballHittingStatsCard';
 import BaseballPitchingStatsCard from './cards/BaseballPitchingStatsCard';
 import BasketballStatsCard from './cards/BasketballStatsCard';
+import BjjStatsCard from './cards/BjjStatsCard';
 import FolkstyleStatsCard from './cards/FolkstyleStatsCard';
 import FreestyleStatsCard from './cards/FreestyleStatsCard';
 import GrecoStatsCard from './cards/GrecoStatsCard';
@@ -461,30 +462,12 @@ export function renderSportStatsCard(
   }
 
   if (sportKey.startsWith('bjj:')) {
-    const b = normalizeBjjDefault(sportStats);
-
     return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={b.clips} />
-          <Chip label="Events" value={b.events} />
-          <Chip label="Home pts" value={b.athletePts} />
-          <Chip label="Opp pts" value={b.oppPts} />
-          <Chip label="TD" value={b.takedown} />
-          <Chip label="Sweep" value={b.sweep} />
-          <Chip label="KOB" value={b.kob} />
-          <Chip label="Pass" value={b.pass} />
-          <Chip label="Mount" value={b.mount} />
-          <Chip label="Back" value={b.back} />
-          <Chip label="Adv" value={b.advantage} />
-          <Chip label="Pen" value={b.penalty} />
-          <Chip label="Finishes" value={b.finish} />
-        </View>
-      </CardShell>
+      <BjjStatsCard
+        stats={sportStats}
+        athleteName={athleteName}
+        sportKey={sportKey}
+      />
     );
   }
 
