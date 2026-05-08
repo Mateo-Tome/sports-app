@@ -536,11 +536,19 @@ export function EventBelt(props: {
                   numberOfLines={1}
                   style={{ color: 'white', fontSize: 11, fontWeight: '800' }}
                 >
-                  {`${abbrKind(pillKind)}${
-                    typeof (it.e as any).points === 'number' && (it.e as any).points > 0
-                      ? `+${(it.e as any).points}`
-                      : ''
-                  }`}
+                  {(() => {
+  const m = getMetaFlat(it.e);
+  const rbi = Number(m?.rbi ?? 0);
+  const hasRbi = Number.isFinite(rbi) && rbi > 0;
+
+  const base = `${abbrKind(pillKind)}${
+    typeof (it.e as any).points === 'number' && (it.e as any).points > 0
+      ? `+${(it.e as any).points}`
+      : ''
+  }`;
+
+  return hasRbi ? `${base} ${rbi}RBI` : base;
+})()}
                 </Text>
 
                 <Text

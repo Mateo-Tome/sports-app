@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useWindowDimensions, View } from 'react-native';
+import { TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import type { PlaybackModuleProps } from '../types';
 
 import {
@@ -12,6 +12,8 @@ import {
   StrikeChooser,
   StrikeoutChooser,
 } from './baseballUiParts';
+
+import { OverlayCompactText } from '../../overlays/OverlayCompactText';
 
 import {
   BALL_COLOR,
@@ -28,6 +30,13 @@ import {
 
 type BeltLane = 'top' | 'bottom' | undefined;
 
+type PendingRbiEvent =
+  | { key: 'hit'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'homerun'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'walk'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'hit_by_pitch'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'out'; label: string; color: string; meta: Record<string, any>; toastBase: string };
+
 function beltLaneForKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
   if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
@@ -35,6 +44,106 @@ function beltLaneForKey(key: string): BeltLane {
   }
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
   return undefined;
+}
+
+function RbiChooser({
+  open,
+  pending,
+  top,
+  screenW,
+  edgeL,
+  edgeR,
+  onPick,
+  onCancel,
+}: {
+  open: boolean;
+  pending: PendingRbiEvent | null;
+  top: number;
+  screenW: number;
+  edgeL: number;
+  edgeR: number;
+  onPick: (rbi: number) => void;
+  onCancel: () => void;
+}) {
+  if (!open || !pending) return null;
+
+  const maxW = Math.max(280, Math.min(screenW - edgeL - edgeR, 420));
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top,
+        left: edgeL,
+        right: edgeR,
+        alignItems: 'center',
+        zIndex: 80,
+      }}
+    >
+      <View
+        style={{
+          width: maxW,
+          borderRadius: 22,
+          padding: 12,
+          backgroundColor: 'rgba(0,0,0,0.82)',
+          borderWidth: 1,
+          borderColor: pending.color,
+        }}
+      >
+        <OverlayCompactText
+          style={{
+            color: 'white',
+            fontWeight: '900',
+            fontSize: 13,
+            textAlign: 'center',
+            marginBottom: 10,
+          }}
+        >
+          RBI for {pending.toastBase}?
+        </OverlayCompactText>
+
+        <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center' }}>
+          {[0, 1, 2, 3, 4].map((rbi) => (
+            <TouchableOpacity
+              key={rbi}
+              onPress={() => onPick(rbi)}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: rbi === 0 ? 'rgba(255,255,255,0.13)' : pending.color,
+                borderWidth: 1,
+                borderColor: rbi === 0 ? 'rgba(255,255,255,0.25)' : pending.color,
+              }}
+            >
+              <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>
+                {rbi}
+              </OverlayCompactText>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity
+          onPress={onCancel}
+          style={{
+            alignSelf: 'center',
+            marginTop: 10,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.10)',
+          }}
+        >
+          <OverlayCompactText style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '800' }}>
+            Cancel
+          </OverlayCompactText>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 }
 
 export default function BaseballHittingPlaybackModule({
@@ -81,8 +190,9 @@ export default function BaseballHittingPlaybackModule({
   const [strikeChooserOpen, setStrikeChooserOpen] = useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
-  const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
+  const [pendingRbi, setPendingRbi] = useState<PendingRbiEvent | null>(null);
 
+  const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
   const showToast = (text: string, tint: string) => setToast({ text, tint });
 
   const resetCount = () => {
@@ -128,6 +238,34 @@ export default function BaseballHittingPlaybackModule({
         ...(extraMeta || {}),
       },
     });
+  };
+
+  const askRbi = (pending: PendingRbiEvent) => {
+    if (!showPalette) return;
+    setPendingRbi(pending);
+  };
+
+  const finishPendingRbi = (rbi: number) => {
+    const pending = pendingRbi;
+    if (!pending) return;
+
+    fire(pending.key, pending.label, {
+      ...pending.meta,
+      rbi,
+      hasRbi: rbi > 0,
+    });
+
+    showToast(
+      rbi > 0 ? `${pending.toastBase} • ${rbi} RBI` : pending.toastBase,
+      pending.color,
+    );
+
+    setPendingRbi(null);
+    resetCount();
+  };
+
+  const cancelPendingRbi = () => {
+    setPendingRbi(null);
   };
 
   const onBall = () => {
@@ -178,44 +316,66 @@ export default function BaseballHittingPlaybackModule({
   const incrementOuts = (type: string) => {
     setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('out', 'Out', { type, outsAfter: next });
-      showToast(type, OUT_COLOR);
+
+      askRbi({
+        key: 'out',
+        label: 'Out',
+        color: OUT_COLOR,
+        meta: { type, outsAfter: next },
+        toastBase: type,
+      });
+
       return next;
     });
-    resetCount();
   };
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
-    fire('hit', 'Hit', { type });
-    showToast(
+    const toastBase =
       type === 'single'
         ? 'Single'
         : type === 'double'
           ? 'Double'
           : type === 'triple'
             ? 'Triple'
-            : 'Bunt',
-      HIT_COLOR,
-    );
-    resetCount();
+            : 'Bunt';
+
+    askRbi({
+      key: 'hit',
+      label: 'Hit',
+      color: HIT_COLOR,
+      meta: { type },
+      toastBase,
+    });
   };
 
   const recordHitByPitch = () => {
-    fire('hit_by_pitch', 'HBP', { type: 'hit_by_pitch' });
-    showToast('Hit By Pitch', WALK_COLOR);
-    resetCount();
+    askRbi({
+      key: 'hit_by_pitch',
+      label: 'HBP',
+      color: WALK_COLOR,
+      meta: { type: 'hit_by_pitch' },
+      toastBase: 'Hit By Pitch',
+    });
   };
 
   const recordHomerun = () => {
-    fire('homerun', 'Home Run', { type: 'homerun' });
-    showToast('Home Run', HR_COLOR);
-    resetCount();
+    askRbi({
+      key: 'homerun',
+      label: 'Home Run',
+      color: HR_COLOR,
+      meta: { type: 'homerun' },
+      toastBase: 'Home Run',
+    });
   };
 
   const recordWalk = () => {
-    fire('walk', 'Walk', { type: 'walk' });
-    showToast('Walk', WALK_COLOR);
-    resetCount();
+    askRbi({
+      key: 'walk',
+      label: 'Walk',
+      color: WALK_COLOR,
+      meta: { type: 'walk' },
+      toastBase: 'Walk',
+    });
   };
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
@@ -297,6 +457,17 @@ export default function BaseballHittingPlaybackModule({
         EDGE_L={EDGE_L}
         EDGE_R={EDGE_R}
         screenW={screenW}
+      />
+
+      <RbiChooser
+        open={!!pendingRbi}
+        pending={pendingRbi}
+        top={CHOOSER_TOP}
+        screenW={screenW}
+        edgeL={EDGE_L}
+        edgeR={EDGE_R}
+        onPick={finishPendingRbi}
+        onCancel={cancelPendingRbi}
       />
 
       {showPalette && toast ? (

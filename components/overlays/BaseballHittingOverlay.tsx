@@ -1,9 +1,8 @@
 import React from 'react';
-import { useWindowDimensions, View } from 'react-native';
+import { TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { OverlayProps } from './types';
 
-// shared UI parts + colors
 import {
   CountBar,
   FlashToast,
@@ -14,6 +13,8 @@ import {
   StrikeChooser,
   StrikeoutChooser,
 } from '../modules/baseball/baseballUiParts';
+
+import { OverlayCompactText } from './OverlayCompactText';
 
 import {
   BALL_COLOR,
@@ -28,15 +29,134 @@ import {
 } from '../modules/baseball/useBaseballHittingLogic';
 
 type BeltLane = 'top' | 'bottom' | undefined;
+type PendingRbiEvent =
+  | { key: 'hit'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'homerun'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'walk'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'hit_by_pitch'; label: string; color: string; meta: Record<string, any>; toastBase: string }
+  | { key: 'out'; label: string; color: string; meta: Record<string, any>; toastBase: string };
 
-// strikes/top, balls/bottom
 function beltLaneForHittingKey(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
   if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'top';
-  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun' || k === 'hit_by_pitch') {
+
+  if (
+    k === 'ball' ||
+    k === 'walk' ||
+    k === 'hit' ||
+    k === 'homerun' ||
+    k === 'hit_by_pitch'
+  ) {
     return 'bottom';
   }
+
   return undefined;
+}
+
+function RbiChooser({
+  open,
+  pending,
+  top,
+  screenW,
+  edgeL,
+  edgeR,
+  onPick,
+  onCancel,
+}: {
+  open: boolean;
+  pending: PendingRbiEvent | null;
+  top: number;
+  screenW: number;
+  edgeL: number;
+  edgeR: number;
+  onPick: (rbi: number) => void;
+  onCancel: () => void;
+}) {
+  if (!open || !pending) return null;
+
+  const maxW = Math.max(280, Math.min(screenW - edgeL - edgeR, 420));
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top,
+        left: edgeL,
+        right: edgeR,
+        alignItems: 'center',
+        zIndex: 80,
+      }}
+    >
+      <View
+        style={{
+          width: maxW,
+          borderRadius: 22,
+          padding: 12,
+          backgroundColor: 'rgba(0,0,0,0.82)',
+          borderWidth: 1,
+          borderColor: pending.color,
+        }}
+      >
+        <OverlayCompactText
+          style={{
+            color: 'white',
+            fontWeight: '900',
+            fontSize: 13,
+            textAlign: 'center',
+            marginBottom: 10,
+          }}
+        >
+          RBI for {pending.toastBase}?
+        </OverlayCompactText>
+
+        <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center' }}>
+          {[0, 1, 2, 3, 4].map((rbi) => (
+            <TouchableOpacity
+              key={rbi}
+              onPress={() => onPick(rbi)}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: rbi === 0 ? 'rgba(255,255,255,0.13)' : pending.color,
+                borderWidth: 1,
+                borderColor: rbi === 0 ? 'rgba(255,255,255,0.25)' : pending.color,
+              }}
+            >
+              <OverlayCompactText
+                style={{
+                  color: 'white',
+                  fontWeight: '900',
+                  fontSize: 15,
+                }}
+              >
+                {rbi}
+              </OverlayCompactText>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity
+          onPress={onCancel}
+          style={{
+            alignSelf: 'center',
+            marginTop: 10,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.10)',
+          }}
+        >
+          <OverlayCompactText style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '800' }}>
+            Cancel
+          </OverlayCompactText>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 }
 
 export default function BaseballHittingOverlay({ isRecording, onEvent }: OverlayProps) {
@@ -44,7 +164,6 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
 
-  // layout paddings to avoid header + bottom controls from camera screen
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
   const TOP = insets.top + 52;
@@ -66,6 +185,8 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
   const [strikeChooserOpen, setStrikeChooserOpen] = React.useState(false);
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = React.useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = React.useState(false);
+
+  const [pendingRbi, setPendingRbi] = React.useState<PendingRbiEvent | null>(null);
 
   const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
   const showToast = (text: string, tint: string) => setToast({ text, tint });
@@ -108,6 +229,34 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
         ...(extraMeta || {}),
       },
     });
+  };
+
+  const askRbi = (pending: PendingRbiEvent) => {
+    if (!isRecording) return;
+    setPendingRbi(pending);
+  };
+
+  const finishPendingRbi = (rbi: number) => {
+    const pending = pendingRbi;
+    if (!pending) return;
+
+    fire(pending.key, pending.label, {
+      ...pending.meta,
+      rbi,
+      hasRbi: rbi > 0,
+    });
+
+    showToast(
+      rbi > 0 ? `${pending.toastBase} • ${rbi} RBI` : pending.toastBase,
+      pending.color,
+    );
+
+    setPendingRbi(null);
+    resetCount();
+  };
+
+  const cancelPendingRbi = () => {
+    setPendingRbi(null);
   };
 
   const onBall = () => {
@@ -163,50 +312,77 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
 
   const recordWalk = () => {
     if (!isRecording) return;
-    fire('walk', 'Walk', { type: 'walk' });
-    showToast('Walk', WALK_COLOR);
-    resetCount();
+
+    askRbi({
+      key: 'walk',
+      label: 'Walk',
+      color: WALK_COLOR,
+      meta: { type: 'walk' },
+      toastBase: 'Walk',
+    });
   };
 
   const recordHitByPitch = () => {
     if (!isRecording) return;
-    fire('hit_by_pitch', 'HBP', { type: 'hit_by_pitch' });
-    showToast('Hit By Pitch', WALK_COLOR);
-    resetCount();
+
+    askRbi({
+      key: 'hit_by_pitch',
+      label: 'HBP',
+      color: WALK_COLOR,
+      meta: { type: 'hit_by_pitch' },
+      toastBase: 'Hit By Pitch',
+    });
   };
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
     if (!isRecording) return;
-    fire('hit', 'Hit', { type });
-    showToast(
+
+    const toastBase =
       type === 'single'
         ? 'Single'
         : type === 'double'
           ? 'Double'
           : type === 'triple'
             ? 'Triple'
-            : 'Bunt',
-      HIT_COLOR,
-    );
-    resetCount();
+            : 'Bunt';
+
+    askRbi({
+      key: 'hit',
+      label: 'Hit',
+      color: HIT_COLOR,
+      meta: { type },
+      toastBase,
+    });
   };
 
   const incrementOuts = (label: string) => {
     if (!isRecording) return;
+
     setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
-      fire('out', 'Out', { type: label, outsAfter: next });
-      showToast(label, OUT_COLOR);
+
+      askRbi({
+        key: 'out',
+        label: 'Out',
+        color: OUT_COLOR,
+        meta: { type: label, outsAfter: next },
+        toastBase: label,
+      });
+
       return next;
     });
-    resetCount();
   };
 
   const recordHomerun = () => {
     if (!isRecording) return;
-    fire('homerun', 'Home Run', { type: 'homerun' });
-    showToast('Home Run', HR_COLOR);
-    resetCount();
+
+    askRbi({
+      key: 'homerun',
+      label: 'Home Run',
+      color: HR_COLOR,
+      meta: { type: 'homerun' },
+      toastBase: 'Home Run',
+    });
   };
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
@@ -289,6 +465,17 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
         EDGE_L={EDGE_L}
         EDGE_R={EDGE_R}
         screenW={screenW}
+      />
+
+      <RbiChooser
+        open={!!pendingRbi}
+        pending={pendingRbi}
+        top={CHOOSER_TOP}
+        screenW={screenW}
+        edgeL={EDGE_L}
+        edgeR={EDGE_R}
+        onPick={finishPendingRbi}
+        onCancel={cancelPendingRbi}
       />
 
       {toast ? (
