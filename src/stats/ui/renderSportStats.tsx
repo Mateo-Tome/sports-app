@@ -5,7 +5,9 @@ import { sportTitle } from '../sportMeta';
 import BaseballHittingStatsCard from './cards/BaseballHittingStatsCard';
 import BaseballPitchingStatsCard from './cards/BaseballPitchingStatsCard';
 import BasketballStatsCard from './cards/BasketballStatsCard';
+import FolkstyleStatsCard from './cards/FolkstyleStatsCard';
 import FreestyleStatsCard from './cards/FreestyleStatsCard';
+import GrecoStatsCard from './cards/GrecoStatsCard';
 
 function CardShell({
   title,
@@ -487,97 +489,11 @@ export function renderSportStatsCard(
   }
 
   if (sportKey === 'wrestling:folkstyle') {
-    const w = normalizeFolkstyle(sportStats);
-
-    const p = (key: 'p1' | 'p2' | 'p3' | 'ot') => {
-      const row = w.periods?.[key] ?? {};
-      return {
-        td: clamp0(row?.takedown?.myKid),
-        tdPct: clamp0(w.tdShare?.[key]),
-        esc: clamp0(row?.escape?.myKid),
-        rev: clamp0(row?.reversal?.myKid),
-        nf: clamp0(row?.nearfall?.myKid),
-        pts: clamp0(row?.myKidPoints),
-      };
-    };
-
-    const p1 = p('p1');
-    const p2 = p('p2');
-    const p3 = p('p3');
-    const ot = p('ot');
-
-    const hasOt = ot.td + ot.esc + ot.rev + ot.nf + ot.pts > 0;
-
     return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 12 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <HeroStat label="Pts / Match" value={`${w.myPointsPerMatch} avg`} sub={`${w.myPoints} total`} />
-          <HeroStat label="TD / Match" value={`${w.tdPerMatch} avg`} sub={`${w.td} takedowns`} />
-          <HeroStat label="Pin Rate" value={w.pinRateText} sub={`${w.pins} pins`} />
-        </View>
-
-        <SectionTitle>Scoring breakdown</SectionTitle>
-
-        <BarRow
-          label="Takedown points"
-          value={`${w.pointBreakdown.takedown} pts • ${w.pointBreakdownPct.takedown}%`}
-          pct={w.pointBreakdownPct.takedown}
-        />
-        <BarRow
-          label="Escape points"
-          value={`${w.pointBreakdown.escape} pts • ${w.pointBreakdownPct.escape}%`}
-          pct={w.pointBreakdownPct.escape}
-        />
-        <BarRow
-          label="Reversal points"
-          value={`${w.pointBreakdown.reversal} pts • ${w.pointBreakdownPct.reversal}%`}
-          pct={w.pointBreakdownPct.reversal}
-        />
-        <BarRow
-          label="Nearfall points"
-          value={`${w.pointBreakdown.nearfall} pts • ${w.pointBreakdownPct.nearfall}%`}
-          pct={w.pointBreakdownPct.nearfall}
-        />
-        <BarRow
-          label="Other / penalty points"
-          value={`${w.pointBreakdown.penalty + w.pointBreakdown.other} pts`}
-          pct={w.pointBreakdownPct.penalty + w.pointBreakdownPct.other}
-        />
-
-        <SectionTitle>Period breakdown</SectionTitle>
-
-        <PeriodRow label="Period 1" td={p1.td} tdPct={p1.tdPct} esc={p1.esc} rev={p1.rev} nf={p1.nf} pts={p1.pts} />
-        <PeriodRow label="Period 2" td={p2.td} tdPct={p2.tdPct} esc={p2.esc} rev={p2.rev} nf={p2.nf} pts={p2.pts} />
-        <PeriodRow label="Period 3" td={p3.td} tdPct={p3.tdPct} esc={p3.esc} rev={p3.rev} nf={p3.nf} pts={p3.pts} />
-
-        {hasOt ? (
-          <PeriodRow label="Overtime" td={ot.td} tdPct={ot.tdPct} esc={ot.esc} rev={ot.rev} nf={ot.nf} pts={ot.pts} />
-        ) : null}
-
-        <SectionTitle>Totals</SectionTitle>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={w.clips} />
-          <Chip label="Events" value={w.events} />
-          <Chip label="Total Points" value={w.myPoints} />
-          <Chip label="Opp Points" value={w.oppPoints} />
-          <Chip label="Takedowns" value={w.td} />
-          <Chip label="Escapes" value={w.esc} />
-          <Chip label="Reversals" value={w.rev} />
-          <Chip label="Nearfall Total" value={w.nfTotal} />
-          <Chip label="NF2" value={w.nf2} />
-          <Chip label="NF3" value={w.nf3} />
-          <Chip label="NF4" value={w.nf4} />
-          <Chip label="Pins" value={w.pins} />
-          <Chip label="ESC / Match" value={`${w.escPerMatch} avg`} />
-          <Chip label="REV / Match" value={`${w.revPerMatch} avg`} />
-          <Chip label="NF / Match" value={`${w.nfPerMatch} avg`} />
-        </View>
-      </CardShell>
+      <FolkstyleStatsCard
+        stats={sportStats}
+        athleteName={athleteName}
+      />
     );
   }
 
@@ -591,27 +507,11 @@ export function renderSportStatsCard(
   }
 
   if (sportKey === 'wrestling:greco') {
-    const gs = normalizeGreco(sportStats);
     return (
-      <CardShell title={sportTitle(sportKey)}>
-        <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 10 }}>
-          Athlete: {athleteName}
-        </Text>
-
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <Chip label="Clips" value={gs.clips} />
-          <Chip label="Events" value={gs.events} />
-          <Chip label="My Points" value={gs.myPoints} />
-          <Chip label="Opp Points" value={gs.oppPoints} />
-          <Chip label="TD2" value={gs.td} />
-          <Chip label="EX2" value={gs.ex} />
-          <Chip label="OB1" value={gs.ob} />
-          <Chip label="FTD4" value={gs.ftd4} />
-          <Chip label="GA4" value={gs.ga4} />
-          <Chip label="GA5" value={gs.ga5} />
-          <Chip label="DEF LEG +2 (given)" value={gs.legP2Given} />
-        </View>
-      </CardShell>
+      <GrecoStatsCard
+        stats={sportStats}
+        athleteName={athleteName}
+      />
     );
   }
 

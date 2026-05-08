@@ -17,6 +17,13 @@ type PointBreakdown = {
   other: number;
 };
 
+type RecordStats = {
+  wins: number;
+  losses: number;
+  ties: number;
+  winPctText: string;
+};
+
 export type FreestyleStats = {
   sportKey: 'wrestling:freestyle';
 
@@ -48,6 +55,8 @@ export type FreestyleStats = {
 
   derived: {
     matches: number;
+
+    record: RecordStats;
 
     myPointsPerMatch: number;
     opponentPointsPerMatch: number;
@@ -89,6 +98,30 @@ function pct(num: number, den: number) {
   return Math.round((num / den) * 100);
 }
 
+function winPctText(wins: number, losses: number, ties: number) {
+  const total = wins + losses + ties;
+  if (!total) return '0%';
+  return `${Math.round((wins / total) * 100)}%`;
+}
+
+function readResult(clip: any): 'win' | 'loss' | 'tie' | null {
+  const raw =
+    clip?.result ??
+    clip?.matchResult ??
+    clip?.outcome ??
+    clip?.libraryStyle?.result ??
+    clip?.metadata?.result ??
+    null;
+
+  const s = String(raw ?? '').trim().toLowerCase();
+
+  if (['w', 'win', 'won', 'victory'].includes(s)) return 'win';
+  if (['l', 'loss', 'lost', 'lose'].includes(s)) return 'loss';
+  if (['t', 'tie', 'draw'].includes(s)) return 'tie';
+
+  return null;
+}
+
 function makeSplit(): ActionSplit {
   return { myKid: 0, opp: 0 };
 }
@@ -101,8 +134,6 @@ function addSplit(split: ActionSplit, bucket: Bucket, amount = 1) {
 function actorBucket(actor: any, homeIsAthlete?: boolean): Bucket {
   if (actor !== 'home' && actor !== 'opponent') return 'neutral';
 
-  // IMPORTANT:
-  // Default to home = athlete unless explicitly false.
   const athleteIsHome = homeIsAthlete !== false;
   const isMyKid = athleteIsHome ? actor === 'home' : actor === 'opponent';
 
@@ -126,41 +157,20 @@ function addPointBreakdown(
 ) {
   if (points <= 0) return;
 
-  if (kind === 'takedown') {
-    breakdown.takedown += points;
-    return;
-  }
-
-  if (kind === 'exposure') {
-    breakdown.exposure += points;
-    return;
-  }
-
-  if (kind === 'out') {
-    breakdown.stepOut += points;
-    return;
-  }
-
-  if (kind === 'feet_to_danger') {
-    breakdown.feetToDanger += points;
-    return;
-  }
-
-  if (kind === 'grand_amplitude') {
-    breakdown.grandAmplitude += points;
-    return;
-  }
-
-  if (kind === 'passivity' || kind === 'penalty' || kind === 'flee') {
+  if (kind === 'takedown') breakdown.takedown += points;
+  else if (kind === 'exposure') breakdown.exposure += points;
+  else if (kind === 'out') breakdown.stepOut += points;
+  else if (kind === 'feet_to_danger') breakdown.feetToDanger += points;
+  else if (kind === 'grand_amplitude') breakdown.grandAmplitude += points;
+  else if (kind === 'passivity' || kind === 'penalty' || kind === 'flee') {
     breakdown.opponentPenalty += points;
-    return;
+  } else {
+    breakdown.other += points;
   }
-
-  breakdown.other += points;
 }
 
 function bestActionFromBreakdown(breakdown: PointBreakdown) {
-  const rows: Array<{ label: string; value: number }> = [
+  const rows = [
     { label: 'Takedowns', value: breakdown.takedown },
     { label: 'Turns / exposure', value: breakdown.exposure },
     { label: 'Step-outs', value: breakdown.stepOut },
@@ -168,9 +178,7 @@ function bestActionFromBreakdown(breakdown: PointBreakdown) {
     { label: 'Big throws', value: breakdown.grandAmplitude },
     { label: 'Opponent penalties', value: breakdown.opponentPenalty },
     { label: 'Other', value: breakdown.other },
-  ];
-
-  rows.sort((a, b) => b.value - a.value);
+  ].sort((a, b) => b.value - a.value);
 
   if (!rows[0] || rows[0].value <= 0) return 'No scoring yet';
 
@@ -190,54 +198,42 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
 
   const base: FreestyleStats = {
     sportKey: 'wrestling:freestyle',
-
-    totals: {
-      clips: clips.length,
-      events: 0,
-    },
-
-    points: {
-      myKid: 0,
-      opp: 0,
-    },
-
+    totals: { clips: clips.length, events: 0 },
+    points: { myKid: 0, opp: 0 },
     counts: {
       takedown: makeSplit(),
       exposure: makeSplit(),
       out: makeSplit(),
-
       feetToDanger: makeSplit(),
       ga4: makeSplit(),
       ga5: makeSplit(),
-
       passWarn: makeSplit(),
       passPlus1Given: makeSplit(),
       penaltyPlus1Given: makeSplit(),
       fleePlus1Given: makeSplit(),
       fleePlus2Given: makeSplit(),
     },
-
     derived: {
       matches: clips.length,
-
+      record: {
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        winPctText: '0%',
+      },
       myPointsPerMatch: 0,
       opponentPointsPerMatch: 0,
-
       takedownsPerMatch: 0,
       exposurePerMatch: 0,
       stepOutsPerMatch: 0,
       feetToDangerPerMatch: 0,
       grandAmplitudePerMatch: 0,
       bigMovesPerMatch: 0,
-
       technicalPointsCreated: 0,
       technicalPointsAllowed: 0,
-
       disciplineFlagsAgainstMyKid: 0,
       disciplineFlagsAgainstOpponent: 0,
-
       bestScoringAction: 'No scoring yet',
-
       pointBreakdown,
       pointBreakdownPct: {
         takedown: 0,
@@ -249,14 +245,17 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
         other: 0,
       },
     },
-
     lastUpdatedAt: 0,
   };
 
   for (const clip of clips) {
     const events: any[] = (clip as any).events ?? [];
-
     base.totals.events += events.length;
+
+    const result = readResult(clip as any);
+    if (result === 'win') base.derived.record.wins += 1;
+    if (result === 'loss') base.derived.record.losses += 1;
+    if (result === 'tie') base.derived.record.ties += 1;
 
     const homeIsAthlete = (clip as any).homeIsAthlete as boolean | undefined;
     const createdAt = clamp0((clip as any).createdAt);
@@ -265,11 +264,9 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
     for (const e of events) {
       const kind = readKind(e);
       const meta = readMeta(e);
-
       const points = clamp0(e?.value ?? e?.points);
       const bucket = actorBucket(e?.actor, homeIsAthlete);
 
-      // Normal scoring events: points belong to the actor.
       if (bucket === 'myKid') {
         base.points.myKid += points;
         addPointBreakdown(pointBreakdown, kind, points);
@@ -303,15 +300,11 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
         if (points === 4) addSplit(base.counts.ga4, bucket);
         else if (points === 5) addSplit(base.counts.ga5, bucket);
         else if (points >= 4) addSplit(base.counts.ga4, bucket);
-
         continue;
       }
 
-      // These are "given" stats.
-      // The point may be awarded to one wrestler, but the mistake belongs to offender.
       if (kind === 'passivity') {
         const offenderBucket = actorBucket(meta?.offender, homeIsAthlete);
-
         const label = String(e?.label ?? meta?.label ?? '').toUpperCase();
 
         if (label.includes('WARN') || points === 0) {
@@ -325,22 +318,15 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
 
       if (kind === 'penalty') {
         const offenderBucket = actorBucket(meta?.offender, homeIsAthlete);
-
-        if (points === 1) {
-          addSplit(base.counts.penaltyPlus1Given, offenderBucket);
-        }
-
+        if (points === 1) addSplit(base.counts.penaltyPlus1Given, offenderBucket);
         continue;
       }
 
       if (kind === 'flee') {
         const offenderBucket = actorBucket(meta?.offender, homeIsAthlete);
 
-        if (points === 1) {
-          addSplit(base.counts.fleePlus1Given, offenderBucket);
-        } else if (points === 2) {
-          addSplit(base.counts.fleePlus2Given, offenderBucket);
-        }
+        if (points === 1) addSplit(base.counts.fleePlus1Given, offenderBucket);
+        else if (points === 2) addSplit(base.counts.fleePlus2Given, offenderBucket);
 
         continue;
       }
@@ -350,7 +336,6 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
   const matches = Math.max(1, clips.length);
 
   const gaTotalMyKid = base.counts.ga4.myKid + base.counts.ga5.myKid;
-  const gaTotalOpp = base.counts.ga4.opp + base.counts.ga5.opp;
 
   const disciplineAgainstMyKid =
     base.counts.passWarn.myKid +
@@ -366,7 +351,11 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
     base.counts.fleePlus1Given.opp +
     base.counts.fleePlus2Given.opp;
 
-  base.derived.matches = clips.length;
+  base.derived.record.winPctText = winPctText(
+    base.derived.record.wins,
+    base.derived.record.losses,
+    base.derived.record.ties,
+  );
 
   base.derived.myPointsPerMatch = round1(base.points.myKid / matches);
   base.derived.opponentPointsPerMatch = round1(base.points.opp / matches);
@@ -374,11 +363,8 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
   base.derived.takedownsPerMatch = round1(base.counts.takedown.myKid / matches);
   base.derived.exposurePerMatch = round1(base.counts.exposure.myKid / matches);
   base.derived.stepOutsPerMatch = round1(base.counts.out.myKid / matches);
-  base.derived.feetToDangerPerMatch = round1(
-    base.counts.feetToDanger.myKid / matches,
-  );
+  base.derived.feetToDangerPerMatch = round1(base.counts.feetToDanger.myKid / matches);
   base.derived.grandAmplitudePerMatch = round1(gaTotalMyKid / matches);
-
   base.derived.bigMovesPerMatch = round1(
     (base.counts.feetToDanger.myKid + gaTotalMyKid) / matches,
   );

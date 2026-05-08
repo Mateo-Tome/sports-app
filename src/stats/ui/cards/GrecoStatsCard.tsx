@@ -60,7 +60,7 @@ function BarRow({ label, value, percent }: { label: string; value: string; perce
   );
 }
 
-export default function FreestyleStatsCard({
+export default function GrecoStatsCard({
   stats,
   athleteName,
 }: {
@@ -74,67 +74,64 @@ export default function FreestyleStatsCard({
   const oppPoints = clamp0(stats?.points?.opp);
 
   const d = stats?.derived ?? {};
+  const profile = d?.grecoProfile ?? {};
+  const record = d?.record ?? {};
+
   const breakdown = d?.pointBreakdown ?? {};
   const breakdownPct = d?.pointBreakdownPct ?? {};
 
   const td = clamp0(stats?.counts?.takedown?.myKid);
-  const ex = clamp0(stats?.counts?.exposure?.myKid);
-  const ob = clamp0(stats?.counts?.out?.myKid);
+  const turns = clamp0(stats?.counts?.exposure?.myKid);
+  const stepOuts = clamp0(stats?.counts?.out?.myKid);
   const ftd4 = clamp0(stats?.counts?.feetToDanger?.myKid);
   const ga4 = clamp0(stats?.counts?.ga4?.myKid);
   const ga5 = clamp0(stats?.counts?.ga5?.myKid);
 
-  const passWarn = clamp0(stats?.counts?.passWarn?.myKid);
-  const passP1Given = clamp0(stats?.counts?.passPlus1Given?.myKid);
-  const penP1Given = clamp0(stats?.counts?.penaltyPlus1Given?.myKid);
-  const fleeP1Given = clamp0(stats?.counts?.fleePlus1Given?.myKid);
-  const fleeP2Given = clamp0(stats?.counts?.fleePlus2Given?.myKid);
-
-  const disciplineTotal = clamp0(d?.disciplineFlagsAgainstMyKid);
-  const bestScoringAction = safeStr(d?.bestScoringAction, 'No scoring yet');
+  const defLegGiven = clamp0(stats?.counts?.defLegFoulPlus2Given?.myKid);
+  const illegalLegGiven = clamp0(stats?.counts?.illegalLegAttackGiven?.myKid);
 
   return (
-    <CardShell title={sportTitle('wrestling:freestyle')}>
+    <CardShell title={sportTitle('wrestling:greco')}>
       <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '800', marginBottom: 12 }}>
         Athlete: {athleteName}
       </Text>
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <HeroStat label="Pts / Match" value={`${clamp0(d?.myPointsPerMatch)} avg`} sub={`${myPoints} total pts`} />
-        <HeroStat label="TD / Match" value={`${clamp0(d?.takedownsPerMatch)} avg`} sub={`${td} takedowns`} />
-        <HeroStat label="Turns / Match" value={`${clamp0(d?.exposurePerMatch)} avg`} sub={`${ex} exposures`} />
+        <HeroStat label="Turns / Match" value={`${clamp0(profile?.turnsPerMatch)} avg`} sub={`${turns} turns`} />
+        <HeroStat label="Throws / Match" value={`${clamp0(profile?.throwsPerMatch)} avg`} sub={`${ga4 + ga5} big throws`} />
       </View>
 
       <SectionTitle>Record</SectionTitle>
 
-<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-  <Chip label="Wins" value={clamp0(d?.record?.wins)} />
-  <Chip label="Losses" value={clamp0(d?.record?.losses)} />
-  <Chip label="Ties" value={clamp0(d?.record?.ties)} />
-  <Chip label="Win %" value={safeStr(d?.record?.winPctText, '0%')} />
-</View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        <Chip label="Wins" value={clamp0(record?.wins)} />
+        <Chip label="Losses" value={clamp0(record?.losses)} />
+        <Chip label="Ties" value={clamp0(record?.ties)} />
+        <Chip label="Win %" value={safeStr(record?.winPctText, '0%')} />
+      </View>
 
-      <SectionTitle>Freestyle Profile</SectionTitle>
+      <SectionTitle>Greco Profile</SectionTitle>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-        <Chip label="Best Scoring" value={bestScoringAction} />
-        <Chip label="Step-outs / Match" value={`${clamp0(d?.stepOutsPerMatch)} avg`} />
-        <Chip label="Big Moves / Match" value={`${clamp0(d?.bigMovesPerMatch)} avg`} />
+        <Chip label="Best Area" value={safeStr(profile?.grecoBestArea, 'No scoring yet')} />
+        <Chip label="Step-outs / Match" value={`${clamp0(profile?.stepOutsPerMatch)} avg`} />
         <Chip label="Opp Pts / Match" value={`${clamp0(d?.opponentPointsPerMatch)} avg`} />
+        <Chip label="Leg Foul Problems" value={clamp0(profile?.legFoulProblems)} />
       </View>
 
       <SectionTitle>Scoring Breakdown</SectionTitle>
 
       <BarRow
-        label="Takedown points"
-        value={`${clamp0(breakdown?.takedown)} pts • ${clamp0(breakdownPct?.takedown)}%`}
-        percent={clamp0(breakdownPct?.takedown)}
-      />
-
-      <BarRow
         label="Turn / exposure points"
         value={`${clamp0(breakdown?.exposure)} pts • ${clamp0(breakdownPct?.exposure)}%`}
         percent={clamp0(breakdownPct?.exposure)}
+      />
+
+      <BarRow
+        label="Throw / amplitude points"
+        value={`${clamp0(breakdown?.grandAmplitude)} pts • ${clamp0(breakdownPct?.grandAmplitude)}%`}
+        percent={clamp0(breakdownPct?.grandAmplitude)}
       />
 
       <BarRow
@@ -144,15 +141,9 @@ export default function FreestyleStatsCard({
       />
 
       <BarRow
-        label="Feet-to-danger points"
-        value={`${clamp0(breakdown?.feetToDanger)} pts • ${clamp0(breakdownPct?.feetToDanger)}%`}
-        percent={clamp0(breakdownPct?.feetToDanger)}
-      />
-
-      <BarRow
-        label="Grand amplitude points"
-        value={`${clamp0(breakdown?.grandAmplitude)} pts • ${clamp0(breakdownPct?.grandAmplitude)}%`}
-        percent={clamp0(breakdownPct?.grandAmplitude)}
+        label="Takedown points"
+        value={`${clamp0(breakdown?.takedown)} pts • ${clamp0(breakdownPct?.takedown)}%`}
+        percent={clamp0(breakdownPct?.takedown)}
       />
 
       <BarRow
@@ -161,23 +152,19 @@ export default function FreestyleStatsCard({
         percent={clamp0(breakdownPct?.opponentPenalty)}
       />
 
-      <SectionTitle>Discipline / Risk</SectionTitle>
+      <SectionTitle>Greco-Specific Risk</SectionTitle>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-        <Chip label="Flags Against Athlete" value={disciplineTotal} />
-        <Chip label="PASS WARN" value={passWarn} />
-        <Chip label="PASS +1 Given" value={passP1Given} />
-        <Chip label="PEN +1 Given" value={penP1Given} />
-        <Chip label="FLEE +1 Given" value={fleeP1Given} />
-        <Chip label="FLEE +2 Given" value={fleeP2Given} />
+        <Chip label="Def Leg +2 Given" value={defLegGiven} />
+        <Chip label="Illegal Leg Given" value={illegalLegGiven} />
       </View>
 
-      <SectionTitle>Freestyle Actions</SectionTitle>
+      <SectionTitle>Greco Actions</SectionTitle>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         <Chip label="TD2" value={td} />
-        <Chip label="EX2" value={ex} />
-        <Chip label="OB1" value={ob} />
+        <Chip label="Turns / EX2" value={turns} />
+        <Chip label="OB1" value={stepOuts} />
         <Chip label="FTD4" value={ftd4} />
         <Chip label="GA4" value={ga4} />
         <Chip label="GA5" value={ga5} />

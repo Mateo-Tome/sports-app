@@ -33,6 +33,13 @@ type PeriodShare = {
   ot: number;
 };
 
+type RecordStats = {
+  wins: number;
+  losses: number;
+  ties: number;
+  winPctText: string;
+};
+
 export type FolkstyleStats = {
   sportKey: 'wrestling:folkstyle';
   totals: {
@@ -60,6 +67,8 @@ export type FolkstyleStats = {
   derived: {
     matches: number;
 
+    record: RecordStats;
+
     myPointsPerMatch: number;
     opponentPointsPerMatch: number;
 
@@ -74,7 +83,6 @@ export type FolkstyleStats = {
     pointBreakdown: PointBreakdown;
     pointBreakdownPct: Record<keyof PointBreakdown, number>;
 
-    // ✅ NEW: what % of athlete takedowns happened in each period
     takedownPeriodSharePct: PeriodShare;
   };
 
@@ -96,6 +104,30 @@ function round1(n: number) {
 function pct(num: number, den: number) {
   if (!den) return 0;
   return Math.round((num / den) * 100);
+}
+
+function winPctText(wins: number, losses: number, ties: number) {
+  const total = wins + losses + ties;
+  if (!total) return '0%';
+  return `${Math.round((wins / total) * 100)}%`;
+}
+
+function readResult(clip: any): 'win' | 'loss' | 'tie' | null {
+  const raw =
+    clip?.result ??
+    clip?.matchResult ??
+    clip?.outcome ??
+    clip?.libraryStyle?.result ??
+    clip?.metadata?.result ??
+    null;
+
+  const s = String(raw ?? '').trim().toLowerCase();
+
+  if (['w', 'win', 'won', 'victory'].includes(s)) return 'win';
+  if (['l', 'loss', 'lost', 'lose'].includes(s)) return 'loss';
+  if (['t', 'tie', 'draw'].includes(s)) return 'tie';
+
+  return null;
 }
 
 function actorBucket(actor: any, homeIsAthlete: boolean | undefined): Bucket {
@@ -193,7 +225,11 @@ function isPeriodMarker(kind: string, e: any) {
   return readPeriodFromEvent(e) != null && kind.includes('period');
 }
 
-function addPointBreakdown(breakdown: PointBreakdown, kind: string, points: number) {
+function addPointBreakdown(
+  breakdown: PointBreakdown,
+  kind: string,
+  points: number,
+) {
   if (points <= 0) return;
 
   if (kind.startsWith('takedown')) breakdown.takedown += points;
@@ -240,6 +276,13 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
     derived: {
       matches: clips.length,
 
+      record: {
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        winPctText: '0%',
+      },
+
       myPointsPerMatch: 0,
       opponentPointsPerMatch: 0,
 
@@ -268,6 +311,11 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
   };
 
   for (const clip of clips) {
+    const result = readResult(clip as any);
+    if (result === 'win') base.derived.record.wins += 1;
+    if (result === 'loss') base.derived.record.losses += 1;
+    if (result === 'tie') base.derived.record.ties += 1;
+
     const events: any[] = [...((clip as any).events ?? [])].sort(
       (a, b) => clamp0(a?.t) - clamp0(b?.t),
     );
@@ -287,8 +335,6 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
 
       const periodNum = readPeriodFromEvent(e);
 
-      // Period marker changes period for future events.
-      // Everything before first period marker counts as P1.
       if (isPeriodMarker(kind, e) && periodNum != null) {
         currentPeriod = periodKeyFromNumber(periodNum);
         continue;
@@ -359,10 +405,17 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
   }
 
   const matches = Math.max(1, clips.length);
+
   const nearfallTotal =
     base.scoring.nearfall2.myKid +
     base.scoring.nearfall3.myKid +
     base.scoring.nearfall4.myKid;
+
+  base.derived.record.winPctText = winPctText(
+    base.derived.record.wins,
+    base.derived.record.losses,
+    base.derived.record.ties,
+  );
 
   base.derived.myPointsPerMatch = round1(base.scoring.myKidPoints / matches);
   base.derived.opponentPointsPerMatch = round1(base.scoring.opponentPoints / matches);
@@ -393,6 +446,7 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
   };
 
   const tdTotal = base.scoring.takedown.myKid;
+
   base.derived.takedownPeriodSharePct = {
     p1: pct(base.periods.p1.takedown.myKid, tdTotal),
     p2: pct(base.periods.p2.takedown.myKid, tdTotal),
