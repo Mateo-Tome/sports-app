@@ -3,8 +3,6 @@ import { useVideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-// ✅ If "../" breaks in your repo, this means getPlaybackUrls is under:
-// src/hooks/api/getPlaybackUrls.ts
 import { getPlaybackUrls } from './api/getPlaybackUrls';
 
 type Source = { videoPath?: string; shareId?: string };
@@ -19,36 +17,33 @@ function errToString(e: any) {
 }
 
 export function usePlaybackPlayer(source: Source) {
-  const player = useVideoPlayer('', p => {
+  const player = useVideoPlayer('', (p) => {
     p.loop = false;
+  
+    try {
+      (p as any).seekTolerance = {
+        before: 0,
+        after: 0,
+      };
+    } catch {}
   });
 
   const [now, setNow] = useState(0);
   const [dur, setDur] = useState(0);
-
-  // IMPORTANT:
-  // On web, "player.playing" is unreliable after replaceAsync; we compute isPlaying by time-moving.
   const [isPlaying, setIsPlaying] = useState(false);
-
   const [isScrubbing, setIsScrubbing] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
-
-  // share playback: sidecar URL for fetching events
   const [sidecarUrl, setSidecarUrl] = useState<string | undefined>(undefined);
-
-  // ready flag
   const [isReady, setIsReady] = useState(false);
 
-  // debug: what src did we actually load
   const loadedSrcRef = useRef<string>('');
   const [loadedSrc, setLoadedSrc] = useState<string>('');
 
   const [reloadNonce, setReloadNonce] = useState(0);
   const lastLoadedKeyRef = useRef<string>('');
 
-  // web-only: time-moving detector
   const lastCTRef = useRef<number>(0);
   const lastCTTickRef = useRef<number>(Date.now());
   const wantsPlayRef = useRef<boolean>(false);
@@ -57,7 +52,7 @@ export function usePlaybackPlayer(source: Source) {
     lastLoadedKeyRef.current = '';
     loadedSrcRef.current = '';
     setLoadedSrc('');
-    setReloadNonce(n => n + 1);
+    setReloadNonce((n) => n + 1);
   }, []);
 
   const getLiveDuration = useCallback(() => {
@@ -68,7 +63,6 @@ export function usePlaybackPlayer(source: Source) {
     return dur || 0;
   }, [player, dur]);
 
-  // ---- LOAD / REPLACE SOURCE ----
   useEffect(() => {
     const videoPath = source?.videoPath ? String(source.videoPath) : '';
     const shareId = source?.shareId ? String(source.shareId) : '';
@@ -92,7 +86,6 @@ export function usePlaybackPlayer(source: Source) {
       setSidecarUrl(undefined);
       setIsReady(false);
 
-      // reset play detector state
       wantsPlayRef.current = false;
       lastCTRef.current = 0;
       lastCTTickRef.current = Date.now();
@@ -101,14 +94,9 @@ export function usePlaybackPlayer(source: Source) {
       try {
         console.log('[usePlaybackPlayer] load start', { loadKey, videoPath, shareId });
 
-        // pause before swap
         try {
           (player as any)?.pause?.();
         } catch {}
-
-        // ❌ DO NOT force-mute on web here.
-        // If the user plays using native controls, onPlayPause won't run,
-        // and the video will remain muted forever.
 
         let nextSrc = '';
 
@@ -131,7 +119,6 @@ export function usePlaybackPlayer(source: Source) {
           return;
         }
 
-        // don’t reload same src
         if (loadedSrcRef.current === nextSrc) {
           console.log('[usePlaybackPlayer] src unchanged, ready', { nextSrc });
           setIsReady(true);
@@ -143,21 +130,16 @@ export function usePlaybackPlayer(source: Source) {
 
         console.log('[usePlaybackPlayer] replaceAsync ->', nextSrc);
 
-        // swap source
         if ((player as any)?.replaceAsync) {
           await (player as any).replaceAsync(nextSrc);
         } else {
           (player as any)?.replace?.(nextSrc);
         }
 
-        // stay paused; user must click play (or use native controls)
         try {
           (player as any)?.pause?.();
         } catch {}
 
-        // ✅ Ensure audio is enabled for web playback.
-        // This does NOT autoplay sound; it just ensures that when the user presses play,
-        // the audio actually comes through (even if they use native controls).
         if (isWeb) {
           try {
             (player as any).muted = false;
@@ -190,7 +172,6 @@ export function usePlaybackPlayer(source: Source) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player, source?.videoPath, source?.shareId, reloadNonce]);
 
-  // ---- POLL PLAYER STATE (now/duration + isPlaying) ----
   useEffect(() => {
     const id = setInterval(() => {
       try {
@@ -207,14 +188,12 @@ export function usePlaybackPlayer(source: Source) {
         if (!isScrubbing) setNow(c);
         setDur(typeof d === 'number' ? d : 0);
 
-        // --- isPlaying logic ---
         if (!isWeb) {
           const playing = (player as any)?.playing ?? (player as any)?.isPlaying ?? false;
           setIsPlaying(!!playing);
           return;
         }
 
-        // WEB: compute playing by whether currentTime is moving
         const prev = lastCTRef.current;
         const nowMs = Date.now();
 
@@ -246,9 +225,12 @@ export function usePlaybackPlayer(source: Source) {
     try {
       const D = getLiveDuration();
       if (!D) return;
+
       const clamped = Math.max(0, Math.min(D, sec));
       (player as any).currentTime = clamped;
-      if (isScrubbing) setNow(clamped);
+
+      // Important: update UI immediately.
+      setNow(clamped);
 
       if (isWeb) {
         lastCTRef.current = clamped;
@@ -257,7 +239,6 @@ export function usePlaybackPlayer(source: Source) {
     } catch {}
   };
 
-  // ✅ Play/pause should be called ONLY from a user click
   const onPlayPause = async () => {
     console.log('[onPlayPause] click', { isReady, isPlaying, loadedSrc });
 
@@ -276,7 +257,6 @@ export function usePlaybackPlayer(source: Source) {
 
       wantsPlayRef.current = true;
 
-      // Make sure audio is on (web)
       if (isWeb) {
         try {
           (player as any).muted = false;
@@ -325,7 +305,6 @@ export function usePlaybackPlayer(source: Source) {
     sidecarUrl,
     isReady,
 
-    // debug helpers (optional)
     loadedSrc,
   };
 }

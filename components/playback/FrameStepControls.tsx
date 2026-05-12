@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Pressable, View } from 'react-native';
 
 type Insets = {
@@ -13,16 +14,17 @@ type Props = {
   duration: number;
   insets: Insets;
   bottomOffset: number;
-  fps?: number;
-  onSeek: (sec: number) => void;
-  onShowChrome?: () => void;
-};
 
-function clamp(sec: number, duration: number) {
-  const low = Math.max(0, sec);
-  if (Number.isFinite(duration) && duration > 0) return Math.min(duration, low);
-  return low;
-}
+  // Tap = small precise nudge
+  onNudge: (direction: -1 | 1) => void;
+
+  // Hold forward = slow-motion jog
+  onJogForwardStart: () => void;
+  onJogStop: () => void;
+
+  onShowChrome?: () => void;
+  onFrameStepStart?: () => void;
+};
 
 function FrameIcon({ direction }: { direction: 'back' | 'forward' }) {
   const flip = direction === 'back';
@@ -67,22 +69,71 @@ function FrameIcon({ direction }: { direction: 'back' | 'forward' }) {
 
 export default function FrameStepControls({
   visible,
-  current,
-  duration,
   insets,
   bottomOffset,
-  fps = 30,
-  onSeek,
+  onNudge,
+  onJogForwardStart,
+  onJogStop,
   onShowChrome,
+  onFrameStepStart,
 }: Props) {
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdingRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+      if (backIntervalRef.current) clearInterval(backIntervalRef.current);
+    };
+  }, []);
+
   if (!visible) return null;
 
-  const frameStep = 1 / fps;
-
-  const step = (direction: -1 | 1) => {
-    const next = clamp((current || 0) + frameStep * direction, duration || 0);
-    onSeek(next);
+  const beginFrameMode = () => {
+    onFrameStepStart?.();
     onShowChrome?.();
+  };
+
+  const onPressIn = (direction: -1 | 1) => {
+    holdingRef.current = false;
+
+    if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+    if (backIntervalRef.current) clearInterval(backIntervalRef.current);
+
+    holdTimeoutRef.current = setTimeout(() => {
+      holdingRef.current = true;
+      beginFrameMode();
+
+      if (direction === 1) {
+        onJogForwardStart();
+      } else {
+        backIntervalRef.current = setInterval(() => {
+          onNudge(-1);
+        }, 140);
+      }
+    }, 300);
+  };
+
+  const onPressOut = (direction: -1 | 1) => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+
+    if (backIntervalRef.current) {
+      clearInterval(backIntervalRef.current);
+      backIntervalRef.current = null;
+    }
+
+    if (holdingRef.current) {
+      onJogStop();
+    } else {
+      beginFrameMode();
+      onNudge(direction);
+    }
+
+    holdingRef.current = false;
   };
 
   const buttonStyle = {
@@ -104,8 +155,8 @@ export default function FrameStepControls({
         left: insets.left + 74,
         right: insets.right + 74,
         bottom: bottomOffset,
-        zIndex: 12,
-        elevation: 12,
+        zIndex: 80,
+        elevation: 80,
         alignItems: 'center',
       }}
     >
@@ -117,13 +168,14 @@ export default function FrameStepControls({
           paddingHorizontal: 10,
           paddingVertical: 6,
           borderRadius: 999,
-          backgroundColor: 'rgba(0,0,0,0.18)',
+          backgroundColor: 'rgba(0,0,0,0.28)',
           borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.10)',
+          borderColor: 'rgba(255,255,255,0.16)',
         }}
       >
         <Pressable
-          onPress={() => step(-1)}
+          onPressIn={() => onPressIn(-1)}
+          onPressOut={() => onPressOut(-1)}
           style={({ pressed }) => [
             buttonStyle,
             {
@@ -138,7 +190,8 @@ export default function FrameStepControls({
         </Pressable>
 
         <Pressable
-          onPress={() => step(1)}
+          onPressIn={() => onPressIn(1)}
+          onPressOut={() => onPressOut(1)}
           style={({ pressed }) => [
             buttonStyle,
             {

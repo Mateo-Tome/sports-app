@@ -13,6 +13,9 @@ import { useShareSidecar } from '../../src/hooks/useShareSidecar';
 import { useSkipTapZones } from '../../src/hooks/useSkipTapZones';
 import useWebVideoController from '../../src/hooks/useWebVideoController';
 
+import AvReviewPlayer, {
+  type AvReviewPlayerHandle,
+} from '../../components/playback/AvReviewPlayer';
 import FrameStepControls from '../../components/playback/FrameStepControls';
 import {
   EditModeMask,
@@ -43,6 +46,8 @@ import * as PlaybackModuleRegistry from '../../components/modules/PlaybackModule
 const GREEN = '#16a34a';
 const RED = '#dc2626';
 const SKIP_SEC = 5;
+const FRAME_NUDGE_SEC = 0.22;
+const JOG_RATE = 0.15;
 
 const isWeb = Platform.OS === 'web';
 
@@ -120,6 +125,13 @@ export default function PlaybackScreen() {
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [quickEditFor, setQuickEditFor] = useState<EventRow | null>(null);
   const [playbackRate, setPlaybackRate] = useState<PlaybackRate>(1);
+  const [frameStepping, setFrameStepping] = useState(false);
+
+  const useAvReviewPlayer = Platform.OS === 'ios' && !!videoPath && !shareId;
+  const avReviewRef = useRef<AvReviewPlayerHandle | null>(null);
+  const [avNow, setAvNow] = useState(0);
+  const [avDur, setAvDur] = useState(0);
+  const [avIsPlaying, setAvIsPlaying] = useState(false);
 
   const source = videoPath ? { videoPath } : { shareId: shareId! };
 
@@ -156,25 +168,31 @@ export default function PlaybackScreen() {
     webVideoRef,
   } = useWebVideoController();
 
-  const now = isWeb ? webNow : nativeNow;
-  const dur = isWeb ? webDur : nativeDur;
-  const isPlaying = isWeb ? webIsPlaying : nativeIsPlaying;
+  const now = useAvReviewPlayer ? avNow : isWeb ? webNow : nativeNow;
+  const dur = useAvReviewPlayer ? avDur : isWeb ? webDur : nativeDur;
+  const isPlaying = useAvReviewPlayer ? avIsPlaying : isWeb ? webIsPlaying : nativeIsPlaying;
 
   const atVideoEnd = useMemo(() => {
+    if (useAvReviewPlayer) {
+      return !avIsPlaying && avDur > 0 && Math.abs((avNow || 0) - avDur) < 0.25;
+    }
+
     if (!isWeb) return nativeAtVideoEnd;
     if (!dur) return false;
     return !webIsPlaying && Math.abs((webNow || 0) - dur) < 0.25;
-  }, [dur, nativeAtVideoEnd, webIsPlaying, webNow]);
+  }, [avDur, avIsPlaying, avNow, dur, nativeAtVideoEnd, useAvReviewPlayer, webIsPlaying, webNow]);
 
   const getDurationSafe = useCallback(() => {
+    if (useAvReviewPlayer) return avDur || 0;
     if (isWeb) return dur || 0;
+
     try {
       const D = typeof getLiveDuration === 'function' ? getLiveDuration() : dur || 0;
       return D || 0;
     } catch {
       return dur || 0;
     }
-  }, [dur, getLiveDuration]);
+  }, [avDur, dur, getLiveDuration, useAvReviewPlayer]);
 
   const clampToDuration = useCallback(
     (sec: number) => {
@@ -191,16 +209,38 @@ export default function PlaybackScreen() {
   const isScrubbingRef = useRef<boolean>(false);
   const editAnchorTimeRef = useRef<number>(0);
 
+  const exitFrameMode = useCallback(() => {
+    setFrameStepping(false);
+
+    try {
+      if (useAvReviewPlayer) {
+        return;
+      }
+
+      if (isWeb) {
+        const video = webVideoRef.current;
+        if (video) video.playbackRate = playbackRate;
+      } else {
+        (player as any).playbackRate = playbackRate;
+      }
+    } catch {}
+  }, [player, playbackRate, useAvReviewPlayer, webVideoRef]);
+
   const onSeek = useCallback(
     (sec: number) => {
       const t = clampToDuration(sec);
       desiredTimeRef.current = t;
       lastUserSeekMsRef.current = Date.now();
 
+      if (useAvReviewPlayer) {
+        avReviewRef.current?.seekTo(t);
+        return;
+      }
+
       if (isWeb) webSeek(t);
       else seekInternal(t);
     },
-    [clampToDuration, seekInternal, webSeek],
+    [clampToDuration, seekInternal, useAvReviewPlayer, webSeek],
   );
 
   const onPreviewTime = useCallback(
@@ -213,12 +253,18 @@ export default function PlaybackScreen() {
   );
 
   const onPlayPause = useCallback(async () => {
+    if (useAvReviewPlayer) {
+      await avReviewRef.current?.playPause();
+      return;
+    }
+
     if (isWeb) {
       await webPlayPause();
       return;
     }
+
     await onPlayPauseInternal();
-  }, [onPlayPauseInternal, webPlayPause]);
+  }, [onPlayPauseInternal, useAvReviewPlayer, webPlayPause]);
 
   const {
     events,
@@ -309,10 +355,14 @@ export default function PlaybackScreen() {
       setPlaybackRate(rate);
 
       try {
+        if (useAvReviewPlayer) {
+          showChrome();
+          return;
+        }
+
         if (isWeb) {
-          if (webVideoRef.current) {
-            webVideoRef.current.playbackRate = rate;
-          }
+          const video = webVideoRef.current;
+          if (video) video.playbackRate = rate;
         } else {
           (player as any).playbackRate = rate;
           (player as any).preservesPitch = true;
@@ -321,26 +371,125 @@ export default function PlaybackScreen() {
         console.log('[playback] failed to set playback rate', e);
       }
 
+      setFrameStepping(false);
       showChrome();
     },
-    [player, webVideoRef, showChrome],
+    [player, showChrome, useAvReviewPlayer, webVideoRef],
   );
+
+  const onFrameNudge = useCallback(
+    async (direction: -1 | 1) => {
+      const fallbackNow = typeof now === 'number' && isFinite(now) ? now : 0;
+      const base = desiredTimeRef.current > 0 ? desiredTimeRef.current : fallbackNow;
+      const next = clampToDuration(base + direction * FRAME_NUDGE_SEC);
+
+      setFrameStepping(true);
+      setOverlayMenuOpen(false);
+
+      desiredTimeRef.current = next;
+      lastUserSeekMsRef.current = Date.now();
+
+      try {
+        if (useAvReviewPlayer) {
+          await avReviewRef.current?.seekByFrame(direction);
+        } else if (isWeb) {
+          const video = webVideoRef.current;
+          if (video) {
+            video.pause?.();
+            video.currentTime = next;
+          }
+        } else {
+          (player as any)?.pause?.();
+          (player as any).currentTime = next;
+          seekInternal(next);
+        }
+      } catch (e) {
+        console.log('[frame-nudge] failed', e);
+        onSeek(next);
+      }
+
+      showChrome();
+    },
+    [clampToDuration, now, onSeek, player, seekInternal, showChrome, useAvReviewPlayer, webVideoRef],
+  );
+
+  const onFrameJogForwardStart = useCallback(async () => {
+    setFrameStepping(true);
+    setOverlayMenuOpen(false);
+    showChrome();
+
+    try {
+      if (useAvReviewPlayer) {
+        await avReviewRef.current?.playPause();
+        return;
+      }
+
+      if (isWeb) {
+        const video = webVideoRef.current;
+        if (video) {
+          video.playbackRate = JOG_RATE;
+          video.play?.();
+        }
+      } else {
+        (player as any).playbackRate = JOG_RATE;
+        (player as any).preservesPitch = true;
+        (player as any)?.play?.();
+      }
+    } catch (e) {
+      console.log('[frame-jog] failed to start', e);
+    }
+  }, [player, showChrome, useAvReviewPlayer, webVideoRef]);
+
+  const onFrameJogStop = useCallback(async () => {
+    try {
+      if (useAvReviewPlayer) {
+        await avReviewRef.current?.pause();
+        desiredTimeRef.current = now || desiredTimeRef.current || 0;
+        showChrome();
+        return;
+      }
+
+      if (isWeb) {
+        const video = webVideoRef.current;
+        if (video) {
+          video.pause?.();
+          video.playbackRate = playbackRate;
+          desiredTimeRef.current = clampToDuration(video.currentTime || now || 0);
+        }
+      } else {
+        (player as any)?.pause?.();
+        (player as any).playbackRate = playbackRate;
+
+        const current = (player as any)?.currentTime;
+        desiredTimeRef.current = clampToDuration(
+          typeof current === 'number' ? current : now || desiredTimeRef.current || 0,
+        );
+      }
+    } catch (e) {
+      console.log('[frame-jog] failed to stop', e);
+    }
+
+    lastUserSeekMsRef.current = Date.now();
+    showChrome();
+  }, [clampToDuration, now, playbackRate, player, showChrome, useAvReviewPlayer, webVideoRef]);
 
   const skipLeft5 = useCallback(() => {
     const t = clampToDuration((now || 0) - SKIP_SEC);
+    exitFrameMode();
     onSeek(t);
     try {
       handleLeftTap?.();
     } catch {}
-  }, [clampToDuration, handleLeftTap, now, onSeek]);
+  }, [clampToDuration, exitFrameMode, handleLeftTap, now, onSeek]);
 
   const skipRight5 = useCallback(() => {
     const t = clampToDuration((now || 0) + SKIP_SEC);
+    exitFrameMode();
     onSeek(t);
     try {
       handleRightTap?.();
     } catch {}
-  }, [clampToDuration, handleRightTap, now, onSeek]);
+  }, [clampToDuration, exitFrameMode, handleRightTap, now, onSeek]);
 
   const { leftZoneProps, rightZoneProps, skipHUD: tapSkipHUD } = useSkipTapZones({
     chromeVisible,
@@ -368,6 +517,8 @@ export default function PlaybackScreen() {
   const genId = () => Math.random().toString(36).slice(2, 9);
 
   const enterAddMode = () => {
+    exitFrameMode();
+
     const tPlayer = clampToDuration(now || 0);
     const msSinceSeek = Date.now() - (lastUserSeekMsRef.current || 0);
     const hasRecentSeek = msSinceSeek >= 0 && msSinceSeek < 2000;
@@ -379,8 +530,13 @@ export default function PlaybackScreen() {
     onSeek(editAnchorTimeRef.current);
 
     try {
-      (player as any)?.pause?.();
+      if (useAvReviewPlayer) {
+        avReviewRef.current?.pause();
+      } else {
+        (player as any)?.pause?.();
+      }
     } catch {}
+
     try {
       webVideoRef.current?.pause?.();
     } catch {}
@@ -535,11 +691,36 @@ export default function PlaybackScreen() {
   const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
 
   const handlePlayPress = async () => {
+    setFrameStepping(false);
     showChrome();
+
+    if (useAvReviewPlayer) {
+      await avReviewRef.current?.playPause();
+      return;
+    }
+
+    const t = clampToDuration(desiredTimeRef.current || now || 0);
+
+    if (!isWeb && frameStepping) {
+      try {
+        (player as any).currentTime = t;
+      } catch {}
+      seekInternal(t);
+    }
+
+    try {
+      if (isWeb) {
+        const video = webVideoRef.current;
+        if (video) video.playbackRate = playbackRate;
+      } else {
+        (player as any).playbackRate = playbackRate;
+      }
+    } catch {}
+
     await onPlayPause();
   };
 
-  const shouldMountVideoView = isWeb ? isReady : true;
+  const shouldMountVideoView = useAvReviewPlayer ? true : isWeb ? isReady : true;
   const beltBlock = showEventBelt ? BELT_H + insets.bottom : 0;
 
   const bottomControlsOffset =
@@ -556,7 +737,18 @@ export default function PlaybackScreen() {
         {shouldMountVideoView ? (
           <View style={{ flex: 1, backgroundColor: 'black', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
             <View style={videoStageStyle}>
-              {isWeb ? (
+              {useAvReviewPlayer && videoPath ? (
+                <AvReviewPlayer
+                  ref={avReviewRef}
+                  uri={videoPath}
+                  style={videoSurfaceStyle}
+                  onTimeUpdate={(sec, duration, playing) => {
+                    setAvNow(sec);
+                    setAvDur(duration);
+                    setAvIsPlaying(playing);
+                  }}
+                />
+              ) : isWeb ? (
                 <video
                   key={videoKey}
                   ref={bindRef}
@@ -591,13 +783,16 @@ export default function PlaybackScreen() {
         )}
 
         <Pressable
-          onPress={showChrome}
+          onPress={() => {
+            exitFrameMode();
+            showChrome();
+          }}
           style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: beltBlock }}
           pointerEvents={chromeVisible ? 'none' : 'auto'}
         />
 
         <LoadingErrorOverlay
-          visible={!!errorMsg || !!loading}
+          visible={!useAvReviewPlayer && (!!errorMsg || !!loading)}
           loading={!!loading}
           errorMsg={errorMsg ?? ''}
           onBack={handleBackPress}
@@ -616,6 +811,7 @@ export default function PlaybackScreen() {
         <ReplayOverlay
           visible={atVideoEnd && !editMode}
           onReplay={async () => {
+            exitFrameMode();
             onSeek(0);
             await onPlayPause();
           }}
@@ -663,7 +859,11 @@ export default function PlaybackScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => setOverlayMenuOpen((v) => !v)}
+              onPress={() => {
+                exitFrameMode();
+                showChrome();
+                setOverlayMenuOpen((v) => !v);
+              }}
               style={{
                 position: 'absolute',
                 top: insets.top + SAFE_MARGIN,
@@ -687,59 +887,53 @@ export default function PlaybackScreen() {
             </Pressable>
 
             <OverlayModeMenu
-  visible={overlayMenuOpen && chromeVisible}
-  mode={overlayMode}
-  insets={insets as Insets}
-  onClose={() => setOverlayMenuOpen(false)}
-  onSelect={(m) => {
-    setOverlayMode(m);
-  }}
+              visible={overlayMenuOpen}
+              mode={overlayMode}
+              insets={insets as Insets}
+              onClose={() => setOverlayMenuOpen(false)}
+              onSelect={(m) => {
+                setOverlayMode(m);
+              }}
+              extraContent={
+                <View>
+                  <PlaybackSpeedControl
+                    value={playbackRate}
+                    onChange={applyPlaybackRate}
+                  />
+                </View>
+              }
+              canEditOrientation={canEditOrientation}
+              rotationLabel={rotationLabel}
+              orientationDirty={orientationDirty}
+              orientationSaving={orientationSaving}
+              onRotateLeft={() => {
+                rotateLeft();
+                showChrome();
+              }}
+              onRotateRight={() => {
+                rotateRight();
+                showChrome();
+              }}
+              onResetOrientation={() => {
+                resetOrientation();
+                showChrome();
+              }}
+              onRevertOrientation={() => {
+                revertOrientation();
+                showChrome();
+              }}
+              onSaveOrientation={async () => {
+                await saveOrientation();
+                showChrome();
+              }}
+            />
 
-  extraContent={
-    <View>
-      <PlaybackSpeedControl
-        value={playbackRate}
-        onChange={applyPlaybackRate}
-      />
-    </View>
-  }
-
-  canEditOrientation={canEditOrientation}
-  rotationLabel={rotationLabel}
-  orientationDirty={orientationDirty}
-  orientationSaving={orientationSaving}
-
-  onRotateLeft={() => {
-    rotateLeft();
-    showChrome();
-  }}
-
-  onRotateRight={() => {
-    rotateRight();
-    showChrome();
-  }}
-
-  onResetOrientation={() => {
-    resetOrientation();
-    showChrome();
-  }}
-
-  onRevertOrientation={() => {
-    revertOrientation();
-    showChrome();
-  }}
-
-  onSaveOrientation={async () => {
-    await saveOrientation();
-    showChrome();
-  }}
-/>
-
-            {chromeVisible && (
+            {chromeVisible && !frameStepping && (
               <TopScrubber
                 current={now}
                 duration={dur}
                 onSeek={(t) => {
+                  exitFrameMode();
                   onSeek(t);
                   showChrome();
                 }}
@@ -753,7 +947,7 @@ export default function PlaybackScreen() {
               />
             )}
 
-            {!atVideoEnd && (
+            {!atVideoEnd && !frameStepping && (
               <Pressable
                 onPress={() => {
                   enterAddMode();
@@ -806,21 +1000,29 @@ export default function PlaybackScreen() {
 
             <FrameStepControls
               visible={showFrameStepControls}
-              current={now}
+              current={desiredTimeRef.current || now}
               duration={dur}
               insets={insets}
               bottomOffset={bottomControlsOffset}
-              fps={30}
-              onSeek={onSeek}
+              onNudge={onFrameNudge}
+              onJogForwardStart={onFrameJogForwardStart}
+              onJogStop={onFrameJogStop}
               onShowChrome={showChrome}
+              onFrameStepStart={() => {
+                setFrameStepping(true);
+                setOverlayMenuOpen(false);
+              }}
             />
 
-            {showEventBelt && (
+            {showEventBelt && !frameStepping && (
               <EventBelt
                 duration={dur}
                 current={now}
                 events={events}
-                onSeek={onSeek}
+                onSeek={(t) => {
+                  exitFrameMode();
+                  onSeek(t);
+                }}
                 bottomInset={insets.bottom}
                 colorFor={colorForPill}
                 onPillLongPress={(ev) => setQuickEditFor(ev)}
@@ -849,12 +1051,15 @@ export default function PlaybackScreen() {
                 setQuickEditFor(null);
                 if (!id) return;
 
+                exitFrameMode();
                 editAnchorTimeRef.current = clampToDuration(tKeep);
                 onSeek(editAnchorTimeRef.current);
 
                 try {
-                  (player as any)?.pause?.();
+                  if (useAvReviewPlayer) avReviewRef.current?.pause();
+                  else (player as any)?.pause?.();
                 } catch {}
+
                 try {
                   webVideoRef.current?.pause?.();
                 } catch {}
@@ -874,7 +1079,7 @@ export default function PlaybackScreen() {
             events={events}
             homeIsAthlete={effectiveHomeIsAthlete}
             homeColorIsGreen={effectiveHomeColorIsGreen}
-            overlayOn={overlayOn}
+            overlayOn={overlayOn && !frameStepping}
             insets={insets}
             onSeek={onSeek}
             onPlayPause={onPlayPause}
