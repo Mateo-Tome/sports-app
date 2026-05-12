@@ -46,7 +46,7 @@ import * as PlaybackModuleRegistry from '../../components/modules/PlaybackModule
 const GREEN = '#16a34a';
 const RED = '#dc2626';
 const SKIP_SEC = 5;
-const FRAME_NUDGE_SEC = 0.22;
+const FRAME_NUDGE_SEC = 0.05;
 const JOG_RATE = 0.15;
 
 const isWeb = Platform.OS === 'web';
@@ -75,13 +75,25 @@ export default function PlaybackScreen() {
     useLocalSearchParams<PlaybackParams>();
 
   const shareId =
-    typeof rawShareId === 'string' ? rawShareId : Array.isArray(rawShareId) ? rawShareId[0] : undefined;
+    typeof rawShareId === 'string'
+      ? rawShareId
+      : Array.isArray(rawShareId)
+        ? rawShareId[0]
+        : undefined;
 
   const videoPath =
-    typeof rawVideoPath === 'string' ? rawVideoPath : Array.isArray(rawVideoPath) ? rawVideoPath[0] : undefined;
+    typeof rawVideoPath === 'string'
+      ? rawVideoPath
+      : Array.isArray(rawVideoPath)
+        ? rawVideoPath[0]
+        : undefined;
 
   const athleteParamStr =
-    typeof athleteParam === 'string' ? athleteParam : Array.isArray(athleteParam) ? athleteParam[0] : '';
+    typeof athleteParam === 'string'
+      ? athleteParam
+      : Array.isArray(athleteParam)
+        ? athleteParam[0]
+        : '';
 
   const hasSource = !!videoPath || !!shareId;
 
@@ -127,7 +139,6 @@ export default function PlaybackScreen() {
   const [playbackRate, setPlaybackRate] = useState<PlaybackRate>(1);
   const [frameStepping, setFrameStepping] = useState(false);
 
-  const useAvReviewPlayer = Platform.OS === 'ios' && !!videoPath && !shareId;
   const avReviewRef = useRef<AvReviewPlayerHandle | null>(null);
   const [avNow, setAvNow] = useState(0);
   const [avDur, setAvDur] = useState(0);
@@ -152,6 +163,9 @@ export default function PlaybackScreen() {
     isReady,
     loadedSrc,
   } = usePlaybackPlayer(source);
+
+  const avUri = videoPath ?? loadedSrc;
+  const useAvReviewPlayer = Platform.OS === 'ios' && !!avUri;
 
   const videoKey = useMemo(() => {
     return videoPath ? `local:${videoPath}` : shareId ? `share:${shareId}` : 'none';
@@ -380,7 +394,10 @@ export default function PlaybackScreen() {
   const onFrameNudge = useCallback(
     async (direction: -1 | 1) => {
       const fallbackNow = typeof now === 'number' && isFinite(now) ? now : 0;
-      const base = desiredTimeRef.current > 0 ? desiredTimeRef.current : fallbackNow;
+      const base =
+  frameStepping && desiredTimeRef.current > 0
+    ? desiredTimeRef.current
+    : fallbackNow;
       const next = clampToDuration(base + direction * FRAME_NUDGE_SEC);
 
       setFrameStepping(true);
@@ -391,7 +408,7 @@ export default function PlaybackScreen() {
 
       try {
         if (useAvReviewPlayer) {
-          await avReviewRef.current?.seekByFrame(direction);
+          await avReviewRef.current?.seekTo(next);
         } else if (isWeb) {
           const video = webVideoRef.current;
           if (video) {
@@ -410,7 +427,7 @@ export default function PlaybackScreen() {
 
       showChrome();
     },
-    [clampToDuration, now, onSeek, player, seekInternal, showChrome, useAvReviewPlayer, webVideoRef],
+    [clampToDuration, frameStepping, now, onSeek, player, seekInternal, showChrome, useAvReviewPlayer, webVideoRef],
   );
 
   const onFrameJogForwardStart = useCallback(async () => {
@@ -737,10 +754,10 @@ export default function PlaybackScreen() {
         {shouldMountVideoView ? (
           <View style={{ flex: 1, backgroundColor: 'black', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
             <View style={videoStageStyle}>
-              {useAvReviewPlayer && videoPath ? (
+              {useAvReviewPlayer && avUri ? (
                 <AvReviewPlayer
                   ref={avReviewRef}
-                  uri={videoPath}
+                  uri={avUri}
                   style={videoSurfaceStyle}
                   onTimeUpdate={(sec, duration, playing) => {
                     setAvNow(sec);
