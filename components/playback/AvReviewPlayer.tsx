@@ -7,6 +7,7 @@ export type AvReviewPlayerHandle = {
   seekTo: (sec: number) => Promise<void>;
   playPause: () => Promise<void>;
   pause: () => Promise<void>;
+  setRate: (rate: number) => Promise<void>;
 };
 
 const FRAME_MS = 1000 / 30;
@@ -23,6 +24,7 @@ const AvReviewPlayer = forwardRef<AvReviewPlayerHandle, Props>(
     const positionMsRef = useRef(0);
     const durationMsRef = useRef(0);
     const isPlayingRef = useRef(false);
+    const rateRef = useRef(1);
 
     const [loaded, setLoaded] = useState(false);
 
@@ -55,12 +57,25 @@ const AvReviewPlayer = forwardRef<AvReviewPlayerHandle, Props>(
         if (isPlayingRef.current) {
           await videoRef.current?.pauseAsync();
         } else {
+          await videoRef.current?.setStatusAsync({
+            rate: rateRef.current,
+            shouldCorrectPitch: true,
+          });
           await videoRef.current?.playAsync();
         }
       },
 
       pause: async () => {
         await videoRef.current?.pauseAsync();
+      },
+
+      setRate: async (rate: number) => {
+        rateRef.current = rate;
+
+        await videoRef.current?.setStatusAsync({
+          rate,
+          shouldCorrectPitch: true,
+        });
       },
     }));
 

@@ -1,22 +1,16 @@
-// components/overlays/RecordingOverlayRegistry.tsx
 import React from 'react';
 import type { OverlayProps } from './types';
 
 import BaseballHittingOverlay from './BaseballHittingOverlay';
 import BaseballPitchingOverlay from './BaseballPitchingOverlay';
 
-// ✅ Basketball
 import BasketballOverlay from './basketball/BasketballOverlay';
-
-// ✅ Volleyball (match your real path)
 import VolleyballOverlay from './volleyball/VolleyballOverlay';
 
-// ✅ Wrestling (match your real filenames)
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
 import WrestlingFreestyleOverlay from './wrestlingFreestyleOverlay';
 import WrestlingGrecoOverlay from './wrestlingGrecoOverlay';
 
-// ✅ BJJ (this is the piece you're missing)
 import BJJOverlay from './bjj/BJJOverlay';
 
 export function normalizeKey(sport?: string, style?: string) {
@@ -27,6 +21,7 @@ export function normalizeKey(sport?: string, style?: string) {
   if (s === 'vb' || s === 'volley') s = 'volleyball';
   if (s === 'wrestle') s = 'wrestling';
   if (s === 'base') s = 'baseball';
+  if (s === 'soft') s = 'softball';
   if (s === 'bball' || s === 'hoops') s = 'basketball';
   if (s === 'jiujitsu' || s === 'jiu-jitsu' || s === 'jj') s = 'bjj';
 
@@ -40,9 +35,13 @@ export function normalizeKey(sport?: string, style?: string) {
     if (st === 'hit') st = 'hitting';
   }
 
-  // ✅ BJJ style aliases (important)
+  if (s === 'softball') {
+    if (st === 'pitch') st = 'pitching';
+    if (st === 'hit') st = 'hitting';
+  }
+
   if (s === 'bjj') {
-    if (!st) st = 'gi'; // default to gi
+    if (!st) st = 'gi';
     if (st === 'no-gi' || st === 'no gi' || st === 'nogii') st = 'nogi';
   }
 
@@ -67,13 +66,17 @@ const Registry: Record<string, RecordingOverlayEntry> = {
   'baseball:hitting': { Overlay: BaseballHittingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
   'baseball:pitching': { Overlay: BaseballPitchingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
+  // Softball
+  'softball:hitting': { Overlay: BaseballHittingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+  'softball:pitching': { Overlay: BaseballPitchingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+
   // Volleyball
   'volleyball:default': { Overlay: VolleyballOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
   // Basketball
   'basketball:default': { Overlay: BasketballOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
-  // ✅ BJJ (map BOTH gi and nogi to the same overlay component)
+  // BJJ
   'bjj:gi': { Overlay: BJJOverlay, preRollSec: DEFAULT_PREROLL_SEC },
   'bjj:nogi': { Overlay: BJJOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 };

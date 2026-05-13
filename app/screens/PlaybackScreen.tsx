@@ -370,6 +370,8 @@ export default function PlaybackScreen() {
 
       try {
         if (useAvReviewPlayer) {
+          avReviewRef.current?.setRate(rate);
+          setFrameStepping(false);
           showChrome();
           return;
         }
@@ -436,6 +438,7 @@ export default function PlaybackScreen() {
     showChrome();
 
     try {
+
       if (useAvReviewPlayer) {
         await avReviewRef.current?.playPause();
         return;
