@@ -9,6 +9,8 @@ import BjjStatsCard from './cards/BjjStatsCard';
 import FolkstyleStatsCard from './cards/FolkstyleStatsCard';
 import FreestyleStatsCard from './cards/FreestyleStatsCard';
 import GrecoStatsCard from './cards/GrecoStatsCard';
+import SoftballHittingStatsCard from './cards/SoftballHittingStatsCard';
+import SoftballPitchingStatsCard from './cards/SoftballPitchingStatsCard';
 
 function CardShell({
   title,
@@ -459,6 +461,14 @@ export function renderSportStatsCard(
 
   if (sportKey === 'baseball:pitching') {
     return <BaseballPitchingStatsCard stats={sportStats} athleteName={athleteName} />;
+  }
+
+  if (sportKey === 'softball:hitting') {
+    return <SoftballHittingStatsCard stats={sportStats} athleteName={athleteName} />;
+  }
+  
+  if (sportKey === 'softball:pitching') {
+    return <SoftballPitchingStatsCard stats={sportStats} athleteName={athleteName} />;
   }
 
   if (sportKey.startsWith('bjj:')) {

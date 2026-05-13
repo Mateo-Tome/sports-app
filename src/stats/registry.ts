@@ -10,6 +10,7 @@ import { reduceBaseballPitching } from './reducers/baseball/pitching';
 import { reduceBasketballDefault } from './reducers/basketball/reduceBasketball';
 
 import { reduceBjjDefault, reduceBjjGi, reduceBjjNoGi } from './reducers/bjj/default';
+
 import { reduceVolleyballDefault } from './reducers/volleyball/default';
 
 export type SportStatsReducer = (clips: ClipSidecar[]) => any;
@@ -28,17 +29,27 @@ export function listRegisteredSports() {
   return Object.keys(registry).sort();
 }
 
+// Wrestling
 registerSportStats('wrestling:folkstyle', reduceWrestlingFolkstyle);
 registerSportStats('wrestling:freestyle', reduceWrestlingFreestyle);
 registerSportStats('wrestling:greco', reduceWrestlingGreco);
 
+// Baseball
 registerSportStats('baseball:hitting', reduceBaseballHitting);
 registerSportStats('baseball:pitching', reduceBaseballPitching);
 
+// Softball (reusing baseball reducers for V1)
+registerSportStats('softball:hitting', reduceBaseballHitting);
+registerSportStats('softball:pitching', reduceBaseballPitching);
+
+// Basketball
 registerSportStats('basketball:default', reduceBasketballDefault);
 
+// Volleyball
 registerSportStats('volleyball:default', reduceVolleyballDefault);
 registerSportStats('volleyball:match', reduceVolleyballDefault);
+
+// BJJ
 registerSportStats('bjj:default', reduceBjjDefault);
 registerSportStats('bjj:gi', reduceBjjGi);
 registerSportStats('bjj:nogi', reduceBjjNoGi);
