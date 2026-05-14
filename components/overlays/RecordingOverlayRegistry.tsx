@@ -5,6 +5,7 @@ import BaseballHittingOverlay from './BaseballHittingOverlay';
 import BaseballPitchingOverlay from './BaseballPitchingOverlay';
 
 import BasketballOverlay from './basketball/BasketballOverlay';
+import SwimmingOverlay from './swimming/SwimmingOverlay';
 import VolleyballOverlay from './volleyball/VolleyballOverlay';
 
 import WrestlingFolkstyleOverlay from './WrestlingFolkstyleOverlay';
@@ -17,15 +18,14 @@ export function normalizeKey(sport?: string, style?: string) {
   let s = String(sport ?? '').trim().toLowerCase();
   let st = String(style ?? '').trim().toLowerCase();
 
-  // sport aliases
   if (s === 'vb' || s === 'volley') s = 'volleyball';
   if (s === 'wrestle') s = 'wrestling';
   if (s === 'base') s = 'baseball';
   if (s === 'soft') s = 'softball';
+  if (s === 'swim') s = 'swimming';
   if (s === 'bball' || s === 'hoops') s = 'basketball';
   if (s === 'jiujitsu' || s === 'jiu-jitsu' || s === 'jj') s = 'bjj';
 
-  // style aliases
   if (s === 'wrestling') {
     if (st === 'folk' || st === 'fs') st = 'folkstyle';
   }
@@ -38,6 +38,10 @@ export function normalizeKey(sport?: string, style?: string) {
   if (s === 'softball') {
     if (st === 'pitch') st = 'pitching';
     if (st === 'hit') st = 'hitting';
+  }
+
+  if (s === 'swimming') {
+    if (!st) st = 'race';
   }
 
   if (s === 'bjj') {
@@ -69,6 +73,9 @@ const Registry: Record<string, RecordingOverlayEntry> = {
   // Softball
   'softball:hitting': { Overlay: BaseballHittingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
   'softball:pitching': { Overlay: BaseballPitchingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+
+  // Swimming
+  'swimming:race': { Overlay: SwimmingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
   // Volleyball
   'volleyball:default': { Overlay: VolleyballOverlay, preRollSec: DEFAULT_PREROLL_SEC },

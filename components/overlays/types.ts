@@ -27,8 +27,15 @@ export type OverlayProps = {
   onEvent: (evt: OverlayEvent) => void;
 
   /**
-   * ✅ Name of the athlete being recorded for.
-   * Optional so it won’t break any overlay that doesn’t use it.
+   * Name of the athlete being recorded for.
    */
   athleteName?: string;
+
+  /**
+   * Swimming-only route params.
+   * Optional so other sports ignore them safely.
+   */
+  stroke?: string;
+  distance?: string;
+  raceLabel?: string;
 };

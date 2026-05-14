@@ -21,7 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { ensureAnonymous } from '../../lib/firebase';
 
-const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Softball', 'Volleyball', 'BJJ'] as const;
+const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Softball', 'Swimming', 'Volleyball', 'BJJ'] as const;
 
 type Athlete = {
   id: string;
@@ -51,16 +51,24 @@ function sportLabelToKey(sport: SportLabel) {
   switch (sport) {
     case 'Wrestling':
       return 'wrestling';
+
     case 'Baseball':
       return 'baseball';
+
     case 'Basketball':
       return 'basketball';
+
     case 'Volleyball':
       return 'volleyball';
+
     case 'BJJ':
       return 'bjj';
+
     case 'Softball':
       return 'softball';
+
+    case 'Swimming':
+      return 'swimming';
   }
 }
 
@@ -331,9 +339,13 @@ export default function RecordingScreen() {
       case 'Baseball':
         router.push({ pathname: '/screens/baseballselection', params: { athlete } });
         break;
-        case 'Softball':
-  router.push({ pathname: '/screens/softballselection', params: { athlete } });
-  break;
+  case 'Softball':
+    router.push({ pathname: '/screens/softballselection', params: { athlete } });
+    break;
+  
+  case 'Swimming':
+    router.push({ pathname: '/screens/swimmingselection', params: { athlete } });
+    break;
       case 'Basketball':
         toCam('basketball', 'default');
         break;

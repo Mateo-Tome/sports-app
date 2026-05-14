@@ -42,6 +42,10 @@ type RouteParams = {
   athlete?: string | string[];
   sport?: string | string[];
   style?: string | string[];
+  stroke?: string | string[];
+  distance?: string | string[];
+  raceLabel?: string | string[];
+  swimRace?: string | string[];
 };
 
 function paramToStr(v: unknown, fallback: string) {
@@ -59,6 +63,30 @@ export default function CameraScreen() {
   const sportParam = useMemo(() => paramToStr(params.sport, 'wrestling'), [params.sport]);
   const styleParam = useMemo(() => paramToStr(params.style, 'folkstyle'), [params.style]);
   const athleteName = useMemo(() => paramToStr(params.athlete, 'Unassigned'), [params.athlete]);
+  const rawSwimRace = useMemo(() => paramToStr(params.swimRace, ''), [params.swimRace]);
+
+const parsedSwimRace = useMemo(() => {
+  try {
+    return rawSwimRace ? JSON.parse(rawSwimRace) : null;
+  } catch {
+    return null;
+  }
+}, [rawSwimRace]);
+
+const strokeParam = useMemo(
+  () => paramToStr(params.stroke, parsedSwimRace?.stroke ?? ''),
+  [params.stroke, parsedSwimRace],
+);
+
+const distanceParam = useMemo(
+  () => paramToStr(params.distance, parsedSwimRace?.distance ?? ''),
+  [params.distance, parsedSwimRace],
+);
+
+const raceLabelParam = useMemo(
+  () => paramToStr(params.raceLabel, parsedSwimRace?.raceLabel ?? ''),
+  [params.raceLabel, parsedSwimRace],
+);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
@@ -221,7 +249,7 @@ export default function CameraScreen() {
 
     const elapsed = Date.now() - startMs.current - totalPausedMsRef.current - pausedNow;
 
-    return Math.max(0, Math.round(elapsed / 1000 - preRollSec));
+    return Math.max(0, elapsed / 1000 - preRollSec);
   }, [isPaused, preRollSec]);
 
   const ensureRecordingPermissions = useCallback(async () => {
@@ -494,7 +522,10 @@ export default function CameraScreen() {
                 style={styleParam}
                 score={score}
                 athleteName={athleteName}
-              />
+                stroke={strokeParam}
+                distance={distanceParam}
+                raceLabel={raceLabelParam}
+                />
             </View>
           )}
 
