@@ -13,6 +13,8 @@ import { reduceBjjDefault, reduceBjjGi, reduceBjjNoGi } from './reducers/bjj/def
 
 import { reduceVolleyballDefault } from './reducers/volleyball/default';
 
+import { reduceSwimmingRace } from './reducers/swimming/race';
+
 export type SportStatsReducer = (clips: ClipSidecar[]) => any;
 
 const registry: Record<string, SportStatsReducer> = {};
@@ -38,9 +40,13 @@ registerSportStats('wrestling:greco', reduceWrestlingGreco);
 registerSportStats('baseball:hitting', reduceBaseballHitting);
 registerSportStats('baseball:pitching', reduceBaseballPitching);
 
-// Softball (reusing baseball reducers for V1)
+// Softball
 registerSportStats('softball:hitting', reduceBaseballHitting);
 registerSportStats('softball:pitching', reduceBaseballPitching);
+
+// Swimming
+registerSportStats('swimming:race', reduceSwimmingRace);
+registerSportStats('swimming:default', reduceSwimmingRace);
 
 // Basketball
 registerSportStats('basketball:default', reduceBasketballDefault);

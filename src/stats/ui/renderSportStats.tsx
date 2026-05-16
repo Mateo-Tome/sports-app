@@ -11,6 +11,7 @@ import FreestyleStatsCard from './cards/FreestyleStatsCard';
 import GrecoStatsCard from './cards/GrecoStatsCard';
 import SoftballHittingStatsCard from './cards/SoftballHittingStatsCard';
 import SoftballPitchingStatsCard from './cards/SoftballPitchingStatsCard';
+import SwimmingStatsCard from './cards/SwimmingStatsCard';
 
 function CardShell({
   title,
@@ -506,6 +507,10 @@ export function renderSportStatsCard(
         athleteName={athleteName}
       />
     );
+  }
+
+  if (sportKey === 'swimming:race' || sportKey === 'swimming:default') {
+    return <SwimmingStatsCard stats={sportStats} athleteName={athleteName} />;
   }
 
   if (sportKey === 'volleyball:default' || sportKey === 'volleyball:match') {
