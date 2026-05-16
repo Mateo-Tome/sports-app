@@ -4,6 +4,7 @@ import { Text, View } from 'react-native';
 // Sport-specific Library cards
 import { BaseballHittingLibraryCard } from '../modules/baseball/BaseballHittingLibraryCard';
 import { BaseballPitchingLibraryCard } from '../modules/baseball/BaseballPitchingLibraryCard';
+import { SwimmingLibraryCard } from '../modules/swimming/SwimmingLibraryCard';
 import { WrestlingFolkstyleLibraryCard } from '../modules/wrestling/WrestlingFolkstyleLibraryCard';
 
 export type SportChip = { text: string; color: string };
@@ -14,16 +15,18 @@ export type SportCardProps = {
     athlete: string;
     sport: string;
 
-    // optional
     highlightGold?: boolean;
     outcome?: 'W' | 'L' | 'T' | null;
     myScore?: number | null;
     oppScore?: number | null;
 
-    // optional sport-ish extras
     edgeColor?: string | null;
+    libraryStyle?: {
+      edgeColor?: string | null;
+      badgeText?: string | null;
+      badgeColor?: string | null;
+    } | null;
 
-    // baseball
     hittingLabel?: string | null;
     pitchingLabel?: string | null;
 
@@ -33,16 +36,21 @@ export type SportCardProps = {
   chip?: SportChip | null;
 };
 
-// default / generic card (used for highlights or unknown sports)
-export const DefaultLibraryCard: React.FC<SportCardProps> = ({ row, subtitle, chip }) => {
+export const DefaultLibraryCard: React.FC<SportCardProps> = ({
+  row,
+  subtitle,
+  chip,
+}) => {
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>
+        <Text
+          style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
+          numberOfLines={2}
+        >
           {row.displayName}
         </Text>
 
-        {/* Generic chip only if caller provides it */}
         {chip ? (
           <View
             style={{
@@ -74,7 +82,10 @@ export const DefaultLibraryCard: React.FC<SportCardProps> = ({ row, subtitle, ch
         ) : null}
       </View>
 
-      <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>
+      <Text
+        style={{ color: 'white', opacity: 0.85, marginTop: 4 }}
+        numberOfLines={1}
+      >
         {subtitle}
       </Text>
     </View>
@@ -86,10 +97,16 @@ export function getSportCardComponent(
 ): React.ComponentType<SportCardProps> {
   const s = String(row.sport || '').toLowerCase();
 
-  // Baseball (your sport string is like "baseball:hitting" / "baseball:pitching")
+  // Swimming
+  if (s.startsWith('swimming')) {
+    return SwimmingLibraryCard as unknown as React.ComponentType<SportCardProps>;
+  }
+
+  // Baseball
   if (s.includes('baseball') && s.includes('pitching')) {
     return BaseballPitchingLibraryCard as unknown as React.ComponentType<SportCardProps>;
   }
+
   if (s.includes('baseball') && s.includes('hitting')) {
     return BaseballHittingLibraryCard as unknown as React.ComponentType<SportCardProps>;
   }
