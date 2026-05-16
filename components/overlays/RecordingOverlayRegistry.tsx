@@ -76,6 +76,7 @@ const Registry: Record<string, RecordingOverlayEntry> = {
 
   // Swimming
   'swimming:race': { Overlay: SwimmingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
+  'swimming:default': { Overlay: SwimmingOverlay, preRollSec: DEFAULT_PREROLL_SEC },
 
   // Volleyball
   'volleyball:default': { Overlay: VolleyballOverlay, preRollSec: DEFAULT_PREROLL_SEC },

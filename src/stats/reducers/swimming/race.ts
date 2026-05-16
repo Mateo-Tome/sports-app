@@ -11,10 +11,6 @@ function num(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
 function formatTime(sec: number | null) {
   if (sec == null || !Number.isFinite(sec)) return '--';
 
@@ -23,6 +19,24 @@ function formatTime(sec: number | null) {
 
   if (m <= 0) return s.toFixed(2);
   return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
+function cleanRaceLabel(label: string) {
+  const s = String(label ?? '').trim();
+  const lower = s.toLowerCase();
+
+  if (
+    !s ||
+    lower === 'swim' ||
+    lower === 'swimming' ||
+    lower === 'race' ||
+    lower === 'swimming race' ||
+    lower === 'no race selected'
+  ) {
+    return 'Swimming Race';
+  }
+
+  return s;
 }
 
 type RaceAgg = {
@@ -35,8 +49,7 @@ type RaceAgg = {
   totalSplits: number;
   splitCount: number;
   fastestSplitSec: number | null;
-  totalStrokes: number;
-  strokeClipCount: number;
+  slowestSplitSec: number | null;
   latestCreatedAt: number;
 };
 
@@ -51,8 +64,7 @@ function emptyRace(label: string): RaceAgg {
     totalSplits: 0,
     splitCount: 0,
     fastestSplitSec: null,
-    totalStrokes: 0,
-    strokeClipCount: 0,
+    slowestSplitSec: null,
     latestCreatedAt: 0,
   };
 }
@@ -60,13 +72,9 @@ function emptyRace(label: string): RaceAgg {
 function raceLabelForClip(clip: ClipSidecar) {
   for (const e of clip.events ?? []) {
     const m = metaOf(e);
-    if (m.raceLabel) return String(m.raceLabel);
+    if (m.raceLabel) return cleanRaceLabel(String(m.raceLabel));
   }
 
-  const sport = String(clip.sport ?? '').trim();
-  const style = String(clip.style ?? '').trim();
-
-  if (sport && style && style !== 'race' && style !== 'default') return `${sport} ${style}`;
   return 'Swimming Race';
 }
 
@@ -88,10 +96,12 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
     byRace[key] = agg;
 
     agg.clips += 1;
-    agg.latestCreatedAt = Math.max(agg.latestCreatedAt, Number(clip.createdAt ?? 0));
+    agg.latestCreatedAt = Math.max(
+      agg.latestCreatedAt,
+      Number(clip.createdAt ?? 0),
+    );
 
     let finalTimeSec: number | null = null;
-    let maxStrokeCount = 0;
 
     for (const e of clip.events ?? []) {
       const kind = String(e.kind ?? e.key ?? '').toLowerCase();
@@ -99,6 +109,7 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
 
       if (kind === 'turn_split') {
         const split = num(m.splitDurationSec);
+
         if (split != null) {
           agg.totalSplits += split;
           agg.splitCount += 1;
@@ -106,13 +117,10 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
           if (agg.fastestSplitSec == null || split < agg.fastestSplitSec) {
             agg.fastestSplitSec = split;
           }
-        }
-      }
 
-      if (kind === 'stroke_count') {
-        const strokes = num(m.strokeCount);
-        if (strokes != null) {
-          maxStrokeCount = Math.max(maxStrokeCount, strokes);
+          if (agg.slowestSplitSec == null || split > agg.slowestSplitSec) {
+            agg.slowestSplitSec = split;
+          }
         }
       }
 
@@ -120,11 +128,6 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
         const finalTime = num(m.finalTimeSec);
         if (finalTime != null) {
           finalTimeSec = finalTime;
-        }
-
-        const finishStrokes = num(m.strokeCount);
-        if (finishStrokes != null) {
-          maxStrokeCount = Math.max(maxStrokeCount, finishStrokes);
         }
       }
     }
@@ -140,11 +143,6 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
 
       agg.latestTimeSec = finalTimeSec;
     }
-
-    if (maxStrokeCount > 0) {
-      agg.totalStrokes += maxStrokeCount;
-      agg.strokeClipCount += 1;
-    }
   }
 
   const races = Object.values(byRace)
@@ -152,7 +150,16 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
     .map((r) => {
       const avgTimeSec = r.finished ? r.totalTimeSec / r.finished : null;
       const avgSplitSec = r.splitCount ? r.totalSplits / r.splitCount : null;
-      const avgStrokes = r.strokeClipCount ? r.totalStrokes / r.strokeClipCount : null;
+
+      const splitSpreadSec =
+        r.fastestSplitSec != null && r.slowestSplitSec != null
+          ? r.slowestSplitSec - r.fastestSplitSec
+          : null;
+
+      const latestVsBestSec =
+        r.latestTimeSec != null && r.bestTimeSec != null
+          ? r.latestTimeSec - r.bestTimeSec
+          : null;
 
       return {
         raceLabel: r.raceLabel,
@@ -174,8 +181,19 @@ export function reduceSwimmingRace(clips: ClipSidecar[]) {
         fastestSplitSec: r.fastestSplitSec,
         fastestSplitText: formatTime(r.fastestSplitSec),
 
-        avgStrokes,
-        avgStrokesText: avgStrokes == null ? '--' : String(round2(avgStrokes)),
+        slowestSplitSec: r.slowestSplitSec,
+        slowestSplitText: formatTime(r.slowestSplitSec),
+
+        splitSpreadSec,
+        splitSpreadText: formatTime(splitSpreadSec),
+
+        latestVsBestSec,
+        latestVsBestText:
+          latestVsBestSec == null
+            ? '--'
+            : latestVsBestSec === 0
+              ? 'Matches best'
+              : `${formatTime(Math.abs(latestVsBestSec))} off best`,
       };
     });
 
