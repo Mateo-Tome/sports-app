@@ -15,6 +15,8 @@ import BasketballPlaybackModule from './basketball/BasketballPlaybackModule';
 import BJJPlaybackModule from './bjj/BJJPlaybackModule';
 import VolleyballPlaybackModule from './volleyball/VolleyballPlaybackModule';
 
+import SwimmingPlaybackModule from './swimming/SwimmingPlaybackModule';
+
 export function normalizeKey(sport?: string, style?: string) {
   const rawSport = String(sport ?? '').trim().toLowerCase();
   const parts = rawSport.split(':').filter(Boolean);
@@ -41,6 +43,10 @@ const Registry: Record<string, React.ComponentType<PlaybackModuleProps>> = {
   // Softball
   'softball:hitting': SoftballHittingPlaybackModule,
   'softball:pitching': SoftballPitchingPlaybackModule,
+
+  // Swimming
+  'swimming:race': SwimmingPlaybackModule,
+  'swimming:default': SwimmingPlaybackModule,
 
   // Basketball
   'basketball:default': BasketballPlaybackModule,

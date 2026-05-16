@@ -5,19 +5,23 @@ import type { OverlayProps } from '../types';
 
 function formatTime(sec: number) {
   if (!Number.isFinite(sec) || sec < 0) return '00:00.000';
+
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   const ms = Math.floor((sec - Math.floor(sec)) * 1000);
+
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 }
 
 function niceStroke(stroke?: string) {
   const v = String(stroke ?? '').toLowerCase();
+
   if (v.includes('free')) return 'Free';
   if (v.includes('back')) return 'Back';
   if (v.includes('breast')) return 'Breast';
   if (v.includes('fly') || v.includes('butter')) return 'Fly';
   if (v.includes('im')) return 'IM';
+
   return '';
 }
 
@@ -87,10 +91,11 @@ export default function SwimmingOverlay({
     const dist = String(distance ?? '').trim();
     const strokeName = niceStroke(stroke);
 
-    if (label) return label;             // should show "50 Free"
+    if (label) return label;
     if (dist && strokeName) return `${dist} ${strokeName}`;
     if (dist) return dist;
     if (strokeName) return strokeName;
+
     return 'NO RACE SELECTED';
   }, [raceLabel, distance, stroke]);
 
@@ -101,8 +106,12 @@ export default function SwimmingOverlay({
 
   const showFlash = (text: string, ms = 550) => {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+
     setFlash(text);
-    flashTimerRef.current = setTimeout(() => setFlash(null), ms);
+
+    flashTimerRef.current = setTimeout(() => {
+      setFlash(null);
+    }, ms);
   };
 
   useEffect(() => {
@@ -137,12 +146,14 @@ export default function SwimmingOverlay({
       showFlash('Press record first');
       return;
     }
+
     if (raceStartedRef.current || raceFinishedRef.current) return;
 
     const now = Date.now();
 
     startMsRef.current = now;
     lastSplitMsRef.current = now;
+
     raceStartedRef.current = true;
     raceFinishedRef.current = false;
     turnsRef.current = 0;
@@ -159,6 +170,8 @@ export default function SwimmingOverlay({
       raceLabel: title,
       stroke,
       distance,
+      pillLabel: 'Start',
+      beltLane: 'bottom',
     });
 
     showFlash('START');
@@ -181,6 +194,8 @@ export default function SwimmingOverlay({
       raceLabel: title,
       stroke,
       distance,
+      pillLabel: 'Finish',
+      beltLane: 'bottom',
     });
 
     showFlash(`FINISH ${text}`, 1200);
@@ -205,16 +220,21 @@ export default function SwimmingOverlay({
     turnsRef.current = next;
     setTurns(next);
 
-    fire('turn_split', `Turn/Split ${next}`, {
+    const shortSplit = splitDurationSec.toFixed(1);
+    const splitLabel = `T${next} +${shortSplit}`;
+
+    fire('turn_split', splitLabel, {
       turnNumber: next,
       splitDurationSec,
       raceElapsedSec,
       raceLabel: title,
       stroke,
       distance,
+      pillLabel: splitLabel,
+      beltLane: 'bottom',
     });
 
-    showFlash(`TURN ${next}`);
+    showFlash(`${splitLabel}`);
   };
 
   const addStroke = () => {
@@ -224,6 +244,7 @@ export default function SwimmingOverlay({
     }
 
     const next = strokesRef.current + 1;
+
     strokesRef.current = next;
     setStrokes(next);
 
@@ -233,6 +254,7 @@ export default function SwimmingOverlay({
       raceLabel: title,
       stroke,
       distance,
+      hideFromBelt: true,
     });
   };
 
@@ -278,7 +300,15 @@ export default function SwimmingOverlay({
       </Text>
 
       {!!sub && (
-        <Text allowFontScaling={false} style={{ color: 'rgba(255,255,255,0.78)', fontWeight: '900', fontSize: 13, marginTop: 4 }}>
+        <Text
+          allowFontScaling={false}
+          style={{
+            color: 'rgba(255,255,255,0.78)',
+            fontWeight: '900',
+            fontSize: 13,
+            marginTop: 4,
+          }}
+        >
           {sub}
         </Text>
       )}
@@ -327,15 +357,23 @@ export default function SwimmingOverlay({
           RACE TIMER
         </Text>
 
-        <LiveRaceTimer
-          running={raceStarted && !raceFinished}
-          finishedText={finalTimeText}
-          startMsRef={startMsRef}
-        />
+        <LiveRaceTimer running={raceStarted && !raceFinished} finishedText={finalTimeText} startMsRef={startMsRef} />
       </View>
 
       {!!flash && (
-        <View pointerEvents="none" style={{ position: 'absolute', top: 8, alignSelf: 'center', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: 'rgba(14,165,233,0.96)', zIndex: 50 }}>
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 8,
+            alignSelf: 'center',
+            borderRadius: 999,
+            paddingVertical: 8,
+            paddingHorizontal: 14,
+            backgroundColor: 'rgba(14,165,233,0.96)',
+            zIndex: 50,
+          }}
+        >
           <Text allowFontScaling={false} style={{ color: 'white', fontWeight: '900' }}>
             {flash}
           </Text>
@@ -351,7 +389,17 @@ export default function SwimmingOverlay({
         />
       </View>
 
-      <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: 0, bottom: 0, justifyContent: 'center', gap: GAP }}>
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          right: EDGE_R,
+          top: 0,
+          bottom: 0,
+          justifyContent: 'center',
+          gap: GAP,
+        }}
+      >
         <SwimButton label="TURN/SPLIT" sub={`${turns}`} onPress={turnSplit} bg="rgba(0,0,0,0.84)" />
         <SwimButton label="STROKE" sub={`${strokes}`} onPress={addStroke} bg="rgba(0,0,0,0.84)" />
       </View>

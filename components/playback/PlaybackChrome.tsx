@@ -310,6 +310,9 @@ export function EventBelt(props: {
     }> = [];
 
     for (const { e } of indexed) {
+      const flatMeta = getMetaFlat(e);
+      if (flatMeta.hideFromBelt === true) continue;
+
       const type = readEventType(e);
       if (type === 'choice') continue;
 
@@ -361,6 +364,7 @@ export function EventBelt(props: {
 
     const maxCenter = items.length ? Math.max(...items.map((it) => it.x)) : 0;
     const contentW = Math.max(screenW, maxCenter + PILL_W / 2 + EDGE_PAD);
+
     return { items, contentW };
   }, [events, screenW, colorFor]);
 
@@ -371,6 +375,7 @@ export function EventBelt(props: {
   const lockUser = useCallback((ms = 900) => {
     userInteracting.current = true;
     if (unlockTimer.current) clearTimeout(unlockTimer.current);
+
     unlockTimer.current = setTimeout(() => {
       userInteracting.current = false;
       unlockTimer.current = null;
@@ -534,21 +539,27 @@ export function EventBelt(props: {
                 <Text
                   allowFontScaling={false}
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.65}
                   style={{ color: 'white', fontSize: 11, fontWeight: '800' }}
                 >
                   {(() => {
-  const m = getMetaFlat(it.e);
-  const rbi = Number(m?.rbi ?? 0);
-  const hasRbi = Number.isFinite(rbi) && rbi > 0;
+                    const m = getMetaFlat(it.e);
+                    const rbi = Number(m?.rbi ?? 0);
+                    const hasRbi = Number.isFinite(rbi) && rbi > 0;
 
-  const base = `${abbrKind(pillKind)}${
-    typeof (it.e as any).points === 'number' && (it.e as any).points > 0
-      ? `+${(it.e as any).points}`
-      : ''
-  }`;
+                    const isSwimming = String(m?.sport ?? '').toLowerCase() === 'swimming';
 
-  return hasRbi ? `${base} ${rbi}RBI` : base;
-})()}
+                    const base = isSwimming
+                      ? String(m?.pillLabel ?? pillKind)
+                      : `${abbrKind(pillKind)}${
+                          typeof (it.e as any).points === 'number' && (it.e as any).points > 0
+                            ? `+${(it.e as any).points}`
+                            : ''
+                        }`;
+
+                    return hasRbi ? `${base} ${rbi}RBI` : base;
+                  })()}
                 </Text>
 
                 <Text
@@ -583,7 +594,7 @@ export function QuickEditSheet(props: {
   const BOX_W = Math.min(screenW * 0.75, 520);
 
   const kind = String((event as any)?.kind ?? '');
-  const pts = (event as any).points ? `+${(event as any).points}` : '';
+  const pts = (event as any).points ? `+${event.points}` : '';
 
   return (
     <View
