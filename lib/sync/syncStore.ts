@@ -12,6 +12,7 @@ export async function readSyncMap(): Promise<SyncMap> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return {};
+
     const parsed = JSON.parse(raw);
     return isPlainObject(parsed) ? (parsed as SyncMap) : {};
   } catch {
@@ -19,7 +20,7 @@ export async function readSyncMap(): Promise<SyncMap> {
   }
 }
 
-export async function writeSyncMap(map: SyncMap) {
+export async function writeSyncMap(map: SyncMap): Promise<void> {
   await AsyncStorage.setItem(KEY, JSON.stringify(map));
 }
 
@@ -29,7 +30,10 @@ function stamp(status: SyncStatus): SyncStatus {
 
   switch (status.state) {
     case 'local_only':
-      return { state: 'local_only', updatedAt: status.updatedAt ?? now };
+      return {
+        state: 'local_only',
+        updatedAt: status.updatedAt ?? now,
+      };
 
     case 'uploaded':
       return {
@@ -46,6 +50,12 @@ function stamp(status: SyncStatus): SyncStatus {
         message: status.message,
         updatedAt: status.updatedAt ?? now,
       };
+
+    default:
+      return {
+        ...status,
+        updatedAt: (status as any).updatedAt ?? now,
+      } as SyncStatus;
   }
 }
 

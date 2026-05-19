@@ -18,6 +18,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AddExistingVideoButton from '../../components/recording/AddExistingVideoButton';
+import pickVideoFromPhotos from '../../lib/imports/pickVideoFromPhotos';
 
 import { ensureAnonymous } from '../../lib/firebase';
 
@@ -287,6 +289,23 @@ export default function RecordingScreen() {
       pathname: '/record/camera',
       params: { sport: sportKey, style: styleKey, athlete },
     });
+
+    const startImportVideo = async () => {
+      try {
+        const picked = await pickVideoFromPhotos();
+    
+        if (!picked) return;
+    
+        Alert.alert(
+          'Video selected',
+          `Athlete: ${athlete}\n\nNext step: choose sport/style and save this video into QuickClip.`
+        );
+    
+        console.log('[Import video picked]', picked);
+      } catch (e: any) {
+        Alert.alert('Import failed', String(e?.message ?? e));
+      }
+    };
 
   // Tap locked sport → go to paywall (recommended)
   const ALLOW_TAP_LOCKED_TO_UPSELL = true;
@@ -691,6 +710,8 @@ export default function RecordingScreen() {
         <Text style={{ color: 'white', fontSize: 22, fontWeight: '900', marginBottom: 12 }}>
           Record
         </Text>
+
+        <AddExistingVideoButton onPress={startImportVideo} />
 
         <TouchableOpacity
           onPress={() => toCam('plain', 'none')}
