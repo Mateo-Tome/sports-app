@@ -37,27 +37,17 @@ type PendingRbiEvent =
   | { key: 'hit_by_pitch'; label: string; color: string; meta: Record<string, any>; toastBase: string }
   | { key: 'out'; label: string; color: string; meta: Record<string, any>; toastBase: string };
 
-  function beltLaneForKey(key: string): BeltLane {
-    const k = String(key || '').toLowerCase();
-  
-    // Match recording overlay:
-    // strikes/outs on top, positive hitting results on bottom
-    if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') {
-      return 'top';
-    }
-  
-    if (
-      k === 'ball' ||
-      k === 'walk' ||
-      k === 'hit' ||
-      k === 'homerun' ||
-      k === 'hit_by_pitch'
-    ) {
-      return 'bottom';
-    }
-  
-    return undefined;
+function beltLaneForKey(key: string): BeltLane {
+  const k = String(key || '').toLowerCase();
+
+  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'top';
+
+  if (k === 'ball' || k === 'walk' || k === 'hit' || k === 'homerun' || k === 'hit_by_pitch') {
+    return 'bottom';
   }
+
+  return undefined;
+}
 
 function RbiChooser({
   open,
@@ -168,8 +158,6 @@ export default function BaseballHittingPlaybackModule({
   events,
   now,
 }: PlaybackModuleProps) {
-  if (!overlayOn) return null;
-
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
@@ -208,6 +196,8 @@ export default function BaseballHittingPlaybackModule({
   const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
   const showToast = (text: string, tint: string) => setToast({ text, tint });
 
+  if (!overlayOn) return null;
+
   const resetCount = () => {
     setBalls(0);
     setStrikes(0);
@@ -216,9 +206,7 @@ export default function BaseballHittingPlaybackModule({
 
   const actorForKey = (key: string): 'home' | 'opponent' | 'neutral' => {
     const k = String(key || '').toLowerCase();
-    if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
-      return 'home';
-    }
+    if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') return 'home';
     if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'opponent';
     return 'neutral';
   };
@@ -268,10 +256,7 @@ export default function BaseballHittingPlaybackModule({
       hasRbi: rbi > 0,
     });
 
-    showToast(
-      rbi > 0 ? `${pending.toastBase} • ${rbi} RBI` : pending.toastBase,
-      pending.color,
-    );
+    showToast(rbi > 0 ? `${pending.toastBase} • ${rbi} RBI` : pending.toastBase, pending.color);
 
     setPendingRbi(null);
     resetCount();
@@ -282,27 +267,22 @@ export default function BaseballHittingPlaybackModule({
   };
 
   const onBall = () => {
-    setBalls((prev) => {
-      const next = Math.min(prev + 1, 4);
-      fire('ball', 'Ball', { ballsAfter: next });
-      showToast(`Ball ${next}`, BALL_COLOR);
-      return next;
-    });
+    const next = Math.min(balls + 1, 4);
+    setBalls(next);
+    fire('ball', 'Ball', { ballsAfter: next });
+    showToast(`Ball ${next}`, BALL_COLOR);
   };
 
   const recordStrike = (kind: 'swinging' | 'looking') => {
-    setStrikes((prev) => {
-      const next = Math.min(prev + 1, 3);
-      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
-        kind,
-        strikesAfter: next,
-      });
-      showToast(
-        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
-        STRIKE_COLOR,
-      );
-      return next;
+    const next = Math.min(strikes + 1, 3);
+    setStrikes(next);
+
+    fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
+      kind,
+      strikesAfter: next,
     });
+
+    showToast(kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`, STRIKE_COLOR);
   };
 
   const onStrike = () => {
@@ -310,47 +290,35 @@ export default function BaseballHittingPlaybackModule({
   };
 
   const onFoul = () => {
-    setFouls((prevFouls) => {
-      let nextStrikes = strikes;
-      setStrikes((prevStrikes) => {
-        nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', {
-          foulsAfter: prevFouls + 1,
-          strikesAfter: nextStrikes,
-        });
-        return nextStrikes;
-      });
-      const newFouls = prevFouls + 1;
-      showToast(`Foul (${newFouls})`, FOUL_COLOR);
-      return newFouls;
+    const newFouls = fouls + 1;
+    const nextStrikes = strikes < 2 ? strikes + 1 : strikes;
+
+    setFouls(newFouls);
+    setStrikes(nextStrikes);
+
+    fire('foul', 'Foul Ball', {
+      foulsAfter: newFouls,
+      strikesAfter: nextStrikes,
     });
+
+    showToast(`Foul (${newFouls})`, FOUL_COLOR);
   };
 
   const incrementOuts = (type: string) => {
-    setOuts((prev) => {
-      const next = Math.min(prev + 1, 3);
+    const next = Math.min(outs + 1, 3);
+    setOuts(next);
 
-      askRbi({
-        key: 'out',
-        label: 'Out',
-        color: OUT_COLOR,
-        meta: { type, outsAfter: next },
-        toastBase: type,
-      });
-
-      return next;
+    askRbi({
+      key: 'out',
+      label: 'Out',
+      color: OUT_COLOR,
+      meta: { type, outsAfter: next },
+      toastBase: type,
     });
   };
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
-    const toastBase =
-      type === 'single'
-        ? 'Single'
-        : type === 'double'
-          ? 'Double'
-          : type === 'triple'
-            ? 'Triple'
-            : 'Bunt';
+    const toastBase = type === 'single' ? 'Single' : type === 'double' ? 'Double' : type === 'triple' ? 'Triple' : 'Bunt';
 
     askRbi({
       key: 'hit',
@@ -392,12 +360,16 @@ export default function BaseballHittingPlaybackModule({
   };
 
   const recordStrikeout = (kind: 'swinging' | 'looking') => {
-    setOuts((prev) => {
-      const next = Math.min(prev + 1, 3);
-      fire('strikeout', 'Strikeout', { kind, outsAfter: next });
-      showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', K_COLOR);
-      return next;
+    const next = Math.min(outs + 1, 3);
+    setOuts(next);
+
+    fire('strikeout', 'Strikeout', {
+      kind,
+      outsAfter: next,
     });
+
+    showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', K_COLOR);
+
     resetCount();
   };
 
@@ -484,26 +456,10 @@ export default function BaseballHittingPlaybackModule({
       />
 
       {showPalette && toast ? (
-        <FlashToast
-          text={toast.text}
-          tint={toast.tint}
-          top={isPortrait ? insets.top + 60 : insets.top + 40}
-          center
-          onDone={() => setToast(null)}
-        />
+        <FlashToast text={toast.text} tint={toast.tint} top={isPortrait ? insets.top + 60 : insets.top + 40} center onDone={() => setToast(null)} />
       ) : null}
 
-      <LeftStack
-        showPalette={showPalette}
-        EDGE_L={EDGE_L}
-        TOP={TOP}
-        BOTTOM={BOTTOM}
-        GAP={GAP}
-        BTN_SIZE={BTN_SIZE}
-        onBall={onBall}
-        onStrike={onStrike}
-        onFoul={onFoul}
-      />
+      <LeftStack showPalette={showPalette} EDGE_L={EDGE_L} TOP={TOP} BOTTOM={BOTTOM} GAP={GAP} BTN_SIZE={BTN_SIZE} onBall={onBall} onStrike={onStrike} onFoul={onFoul} />
 
       <RightStack
         showPalette={showPalette}

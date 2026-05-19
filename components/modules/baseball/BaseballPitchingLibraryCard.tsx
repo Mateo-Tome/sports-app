@@ -5,11 +5,10 @@ type RowLike = {
   displayName: string;
   sport: string;
   athlete?: string;
-
+  size?: number | null;
   highlightGold?: boolean | null;
 
   edgeColor?: string | null;
-
   pitchingLabel?: string | null; // e.g. "K", "BB", "1B", "HR", "GO"
 };
 
@@ -25,15 +24,18 @@ export const BaseballPitchingLibraryCard: React.FC<BaseballPitchingLibraryCardPr
 }) => {
   const label = (row.pitchingLabel ?? '').trim() || 'Pitching';
 
-  const pillBorderColor = (row.edgeColor ?? '').trim() || 'rgba(34,197,94,0.70)';
+  const pillBorderColor = (row.edgeColor ?? '').trim() || 'rgba(245,158,11,0.65)';
   const pillBgColor = (row.edgeColor ?? '').trim()
     ? 'rgba(0,0,0,0.55)'
-    : 'rgba(34,197,94,0.18)';
+    : 'rgba(245,158,11,0.18)';
 
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={{ color: 'white', fontWeight: '700', flexShrink: 1 }} numberOfLines={2}>
+        <Text
+          style={{ color: 'white', fontWeight: '700', flexShrink: 1 }}
+          numberOfLines={2}
+        >
           {row.displayName}
         </Text>
 
@@ -61,14 +63,19 @@ export const BaseballPitchingLibraryCard: React.FC<BaseballPitchingLibraryCardPr
               borderColor: '#ffffff55',
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '900' }}>HIGHLIGHT</Text>
+            <Text style={{ color: 'white', fontWeight: '900' }}>HR</Text>
           </View>
         )}
       </View>
 
-      <Text style={{ color: 'white', opacity: 0.85, marginTop: 4 }} numberOfLines={1}>
+      <Text
+        style={{ color: 'white', opacity: 0.85, marginTop: 4 }}
+        numberOfLines={1}
+      >
         {subtitle}
       </Text>
     </View>
   );
 };
+
+export default BaseballPitchingLibraryCard;

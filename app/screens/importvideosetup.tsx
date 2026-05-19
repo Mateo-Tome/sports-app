@@ -78,7 +78,7 @@ export default function ImportVideoSetupScreen() {
             router.replace({
               pathname: '/screens/PlaybackScreen',
               params: {
-                uri: saved.appUri,
+                videoPath: saved.appUri,
                 athlete,
                 sport: sportKey,
                 style: styleKey,
@@ -109,23 +109,13 @@ export default function ImportVideoSetupScreen() {
           Tell QuickClip what this video is so it can appear correctly in your library, playback, and stats.
         </Text>
 
-        <View
-          style={{
-            marginTop: 18,
-            padding: 14,
-            borderRadius: 14,
-            backgroundColor: 'rgba(255,255,255,0.08)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.14)',
-          }}
-        >
+        <View style={{ marginTop: 18, padding: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' }}>
           <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '800' }}>
             ATHLETE
           </Text>
           <Text style={{ color: 'white', fontSize: 20, fontWeight: '900', marginTop: 4 }}>
             {athlete}
           </Text>
-
           <Text style={{ color: 'rgba(255,255,255,0.5)', marginTop: 8, fontSize: 12 }} numberOfLines={1}>
             {fileName}
           </Text>
@@ -190,7 +180,6 @@ export default function ImportVideoSetupScreen() {
                   <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>
                     {mode.title}
                   </Text>
-
                   {mode.subtitle ? (
                     <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 3, fontSize: 12 }}>
                       {mode.subtitle}
