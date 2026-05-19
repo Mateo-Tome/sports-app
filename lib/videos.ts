@@ -40,6 +40,9 @@ export type VideoRow = {
   edgeColor?: string | null;
   highlightGold?: boolean | null;
 
+  hittingLabel?: string | null;
+  pitchingLabel?: string | null;
+
   b2VideoKey?: string | null;
   b2SidecarKey?: string | null;
   b2ThumbnailKey?: string | null;
@@ -87,7 +90,11 @@ function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
     libraryStyle: (data.libraryStyle ?? null) as any,
 
     edgeColor: data.edgeColor ?? null,
-    highlightGold: typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
+    highlightGold:
+      typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
+
+    hittingLabel: data.hittingLabel ?? null,
+    pitchingLabel: data.pitchingLabel ?? null,
 
     b2VideoKey: data.b2VideoKey ?? null,
     b2SidecarKey: data.b2SidecarKey ?? null,
@@ -140,7 +147,6 @@ export async function fetchMyVideosPage(params?: {
   };
 }
 
-// Keep old function for anything else in your app that still imports fetchMyVideos.
 export async function fetchMyVideos(): Promise<VideoRow[]> {
   const out: VideoRow[] = [];
   let cursor: VideoPageCursor = null;

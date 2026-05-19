@@ -1,7 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react';
 
 import { getThumbnailViewUrl } from '../../../lib/backend';
+import '../../../lib/library/sportLibraryBitsInit';
+import { buildSportLibraryBits } from '../../../lib/library/sportLibraryStyleRegistry';
 import {
   fetchMyVideosPage,
   type VideoPageCursor,
@@ -32,7 +41,10 @@ export type LibraryRowLike = {
   oppScore?: number | null;
 
   highlightGold?: boolean;
-  edgeColor?: string;
+  edgeColor?: string | null;
+
+  hittingLabel?: string | null;
+  pitchingLabel?: string | null;
 
   libraryStyle?: LibraryStyle | null;
 
@@ -45,10 +57,7 @@ export type LibraryRowLike = {
 };
 
 const DS_KEY = 'library:dataSource';
-
-// Test with 7. Production: 20.
 const CLOUD_PAGE_SIZE = 20;
-
 const THUMB_CACHE_MS = 45 * 60 * 1000;
 
 type ThumbCacheEntry = {
@@ -94,6 +103,16 @@ function computeEdgeColorFromWL(o: 'W' | 'L' | '') {
   if (o === 'W') return '#22c55e';
   if (o === 'L') return '#ef4444';
   return 'rgba(255,255,255,0.18)';
+}
+
+function getCloudSidecar(v: any) {
+  return (
+    v?.sidecar ??
+    v?.sidecarJson ??
+    v?.clipSidecar ??
+    v?.metadata?.sidecar ??
+    null
+  );
 }
 
 function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
@@ -142,10 +161,29 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
 
   const libStyle = ((v as any).libraryStyle ?? null) as LibraryStyle | null;
 
+  const sidecar = getCloudSidecar(v as any);
+  const sportBits = buildSportLibraryBits(sportStyle, sidecar);
+
   const edgeColor =
+    (safeStr(sportBits.edgeColor, '') || null) ??
     (safeStr(libStyle?.edgeColor, '') || null) ??
     (safeStr((v as any).edgeColor, '') || null) ??
     computeEdgeColorFromWL(outcomeWL);
+
+  const highlightGold =
+    typeof sportBits.highlightGold === 'boolean'
+      ? sportBits.highlightGold
+      : !!(v as any).highlightGold;
+
+      const hittingLabel =
+      (safeStr((v as any).hittingLabel, '') || null) ??
+      sportBits.hittingLabel ??
+      null;
+    
+    const pitchingLabel =
+      (safeStr((v as any).pitchingLabel, '') || null) ??
+      sportBits.pitchingLabel ??
+      null;
 
   return {
     uri: `cloud:${shareId}`,
@@ -167,9 +205,23 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
         ? (v as any).homeIsAthlete
         : undefined,
 
-    highlightGold: !!(v as any).highlightGold,
+    highlightGold,
     edgeColor,
-    libraryStyle: libStyle,
+
+    libraryStyle: {
+      edgeColor,
+      badgeText: sportBits.badgeText ?? libStyle?.badgeText ?? null,
+      badgeColor:
+        sportBits.badgeColor ??
+        sportBits.edgeColor ??
+        libStyle?.badgeColor ??
+        edgeColor ??
+        null,
+      highlight: libStyle?.highlight ?? null,
+    },
+
+    hittingLabel,
+    pitchingLabel,
 
     videoId: videoId || undefined,
     shareId: shareId || null,

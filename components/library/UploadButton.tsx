@@ -671,6 +671,9 @@ export function UploadButton(props: Props) {
 
                   libraryStyle,
 
+                  hittingLabel: sportBits.hittingLabel ?? null,
+                  pitchingLabel: sportBits.pitchingLabel ?? null,
+
                   edgeColor: finalEdgeColor,
                   highlightGold: finalHighlightGold,
                 };
