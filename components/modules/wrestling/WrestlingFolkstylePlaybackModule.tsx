@@ -208,8 +208,8 @@ export default function WrestlingFolkstylePlaybackModule({
     else out = 'T';
 
     resultLabel = `${out} ${a}–${b}`;
-    if (out === 'W') resultColor = athleteColor;
-    else if (out === 'L') resultColor = opponentColor;
+    if (out === 'W') resultColor = GREEN;
+else if (out === 'L') resultColor = RED;
   }
 
   // =========================

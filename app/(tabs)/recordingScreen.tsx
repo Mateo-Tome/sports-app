@@ -296,12 +296,14 @@ export default function RecordingScreen() {
     
         if (!picked) return;
     
-        Alert.alert(
-          'Video selected',
-          `Athlete: ${athlete}\n\nNext step: choose sport/style and save this video into QuickClip.`
-        );
-    
-        console.log('[Import video picked]', picked);
+        router.push({
+          pathname: '/screens/importvideosetup',
+          params: {
+            videoUri: picked.uri,
+            fileName: picked.fileName ?? 'Imported video',
+            athlete,
+          },
+        });
       } catch (e: any) {
         Alert.alert('Import failed', String(e?.message ?? e));
       }

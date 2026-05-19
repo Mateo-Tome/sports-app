@@ -89,7 +89,7 @@ export default function WrestlingGrecoPlaybackModule({
     const b = athleteActor === 'home' ? finalScore.opponent : finalScore.home;
 
     const out: 'W' | 'L' | 'T' = a > b ? 'W' : a < b ? 'L' : 'T';
-    const c = out === 'W' ? athleteColor : out === 'L' ? opponentColor : 'rgba(148,163,184,0.95)';
+    const c = out === 'W' ? '#16a34a' : out === 'L' ? '#dc2626' : 'rgba(148,163,184,0.95)';
 
     return { text: `${out} ${a}–${b}`, color: c };
   }, [finalScore, athleteActor, athleteColor, opponentColor]);
