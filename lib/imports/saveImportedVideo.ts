@@ -10,12 +10,21 @@ type SaveImportedVideoInput = {
   sport: string;
   style: string;
   fileName?: string | null;
+
+  // Swimming-specific optional metadata
+  stroke?: string | null;
+  distance?: string | null;
+  raceLabel?: string | null;
 };
 
 export async function saveImportedVideo(input: SaveImportedVideoInput) {
   const athlete = input.athlete.trim() || 'Unassigned';
   const sport = input.sport.trim() || 'unknown';
   const style = input.style.trim() || 'default';
+
+  const stroke = input.stroke?.trim() || null;
+  const distance = input.distance?.trim() || null;
+  const raceLabel = input.raceLabel?.trim() || null;
 
   const sportKey = `${sport}:${style}`;
 
@@ -33,23 +42,37 @@ export async function saveImportedVideo(input: SaveImportedVideoInput) {
     athlete,
     sport,
     style,
+
+    // Swimming import metadata
+    stroke,
+    distance,
+    raceLabel,
+
     createdAt: Date.now(),
     imported: true,
     importedFileName: input.fileName ?? null,
+
     events: [],
     finalScore: { home: 0, opponent: 0 },
     homeIsAthlete: true,
     highlights: [],
     processedClips: [],
+
     orientationOverride: 0,
     recordingOrientation: 'unknown',
     recordingWindowOrientation: 'unknown',
     recordingPlatform: Platform.OS,
+
     recordingMeta: {
       appSidecarVersion: 3,
       importedVideo: true,
       cameraMountedOnlyAfterLandscape: false,
       playbackAutoRotationApplied: false,
+
+      // Helpful for debugging imported swim clips
+      importedStroke: stroke,
+      importedDistance: distance,
+      importedRaceLabel: raceLabel,
     },
   };
 

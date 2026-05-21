@@ -17,22 +17,44 @@ type SidecarMeta = {
   style?: string;
   createdAt?: number;
   orientationOverride?: OrientationOverride;
+
+  raceLabel?: string | null;
+  stroke?: string | null;
+  distance?: string | null;
 };
 
 type SidecarWithOrientation = Sidecar & {
   orientationOverride?: OrientationOverride;
+
+  raceLabel?: string | null;
+  stroke?: string | null;
+  distance?: string | null;
 };
 
+function cleanString(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  return s.length ? s : null;
+}
+
 function accumulate(evts: EventRow[]) {
-  let h = 0,
-    o = 0;
+  let h = 0;
+  let o = 0;
+
   return evts.map((e) => {
     const pts = typeof e.points === 'number' ? e.points : 0;
+
     if (pts > 0) {
       if (e.actor === 'home') h += pts;
       else if (e.actor === 'opponent') o += pts;
     }
-    return { ...e, scoreAfter: e.scoreAfter ?? { home: h, opponent: o } };
+
+    return {
+      ...e,
+      scoreAfter: e.scoreAfter ?? {
+        home: h,
+        opponent: o,
+      },
+    };
   });
 }
 
@@ -40,34 +62,25 @@ function normalizeOrientationOverride(value: unknown): OrientationOverride {
   return value === 90 || value === 180 || value === 270 ? value : 0;
 }
 
-/**
- * Future-proof sport/style inference from video path.
- *
- * We look at the parent directory name of the video file and interpret it as:
- *   "<sport><sep><style>"
- *
- * Supported separators: "-", "_", ":"
- * We split on the *last* separator so sport names can contain separators too:
- *   "table-tennis-default" => sport="table-tennis", style="default"
- *   "wrestling:freestyle"  => sport="wrestling", style="freestyle"
- *   "soccer_default"       => sport="soccer", style="default"
- *
- * If there is no separator: sport="<folder>", style="default"
- */
-function parseSportStyleFromVideoPath(videoPath: string): { sport?: string; style?: string } {
+function parseSportStyleFromVideoPath(videoPath: string): {
+  sport?: string;
+  style?: string;
+} {
   const parts = String(videoPath).split('/').filter(Boolean);
   const folder = parts.length >= 2 ? parts[parts.length - 2] : '';
   const raw = String(folder || '').trim();
+
   if (!raw) return {};
 
   const name = raw.toLowerCase();
-
   const seps = ['-', '_', ':'] as const;
+
   let bestSep: (typeof seps)[number] | null = null;
   let bestIdx = -1;
 
   for (const sep of seps) {
     const idx = name.lastIndexOf(sep);
+
     if (idx > 0 && idx < name.length - 1 && idx > bestIdx) {
       bestIdx = idx;
       bestSep = sep;
@@ -105,7 +118,10 @@ async function resolveSidecarPath(videoPath: string): Promise<string> {
   try {
     // @ts-ignore
     const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
-    const candidate = files.find((f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`);
+    const candidate = files.find(
+      (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`,
+    );
+
     if (candidate) return dir + candidate;
   } catch {}
 
@@ -116,6 +132,7 @@ async function tryReadSidecarAt(path: string): Promise<SidecarWithOrientation | 
   try {
     const info = await FileSystem.getInfoAsync(path);
     if (!(info as any)?.exists) return null;
+
     const txt = await FileSystem.readAsStringAsync(path);
     return JSON.parse(txt || '{}') as SidecarWithOrientation;
   } catch {
@@ -126,29 +143,46 @@ async function tryReadSidecarAt(path: string): Promise<SidecarWithOrientation | 
 function ensureEventIds(input: any[]): EventRow[] {
   return (input || []).map((e: any) => {
     const existing = e?._id ?? e?.id;
+
     const _id =
       typeof existing === 'string' && existing.trim().length > 0
         ? existing.trim()
         : Math.random().toString(36).slice(2, 9);
 
-    return { ...(e as any), _id } as EventRow;
+    return {
+      ...(e as any),
+      _id,
+    } as EventRow;
   });
 }
 
-export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
+export function useLocalSidecar(args: {
+  videoPath: string;
+  shareId?: string;
+}) {
   const { videoPath, shareId } = args;
 
   const [events, setEvents] = useState<EventRow[]>([]);
-  const [finalScore, setFinalScore] = useState<{ home: number; opponent: number } | undefined>(
-    undefined,
-  );
+
+  const [finalScore, setFinalScore] = useState<
+    { home: number; opponent: number } | undefined
+  >(undefined);
+
   const [debugMsg, setDebugMsg] = useState('');
   const [athleteName, setAthleteName] = useState('Athlete');
+
   const [sport, setSport] = useState<string | undefined>(undefined);
   const [style, setStyle] = useState<string | undefined>(undefined);
+
+  const [raceLabel, setRaceLabel] = useState<string | null>(null);
+  const [stroke, setStroke] = useState<string | null>(null);
+  const [distance, setDistance] = useState<string | null>(null);
+
   const [homeIsAthlete, setHomeIsAthlete] = useState(true);
   const [homeColorIsGreen, setHomeColorIsGreen] = useState(true);
-  const [orientationOverride, setOrientationOverride] = useState<OrientationOverride>(0);
+
+  const [orientationOverride, setOrientationOverride] =
+    useState<OrientationOverride>(0);
 
   const sidecarPathRef = useRef<string | null>(null);
   const sidecarMeta = useRef<SidecarMeta>({});
@@ -163,10 +197,12 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
 
       const ordered = [...nextEvents].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
+
       const o = deriveOutcome(withScores, homeIsAthlete);
       setFinalScore(o.finalScore);
 
       const pathGuess = videoPath ? parseSportStyleFromVideoPath(videoPath) : {};
+
       const finalSport =
         (sport ?? '').trim() ||
         (sidecarMeta.current.sport ?? '').trim() ||
@@ -179,6 +215,15 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         (pathGuess.style ?? '').trim() ||
         'default';
 
+      const finalRaceLabel =
+        sidecarMeta.current.raceLabel ?? raceLabel ?? null;
+
+      const finalStroke =
+        sidecarMeta.current.stroke ?? stroke ?? null;
+
+      const finalDistance =
+        sidecarMeta.current.distance ?? distance ?? null;
+
       const finalOrientationOverride = normalizeOrientationOverride(
         overrideArg ??
           sidecarMeta.current.orientationOverride ??
@@ -189,34 +234,65 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         athlete: athleteName,
         sport: finalSport,
         style: finalStyle,
+
+        raceLabel: finalRaceLabel,
+        stroke: finalStroke,
+        distance: finalDistance,
+
         createdAt: sidecarMeta.current.createdAt ?? Date.now(),
+
         events: withScores,
         finalScore: o.finalScore,
+
         homeIsAthlete,
         homeColorIsGreen,
+
         appVersion: 1,
+
         outcome: o.outcome,
         winner: o.winner,
         endedBy: o.endedBy,
         athletePinned: o.athletePinned,
         athleteWasPinned: o.athleteWasPinned,
+
         modifiedAt: Date.now(),
         orientationOverride: finalOrientationOverride,
       };
 
       const tmp = `${path}.tmp`;
-      await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload));
+      await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload, null, 2));
 
       try {
-        await FileSystem.deleteAsync(path, { idempotent: true });
+        await FileSystem.deleteAsync(path, {
+          idempotent: true,
+        });
       } catch {}
-      await FileSystem.moveAsync({ from: tmp, to: path });
 
-      sidecarMeta.current.orientationOverride = finalOrientationOverride;
+      await FileSystem.moveAsync({
+        from: tmp,
+        to: path,
+      });
+
+      sidecarMeta.current = {
+        ...sidecarMeta.current,
+        sport: finalSport,
+        style: finalStyle,
+        raceLabel: finalRaceLabel,
+        stroke: finalStroke,
+        distance: finalDistance,
+        orientationOverride: finalOrientationOverride,
+      };
+
+      setRaceLabel(finalRaceLabel);
+      setStroke(finalStroke);
+      setDistance(finalDistance);
       setOrientationOverride(finalOrientationOverride);
 
       try {
-        DeviceEventEmitter.emit('sidecarUpdated', { uri: videoPath, sidecar: payload });
+        DeviceEventEmitter.emit('sidecarUpdated', {
+          uri: videoPath,
+          sidecar: payload,
+        });
       } catch {}
     } catch {}
   };
@@ -230,8 +306,10 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
     nextEvents?: EventRow[],
   ) => {
     const normalized = normalizeOrientationOverride(nextOverride);
+
     sidecarMeta.current.orientationOverride = normalized;
     setOrientationOverride(normalized);
+
     await writeSidecar(nextEvents ?? events, normalized);
   };
 
@@ -241,21 +319,35 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
         setDebugMsg('');
         setEvents([]);
         setFinalScore(undefined);
+
         sidecarPathRef.current = null;
         sidecarMeta.current = {};
+
         setSport(undefined);
         setStyle(undefined);
+
+        setRaceLabel(null);
+        setStroke(null);
+        setDistance(null);
+
         setHomeIsAthlete(true);
         setHomeColorIsGreen(true);
         setAthleteName('Athlete');
         setOrientationOverride(0);
+
         return;
       }
 
       setDebugMsg('No video path provided.');
       setEvents([]);
       setFinalScore(undefined);
+
+      setRaceLabel(null);
+      setStroke(null);
+      setDistance(null);
+
       setOrientationOverride(0);
+
       return;
     }
 
@@ -266,31 +358,45 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
       sidecarPathRef.current = resolvedPath;
 
       const parsed = await tryReadSidecarAt(resolvedPath);
-
       const fromPath = parseSportStyleFromVideoPath(videoPath);
 
       if (!parsed) {
         setEvents([]);
         setFinalScore(undefined);
+
         setDebugMsg(`No sidecar found. Will create on save.\n${resolvedPath}`);
+
         sidecarMeta.current = {
           sport: fromPath.sport,
           style: fromPath.style,
           createdAt: Date.now(),
           orientationOverride: 0,
+          raceLabel: null,
+          stroke: null,
+          distance: null,
         };
+
         setSport(fromPath.sport);
         setStyle(fromPath.style);
+
+        setRaceLabel(null);
+        setStroke(null);
+        setDistance(null);
+
         setHomeIsAthlete(true);
         setHomeColorIsGreen(true);
         setAthleteName('Athlete');
         setOrientationOverride(0);
+
         return;
       }
 
       const hiA = parsed.homeIsAthlete !== false;
       const hcG = parsed.homeColorIsGreen !== false;
-      const parsedOrientationOverride = normalizeOrientationOverride(parsed.orientationOverride);
+
+      const parsedOrientationOverride = normalizeOrientationOverride(
+        parsed.orientationOverride,
+      );
 
       setHomeIsAthlete(hiA);
       setHomeColorIsGreen(hcG);
@@ -298,18 +404,33 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
 
       setAthleteName(parsed.athlete?.trim() || 'Athlete');
 
-      const parsedSport = String(parsed.sport ?? '').trim() || fromPath.sport || 'unknown';
-      const parsedStyle = String(parsed.style ?? '').trim() || fromPath.style || 'default';
+      const parsedSport =
+        String(parsed.sport ?? '').trim() || fromPath.sport || 'unknown';
+
+      const parsedStyle =
+        String(parsed.style ?? '').trim() || fromPath.style || 'default';
+
+      const parsedRaceLabel = cleanString((parsed as any).raceLabel);
+      const parsedStroke = cleanString((parsed as any).stroke);
+      const parsedDistance = cleanString((parsed as any).distance);
 
       sidecarMeta.current = {
         sport: parsedSport,
         style: parsedStyle,
         createdAt: parsed.createdAt ?? Date.now(),
         orientationOverride: parsedOrientationOverride,
+
+        raceLabel: parsedRaceLabel,
+        stroke: parsedStroke,
+        distance: parsedDistance,
       };
 
       setSport(parsedSport);
       setStyle(parsedStyle);
+
+      setRaceLabel(parsedRaceLabel);
+      setStroke(parsedStroke);
+      setDistance(parsedDistance);
 
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
       const normalized = normalizeEvents(rawEvts, hiA);
@@ -318,11 +439,18 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
 
       const ordered = [...withIds].sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
+
       setEvents(withScores);
 
       const fs =
         parsed.finalScore ??
-        (withScores.length ? withScores[withScores.length - 1].scoreAfter : { home: 0, opponent: 0 });
+        (withScores.length
+          ? withScores[withScores.length - 1].scoreAfter
+          : {
+              home: 0,
+              opponent: 0,
+            });
+
       setFinalScore(fs);
 
       setDebugMsg(withScores.length ? '' : 'Sidecar loaded but no events.');
@@ -332,21 +460,34 @@ export function useLocalSidecar(args: { videoPath: string; shareId?: string }) {
   return {
     events,
     setEvents,
+
     finalScore,
     setFinalScore,
+
     debugMsg,
+
     athleteName,
     setAthleteName,
+
     sport,
     style,
+
+    raceLabel,
+    stroke,
+    distance,
+
     homeIsAthlete,
     setHomeIsAthlete,
+
     homeColorIsGreen,
     setHomeColorIsGreen,
+
     orientationOverride,
     setOrientationOverride,
+
     saveSidecar,
     persistOrientationOverride,
+
     accumulate,
   };
 }

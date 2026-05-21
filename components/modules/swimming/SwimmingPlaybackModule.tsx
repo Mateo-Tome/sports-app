@@ -22,14 +22,44 @@ function formatRaceTime(sec: number) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 }
 
-export default function SwimmingPlaybackModule({
-  overlayOn,
-  insets,
-  events,
-  editMode,
-  editSubmode,
-  onOverlayEvent,
-}: PlaybackModuleProps) {
+function cleanRaceLabel(v: any) {
+  const s = String(v ?? '').trim();
+  if (!s || s.toLowerCase() === 'swimming race') return 'Swimming Race';
+  return s;
+}
+
+function latestEventTime(events: any[], kind: string): number | null {
+  const target = kind.toLowerCase();
+
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    const k = String(e?.kind ?? e?.key ?? '').toLowerCase();
+    const t = Number(e?.t);
+
+    if (k === target && Number.isFinite(t)) return t;
+  }
+
+  return null;
+}
+
+export default function SwimmingPlaybackModule(props: PlaybackModuleProps & {
+  raceLabel?: string | null;
+  stroke?: string | null;
+  distance?: string | null;
+}) {
+  const {
+    overlayOn,
+    insets,
+    events,
+    editMode,
+    editSubmode,
+    onOverlayEvent,
+    now,
+    raceLabel: propRaceLabel,
+    stroke: propStroke,
+    distance: propDistance,
+  } = props as any;
+
   const dims = useWindowDimensions();
 
   const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
@@ -37,7 +67,17 @@ export default function SwimmingPlaybackModule({
   const summary = useMemo(() => {
     const list = Array.isArray(events) ? events : [];
 
-    let raceLabel = 'Swimming Race';
+    let raceLabel = cleanRaceLabel(propRaceLabel);
+
+    if (raceLabel === 'Swimming Race') {
+      const dist = String(propDistance ?? '').trim();
+      const stroke = String(propStroke ?? '').trim();
+
+      if (dist && stroke) raceLabel = `${dist} ${stroke}`;
+      else if (dist) raceLabel = dist;
+      else if (stroke) raceLabel = stroke;
+    }
+
     let finalTimeSec: number | null = null;
     let turnCount = 0;
     let strokeCount = 0;
@@ -46,16 +86,18 @@ export default function SwimmingPlaybackModule({
       const kind = String(e?.kind ?? e?.key ?? '').toLowerCase();
       const meta = getMeta(e);
 
-      if (meta.raceLabel) raceLabel = String(meta.raceLabel);
+      if (meta.raceLabel) raceLabel = cleanRaceLabel(meta.raceLabel);
 
       if (kind === 'turn_split') {
         const n = Number(meta.turnNumber);
         if (Number.isFinite(n)) turnCount = Math.max(turnCount, n);
+        else turnCount += 1;
       }
 
       if (kind === 'stroke_count') {
         const n = Number(meta.strokeCount);
         if (Number.isFinite(n)) strokeCount = Math.max(strokeCount, n);
+        else strokeCount += 1;
       }
 
       if (kind === 'finish_race') {
@@ -72,11 +114,12 @@ export default function SwimmingPlaybackModule({
 
     return {
       raceLabel,
+      finalTimeSec,
       finalTimeText: finalTimeSec === null ? 'No finish yet' : formatRaceTime(finalTimeSec),
       turnCount,
       strokeCount,
     };
-  }, [events]);
+  }, [events, propDistance, propRaceLabel, propStroke]);
 
   const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
     onOverlayEvent?.({
@@ -87,6 +130,8 @@ export default function SwimmingPlaybackModule({
         sport: 'swimming',
         style: 'race',
         raceLabel: summary.raceLabel,
+        stroke: propStroke ?? null,
+        distance: propDistance ?? null,
         pillLabel: label,
         pillColor: BLUE,
         color: BLUE,
@@ -146,6 +191,38 @@ export default function SwimmingPlaybackModule({
     );
   }
 
+  const list = Array.isArray(events) ? events : [];
+  const currentTime = Number.isFinite(Number(now)) ? Number(now) : 0;
+
+  const startTime = latestEventTime(list, 'start_race');
+  const lastTurnTime = latestEventTime(list, 'turn_split');
+  const splitBaseTime = lastTurnTime ?? startTime ?? currentTime;
+
+  const nextTurn =
+    Math.max(
+      0,
+      ...list
+        .filter((e) => String(e?.kind ?? e?.key ?? '').toLowerCase() === 'turn_split')
+        .map((e) => Number(getMeta(e).turnNumber) || 0),
+    ) + 1;
+
+  const nextStroke =
+    Math.max(
+      0,
+      ...list
+        .filter((e) => String(e?.kind ?? e?.key ?? '').toLowerCase() === 'stroke_count')
+        .map((e) => Number(getMeta(e).strokeCount) || 0),
+    ) + 1;
+
+  const finishTimeSec =
+    startTime != null ? Math.max(0, currentTime - startTime) : 0;
+
+  const turnSplitSec =
+    Math.max(0, currentTime - splitBaseTime);
+
+  const raceElapsedSec =
+    startTime != null ? Math.max(0, currentTime - startTime) : 0;
+
   const screenW = dims.width;
   const screenH = dims.height;
 
@@ -192,14 +269,6 @@ export default function SwimmingPlaybackModule({
     </Pressable>
   );
 
-  const nextTurn =
-    Math.max(
-      0,
-      ...events
-        .filter((e) => String(e?.kind ?? '').toLowerCase() === 'turn_split')
-        .map((e) => Number(getMeta(e).turnNumber) || 0),
-    ) + 1;
-
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}>
       <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: 0, bottom: 0, justifyContent: 'center', gap: GAP }}>
@@ -210,6 +279,7 @@ export default function SwimmingPlaybackModule({
           onPress={() =>
             fire('start_race', 'Start', {
               raceElapsedSec: 0,
+              startedAtVideoSec: currentTime,
               beltLane: 'bottom',
             })
           }
@@ -217,10 +287,15 @@ export default function SwimmingPlaybackModule({
 
         <SwimEditButton
           label="FINISH"
-          sub="race"
+          sub={startTime == null ? 'needs start' : formatRaceTime(finishTimeSec)}
           bg="rgba(239,68,68,0.96)"
           onPress={() =>
             fire('finish_race', 'Finish', {
+              finalTimeSec: finishTimeSec,
+              turnCount: summary.turnCount,
+              strokeCount: summary.strokeCount,
+              startedAtVideoSec: startTime,
+              finishedAtVideoSec: currentTime,
               beltLane: 'bottom',
             })
           }
@@ -235,6 +310,8 @@ export default function SwimmingPlaybackModule({
           onPress={() =>
             fire('turn_split', `Turn ${nextTurn}`, {
               turnNumber: nextTurn,
+              splitDurationSec: turnSplitSec,
+              raceElapsedSec,
               beltLane: 'bottom',
             })
           }
@@ -242,10 +319,12 @@ export default function SwimmingPlaybackModule({
 
         <SwimEditButton
           label="STROKE"
-          sub="data only"
+          sub={`#${nextStroke}`}
           bg="rgba(0,0,0,0.84)"
           onPress={() =>
             fire('stroke_count', 'Stroke', {
+              strokeCount: nextStroke,
+              raceElapsedSec,
               hideFromBelt: true,
             })
           }

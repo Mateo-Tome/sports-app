@@ -51,6 +51,11 @@ const JOG_RATE = 0.15;
 
 const isWeb = Platform.OS === 'web';
 
+function cleanOptionalString(value: unknown): string | null {
+  const s = String(value ?? '').trim();
+  return s.length ? s : null;
+}
+
 export default function PlaybackScreen() {
   const router = useRouter();
 
@@ -69,10 +74,22 @@ export default function PlaybackScreen() {
     videoPath?: string;
     shareId?: string;
     athlete?: string;
+
+    // Swimming import metadata. These are passed from ImportVideoSetupScreen
+    // and also loaded from the local sidecar when available.
+    raceLabel?: string;
+    stroke?: string;
+    distance?: string;
   };
 
-  const { videoPath: rawVideoPath, shareId: rawShareId, athlete: athleteParam } =
-    useLocalSearchParams<PlaybackParams>();
+  const {
+    videoPath: rawVideoPath,
+    shareId: rawShareId,
+    athlete: athleteParam,
+    raceLabel: raceLabelParam,
+    stroke: strokeParam,
+    distance: distanceParam,
+  } = useLocalSearchParams<PlaybackParams>();
 
   const shareId =
     typeof rawShareId === 'string'
@@ -93,6 +110,27 @@ export default function PlaybackScreen() {
       ? athleteParam
       : Array.isArray(athleteParam)
         ? athleteParam[0]
+        : '';
+
+  const raceLabelParamStr =
+    typeof raceLabelParam === 'string'
+      ? raceLabelParam
+      : Array.isArray(raceLabelParam)
+        ? raceLabelParam[0]
+        : '';
+
+  const strokeParamStr =
+    typeof strokeParam === 'string'
+      ? strokeParam
+      : Array.isArray(strokeParam)
+        ? strokeParam[0]
+        : '';
+
+  const distanceParamStr =
+    typeof distanceParam === 'string'
+      ? distanceParam
+      : Array.isArray(distanceParam)
+        ? distanceParam[0]
         : '';
 
   const hasSource = !!videoPath || !!shareId;
@@ -287,6 +325,9 @@ export default function PlaybackScreen() {
     athleteName,
     sport,
     style,
+    raceLabel,
+    stroke,
+    distance,
     homeIsAthlete,
     homeColorIsGreen,
     orientationOverride,
@@ -308,6 +349,18 @@ export default function PlaybackScreen() {
   const effectiveSport = shareId ? (shareMeta.sport ?? sport) : sport;
   const effectiveStyle = shareId ? (shareMeta.style ?? style) : style;
   const effectiveAthleteName = shareId ? (shareMeta.athleteName ?? athleteName) : athleteName;
+
+  const effectiveRaceLabel =
+    cleanOptionalString(shareId ? ((shareMeta as any).raceLabel ?? raceLabel) : raceLabel) ??
+    cleanOptionalString(raceLabelParamStr);
+
+  const effectiveStroke =
+    cleanOptionalString(shareId ? ((shareMeta as any).stroke ?? stroke) : stroke) ??
+    cleanOptionalString(strokeParamStr);
+
+  const effectiveDistance =
+    cleanOptionalString(shareId ? ((shareMeta as any).distance ?? distance) : distance) ??
+    cleanOptionalString(distanceParamStr);
 
   const effectiveHomeIsAthlete =
     shareId && typeof shareMeta.homeIsAthlete === 'boolean' ? shareMeta.homeIsAthlete : homeIsAthlete;
@@ -397,9 +450,10 @@ export default function PlaybackScreen() {
     async (direction: -1 | 1) => {
       const fallbackNow = typeof now === 'number' && isFinite(now) ? now : 0;
       const base =
-  frameStepping && desiredTimeRef.current > 0
-    ? desiredTimeRef.current
-    : fallbackNow;
+        frameStepping && desiredTimeRef.current > 0
+          ? desiredTimeRef.current
+          : fallbackNow;
+
       const next = clampToDuration(base + direction * FRAME_NUDGE_SEC);
 
       setFrameStepping(true);
@@ -438,7 +492,6 @@ export default function PlaybackScreen() {
     showChrome();
 
     try {
-
       if (useAvReviewPlayer) {
         await avReviewRef.current?.playPause();
         return;
@@ -525,12 +578,16 @@ export default function PlaybackScreen() {
 
   const liveScore = useMemo(() => {
     if (!events.length) return { home: 0, opponent: 0 };
+
     let s = { home: 0, opponent: 0 };
+
     for (let i = 0; i < events.length; i++) {
       const e = events[i];
+
       if (e.t <= (now || 0)) s = e.scoreAfter ?? s;
       else break;
     }
+
     return s;
   }, [events, now]);
 
@@ -587,9 +644,18 @@ export default function PlaybackScreen() {
     const tNow = editMode ? tEdit : tPlayer;
 
     const addAtTime = (t: number) => {
-      const newEvt: EventRow = { _id: genId(), t, kind, points, actor, meta: metaForRow };
+      const newEvt: EventRow = {
+        _id: genId(),
+        t,
+        kind,
+        points,
+        actor,
+        meta: metaForRow,
+      };
+
       const sorted = [...events, newEvt].sort((a, b) => a.t - b.t);
       const next: EventRow[] = accumulateEvents(sorted);
+
       setEvents(next);
       saveSidecar(next);
     };
@@ -600,6 +666,7 @@ export default function PlaybackScreen() {
 
       const nextBase: EventRow[] = events.map((e) => {
         if ((e as any)._id !== targetId) return e;
+
         return {
           ...(e as any),
           _id: (e as any)._id,
@@ -613,6 +680,7 @@ export default function PlaybackScreen() {
       });
 
       const next: EventRow[] = accumulateEvents(nextBase.sort((a, b) => a.t - b.t));
+
       setEvents(next);
       saveSidecar(next);
     };
@@ -633,7 +701,9 @@ export default function PlaybackScreen() {
   };
 
   const { Module: ModuleCmp } =
-    PlaybackModuleRegistry.getPlaybackModule?.(effectiveSport, effectiveStyle) ?? { Module: null };
+    PlaybackModuleRegistry.getPlaybackModule?.(effectiveSport, effectiveStyle) ?? {
+      Module: null,
+    };
 
   const colorForPill = useCallback(
     (e: EventRow) => {
@@ -657,14 +727,19 @@ export default function PlaybackScreen() {
       const m = { ...inner, ...meta };
 
       const isHex = (v: any) => typeof v === 'string' && /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim());
+
       const normalizeNamed = (raw: any): 'red' | 'blue' | 'green' | null => {
         if (!raw) return null;
+
         const v = String(raw).trim().toLowerCase();
+
         if (v === 'red') return 'red';
         if (v === 'blue') return 'blue';
         if (v === 'green') return 'green';
+
         return null;
       };
+
       const mapNamedToHex = (name: 'red' | 'blue' | 'green') => {
         if (name === 'green') return GREEN;
         if (name === 'red') return RED;
@@ -684,6 +759,7 @@ export default function PlaybackScreen() {
       if (isHex(m.athleteColor) || isHex(m.opponentColor)) {
         const aHex = isHex(m.athleteColor) ? m.athleteColor : null;
         const oHex = isHex(m.opponentColor) ? m.opponentColor : null;
+
         if (isAthleteActor && aHex) return aHex;
         if (!isAthleteActor && oHex) return oHex;
         if (aHex) return aHex;
@@ -692,9 +768,11 @@ export default function PlaybackScreen() {
 
       const mkName = normalizeNamed(m.myKidColor);
       const okName = normalizeNamed(m.opponentColor);
+
       if (mkName || okName) {
         const athleteColor = mkName ? mapNamedToHex(mkName) : athleteColorLegacy;
         const opponentColor = okName ? mapNamedToHex(okName) : opponentColorLegacy;
+
         return isAthleteActor ? athleteColor : opponentColor;
       }
 
@@ -703,12 +781,16 @@ export default function PlaybackScreen() {
 
       if (pts > 0) return isAthleteActor ? athleteColorLegacy : opponentColorLegacy;
       if (PENALTYISH.has(kind)) return 'rgba(148,163,184,0.9)';
+
       return 'rgba(148,163,184,0.9)';
     },
     [effectiveHomeIsAthlete, effectiveHomeColorIsGreen],
   );
 
-  const skipHudMaxWidth = Math.max(140, screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2));
+  const skipHudMaxWidth = Math.max(
+    140,
+    screenW - (insets.left + insets.right + SAFE_MARGIN * 2 + 24 * 2),
+  );
 
   const handlePlayPress = async () => {
     setFrameStepping(false);
@@ -725,6 +807,7 @@ export default function PlaybackScreen() {
       try {
         (player as any).currentTime = t;
       } catch {}
+
       seekInternal(t);
     }
 
@@ -1056,22 +1139,27 @@ export default function PlaybackScreen() {
               onCancel={() => setQuickEditFor(null)}
               onDelete={() => {
                 if (!quickEditFor) return;
+
                 const next = events.filter((e) => e._id !== quickEditFor._id);
                 const ordered = [...next].sort((a, b) => a.t - b.t);
                 const withScores = accumulateEvents(ordered);
+
                 setEvents(withScores);
                 saveSidecar(withScores);
                 setQuickEditFor(null);
               }}
               onReplace={() => {
                 if (!quickEditFor) return;
+
                 const id = quickEditFor._id;
                 const tKeep = quickEditFor.t;
 
                 setQuickEditFor(null);
+
                 if (!id) return;
 
                 exitFrameMode();
+
                 editAnchorTimeRef.current = clampToDuration(tKeep);
                 onSeek(editAnchorTimeRef.current);
 
@@ -1097,6 +1185,9 @@ export default function PlaybackScreen() {
             now={now}
             duration={dur}
             events={events}
+            raceLabel={effectiveRaceLabel}
+            stroke={effectiveStroke}
+            distance={effectiveDistance}
             homeIsAthlete={effectiveHomeIsAthlete}
             homeColorIsGreen={effectiveHomeColorIsGreen}
             overlayOn={overlayOn && !frameStepping}

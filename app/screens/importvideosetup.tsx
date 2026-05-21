@@ -23,6 +23,7 @@ export default function ImportVideoSetupScreen() {
 
   const selectedSport = SPORT_CONFIGS.find((s) => s.key === selectedSportKey);
   const sportNeedsMode = !!selectedSport?.modes?.length;
+  const isSwimming = selectedSportKey === 'swimming';
 
   const chooseSport = (sportKey: string) => {
     setSelectedSportKey(sportKey);
@@ -53,7 +54,12 @@ export default function ImportVideoSetupScreen() {
     }
 
     if (sportNeedsMode && !selectedMode) {
-      Alert.alert('Choose a mode', `Select the ${selectedSport.label} mode for this video.`);
+      Alert.alert(
+        isSwimming ? 'Choose a race' : 'Choose a mode',
+        isSwimming
+          ? 'Select the swimming race for this video.'
+          : `Select the ${selectedSport.label} mode for this video.`,
+      );
       return;
     }
 
@@ -69,6 +75,10 @@ export default function ImportVideoSetupScreen() {
         sport: sportKey,
         style: styleKey,
         fileName,
+
+        stroke: selectedMode?.stroke ?? null,
+        distance: selectedMode?.distance ?? null,
+        raceLabel: selectedMode?.raceLabel ?? selectedMode?.title ?? null,
       });
 
       Alert.alert('Imported', 'Video saved to QuickClip.', [
@@ -82,6 +92,10 @@ export default function ImportVideoSetupScreen() {
                 athlete,
                 sport: sportKey,
                 style: styleKey,
+
+                stroke: selectedMode?.stroke ?? '',
+                distance: selectedMode?.distance ?? '',
+                raceLabel: selectedMode?.raceLabel ?? selectedMode?.title ?? '',
               },
             });
           },
@@ -109,14 +123,28 @@ export default function ImportVideoSetupScreen() {
           Tell QuickClip what this video is so it can appear correctly in your library, playback, and stats.
         </Text>
 
-        <View style={{ marginTop: 18, padding: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' }}>
+        <View
+          style={{
+            marginTop: 18,
+            padding: 14,
+            borderRadius: 14,
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.14)',
+          }}
+        >
           <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '800' }}>
             ATHLETE
           </Text>
+
           <Text style={{ color: 'white', fontSize: 20, fontWeight: '900', marginTop: 4 }}>
             {athlete}
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.5)', marginTop: 8, fontSize: 12 }} numberOfLines={1}>
+
+          <Text
+            style={{ color: 'rgba(255,255,255,0.5)', marginTop: 8, fontSize: 12 }}
+            numberOfLines={1}
+          >
             {fileName}
           </Text>
         </View>
@@ -155,15 +183,18 @@ export default function ImportVideoSetupScreen() {
         {selectedSport?.modes?.length ? (
           <>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '900', marginTop: 10, marginBottom: 12 }}>
-              Choose {selectedSport.label} mode
+              {isSwimming ? 'Choose swimming race' : `Choose ${selectedSport.label} mode`}
             </Text>
 
             {selectedSport.modes.map((mode) => {
-              const active = selectedMode?.sport === mode.sport && selectedMode?.style === mode.style;
+              const active =
+                selectedMode?.sport === mode.sport &&
+                selectedMode?.style === mode.style &&
+                selectedMode?.title === mode.title;
 
               return (
                 <TouchableOpacity
-                  key={`${mode.sport}:${mode.style}`}
+                  key={`${mode.sport}:${mode.style}:${mode.title}`}
                   onPress={() => setSelectedMode(mode)}
                   activeOpacity={0.85}
                   style={{
@@ -180,6 +211,7 @@ export default function ImportVideoSetupScreen() {
                   <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>
                     {mode.title}
                   </Text>
+
                   {mode.subtitle ? (
                     <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 3, fontSize: 12 }}>
                       {mode.subtitle}
