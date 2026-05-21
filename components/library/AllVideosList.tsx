@@ -1,5 +1,8 @@
-// components/library/AllVideosList.tsx
 import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import {
+  groupRowsByDate,
+  type DateGroupedLibraryItem,
+} from '../../lib/library/groupRowsByDate';
 import type { LibraryRow } from './LibraryVideoRow';
 
 type Props = {
@@ -14,6 +17,108 @@ type Props = {
   hasMore?: boolean;
   loadingMore?: boolean;
 };
+
+function MonthHeader({ title }: { title: string }) {
+  return (
+    <View
+      style={{
+        paddingHorizontal: 16,
+        paddingTop: 26,
+        paddingBottom: 6,
+      }}
+    >
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.38)',
+          fontWeight: '900',
+          fontSize: 12,
+          letterSpacing: 2,
+          textTransform: 'uppercase',
+        }}
+      >
+        {title}
+      </Text>
+
+      <View
+        style={{
+          marginTop: 8,
+          height: 1,
+          backgroundColor: 'rgba(255,255,255,0.12)',
+        }}
+      />
+    </View>
+  );
+}
+
+function DayHeader({
+  title,
+  subtitle,
+  clipCount,
+}: {
+  title: string;
+  subtitle: string;
+  clipCount: number;
+}) {
+  return (
+    <View
+      style={{
+        marginHorizontal: 16,
+        marginTop: 12,
+        marginBottom: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+      }}
+    >
+      <View
+        style={{
+          width: 4,
+          height: 34,
+          borderRadius: 999,
+          backgroundColor:
+            title === 'TODAY'
+              ? 'rgba(220,38,38,0.95)'
+              : 'rgba(255,255,255,0.22)',
+          marginRight: 10,
+        }}
+      />
+
+      <View style={{ flex: 1 }}>
+        <Text
+          style={{
+            color: 'white',
+            fontWeight: '900',
+            fontSize: 16,
+            letterSpacing: 0.4,
+          }}
+        >
+          {title}
+        </Text>
+
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.45)',
+            fontWeight: '700',
+            fontSize: 12,
+            marginTop: 1,
+          }}
+        >
+          {subtitle}
+        </Text>
+      </View>
+
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.42)',
+          fontWeight: '900',
+          fontSize: 11,
+          letterSpacing: 0.8,
+        }}
+      >
+        {clipCount} {clipCount === 1 ? 'CLIP' : 'CLIPS'}
+      </Text>
+    </View>
+  );
+}
 
 export default function AllVideosList(props: Props) {
   const {
@@ -30,12 +135,29 @@ export default function AllVideosList(props: Props) {
   } = props;
 
   const canLoadMore = !!onEndReached && !!hasMore && !loadingMore;
+  const groupedRows = groupRowsByDate(rows);
 
   return (
     <FlatList
-      data={rows}
-      keyExtractor={(it) => it.uri}
-      renderItem={renderItem}
+      data={groupedRows}
+      keyExtractor={(it) => it.id}
+      renderItem={({ item }: { item: DateGroupedLibraryItem }) => {
+        if (item.type === 'month') {
+          return <MonthHeader title={item.title} />;
+        }
+
+        if (item.type === 'day') {
+          return (
+            <DayHeader
+              title={item.title}
+              subtitle={item.subtitle}
+              clipCount={item.clipCount}
+            />
+          );
+        }
+
+        return renderItem({ item: item.row });
+      }}
       contentContainerStyle={{ paddingBottom: tabBarHeight + 16 }}
       refreshControl={
         <RefreshControl
@@ -78,9 +200,9 @@ export default function AllVideosList(props: Props) {
           </View>
         ) : null
       }
-      initialNumToRender={10}
+      initialNumToRender={14}
       windowSize={7}
-      maxToRenderPerBatch={10}
+      maxToRenderPerBatch={12}
       updateCellsBatchingPeriod={50}
       removeClippedSubviews
       onViewableItemsChanged={onViewableItemsChanged}
