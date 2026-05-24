@@ -10,15 +10,15 @@ import {
   Alert,
   BackHandler,
   Image,
-  Pressable,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import AddExistingVideoButton from '../../components/recording/AddExistingVideoButton';
+import AthletePickerOverlay from '../../components/recording/AthletePickerOverlay';
 import pickVideoFromPhotos from '../../lib/imports/pickVideoFromPhotos';
 
 import { ensureAnonymous } from '../../lib/firebase';
@@ -28,17 +28,11 @@ const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Softball', 'Swimming', '
 type Athlete = {
   id: string;
   name: string;
-
-  // legacy/local possibilities
   photoUri?: string | null;
   photoLocalUri?: string | null;
   photoUrl?: string | null;
-
-  // ✅ fields Home persists + AthleteCard uses to cache remote into local file
   photoKey?: string | null;
   photoUpdatedAt?: number | null;
-
-  // ✅ derived at load-time (not persisted)
   cachedPhotoLocalUri?: string | null;
 };
 
@@ -53,22 +47,16 @@ function sportLabelToKey(sport: SportLabel) {
   switch (sport) {
     case 'Wrestling':
       return 'wrestling';
-
     case 'Baseball':
       return 'baseball';
-
     case 'Basketball':
       return 'basketball';
-
     case 'Volleyball':
       return 'volleyball';
-
     case 'BJJ':
       return 'bjj';
-
     case 'Softball':
       return 'softball';
-
     case 'Swimming':
       return 'swimming';
   }
@@ -78,22 +66,16 @@ function sportKeyToNiceLabel(key: string) {
   switch (key) {
     case 'wrestling':
       return 'Wrestling';
-
     case 'baseball':
       return 'Baseball';
-
     case 'softball':
       return 'Softball';
-
     case 'basketball':
       return 'Basketball';
-
     case 'volleyball':
       return 'Volleyball';
-
     case 'bjj':
       return 'BJJ';
-
     default:
       return 'your selected sport';
   }
@@ -120,8 +102,6 @@ const safeNum = (v: any): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-// MUST match AthleteCard cache logic:
-// FileSystem.documentDirectory + "athlete_photos/{athleteId}/profile_{photoUpdatedAt}.jpg"
 function cachePathForAthlete(athleteId: string, photoUpdatedAt?: number | null) {
   const ver = safeNum(photoUpdatedAt) ?? 0;
   return `${FileSystem.documentDirectory}athlete_photos/${athleteId}/profile_${ver || 'v0'}.jpg`;
@@ -141,10 +121,8 @@ export default function RecordingScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
 
-  // Keep initial for first render fallback only
   const initialAthlete = useMemo(
     () => paramToStr(params.athlete, 'Unassigned').trim() || 'Unassigned',
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -169,7 +147,6 @@ export default function RecordingScreen() {
     return unsub;
   }, []);
 
-  // ✅ Param always wins when present (fixes: Home → Record not switching athlete)
   const athleteParam = useMemo(() => {
     const v = paramToStr(params.athlete, '').trim();
     return v.length ? v : null;
@@ -177,11 +154,7 @@ export default function RecordingScreen() {
 
   useEffect(() => {
     if (!athleteParam) return;
-
-    // If navigation provides an athlete, we ALWAYS switch to it.
     setAthlete(athleteParam);
-
-    // Reset this so future navigations keep working even after manual changes.
     setControlledByParam(true);
   }, [athleteParam]);
 
@@ -198,26 +171,25 @@ export default function RecordingScreen() {
             .map((a: any) => ({
               id: String(a?.id ?? '').trim(),
               name: String(a?.name ?? '').trim(),
-
               photoUri: safeStr(a?.photoUri),
               photoLocalUri: safeStr(a?.photoLocalUri),
               photoUrl: safeStr(a?.photoUrl),
-
               photoKey: safeStr(a?.photoKey),
               photoUpdatedAt: safeNum(a?.photoUpdatedAt),
             }))
             .filter((a) => a.id && a.name)
         : [];
 
-      // 1) scrub broken local file:// photoLocalUri so we can fall back cleanly
       let changed = false;
       const scrubbed: Athlete[] = [];
 
       for (const a of safeList) {
         const uri = a.photoLocalUri;
+
         if (uri && uri.startsWith('file://')) {
           try {
             const info = await FileSystem.getInfoAsync(uri);
+
             if (!info.exists) {
               scrubbed.push({ ...a, photoLocalUri: null });
               changed = true;
@@ -229,6 +201,7 @@ export default function RecordingScreen() {
             continue;
           }
         }
+
         scrubbed.push(a);
       }
 
@@ -236,8 +209,8 @@ export default function RecordingScreen() {
         await AsyncStorage.setItem(key, JSON.stringify(scrubbed));
       }
 
-      // 2) offline-safe: if AthleteCard already cached a remote photo locally, use it here too
       const withCache: Athlete[] = [];
+
       for (const a of scrubbed) {
         let cachedPhotoLocalUri: string | null = null;
 
@@ -256,31 +229,24 @@ export default function RecordingScreen() {
     }
   }, []);
 
-  // Initial load
   useEffect(() => {
     loadAthletes();
   }, [loadAthletes]);
 
-  // Refresh whenever this tab/screen is focused (so it’s always current)
   useFocusEffect(
     useCallback(() => {
       loadAthletes();
     }, [loadAthletes]),
   );
 
-  // If picker opens, quick refresh too (keeps it feeling instant)
   useEffect(() => {
     if (!pickerOpen) return;
-    const id = setTimeout(() => loadAthletes(), 50);
-    return () => clearTimeout(id);
-  }, [pickerOpen, loadAthletes]);
 
-  useEffect(() => {
-    if (!pickerOpen) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       setPickerOpen(false);
       return true;
     });
+
     return () => sub.remove();
   }, [pickerOpen]);
 
@@ -290,26 +256,25 @@ export default function RecordingScreen() {
       params: { sport: sportKey, style: styleKey, athlete },
     });
 
-    const startImportVideo = async () => {
-      try {
-        const picked = await pickVideoFromPhotos();
-    
-        if (!picked) return;
-    
-        router.push({
-          pathname: '/screens/importvideosetup',
-          params: {
-            videoUri: picked.uri,
-            fileName: picked.fileName ?? 'Imported video',
-            athlete,
-          },
-        });
-      } catch (e: any) {
-        Alert.alert('Import failed', String(e?.message ?? e));
-      }
-    };
+  const startImportVideo = async () => {
+    try {
+      const picked = await pickVideoFromPhotos();
 
-  // Tap locked sport → go to paywall (recommended)
+      if (!picked) return;
+
+      router.push({
+        pathname: '/screens/importvideosetup',
+        params: {
+          videoUri: picked.uri,
+          fileName: picked.fileName ?? 'Imported video',
+          athlete,
+        },
+      });
+    } catch (e: any) {
+      Alert.alert('Import failed', String(e?.message ?? e));
+    }
+  };
+
   const ALLOW_TAP_LOCKED_TO_UPSELL = true;
 
   const goToPaywall = () => router.push('/(auth)/paywall');
@@ -319,13 +284,13 @@ export default function RecordingScreen() {
     if (!access.isSignedIn) return false;
     if (access.isPro) return false;
     if (!access.allowedSport) return false;
+
     return access.allowedSport !== sportLabelToKey(sport);
   };
 
   const go = (sport: SportLabel) => {
     const key = sportLabelToKey(sport);
 
-    // Must have a session
     if (!access.isSignedIn) {
       router.push('/(auth)/sign-in');
       return;
@@ -348,31 +313,36 @@ export default function RecordingScreen() {
           `Your free account is locked to ${sportKeyToNiceLabel(access.allowedSport)}.\n\nUpgrade to unlock all sports.`,
           [{ text: 'OK' }, { text: 'Upgrade', onPress: goToPaywall }],
         );
+
         return;
       }
     }
 
-    // Allowed → proceed
     switch (sport) {
       case 'Wrestling':
         router.push({ pathname: '/screens/wrestlingselection', params: { athlete } });
         break;
+
       case 'Baseball':
         router.push({ pathname: '/screens/baseballselection', params: { athlete } });
         break;
-  case 'Softball':
-    router.push({ pathname: '/screens/softballselection', params: { athlete } });
-    break;
-  
-  case 'Swimming':
-    router.push({ pathname: '/screens/swimmingselection', params: { athlete } });
-    break;
+
+      case 'Softball':
+        router.push({ pathname: '/screens/softballselection', params: { athlete } });
+        break;
+
+      case 'Swimming':
+        router.push({ pathname: '/screens/swimmingselection', params: { athlete } });
+        break;
+
       case 'Basketball':
         toCam('basketball', 'default');
         break;
+
       case 'Volleyball':
         toCam('volleyball', 'default');
         break;
+
       case 'BJJ':
         router.push({ pathname: '/screens/bjjselection', params: { athlete } });
         break;
@@ -391,17 +361,46 @@ export default function RecordingScreen() {
     const clean = (name || '').trim() || 'Unassigned';
 
     if (controlledByParam) setControlledByParam(false);
+
     setAthlete(clean);
 
     try {
       router.setParams({ athlete: clean });
-    } catch {
-      // ignore
+    } catch {}
+  };
+
+  const addAthleteFromPicker = async () => {
+    const n = newName.trim();
+
+    if (!n) return;
+
+    try {
+      const uid = await getActiveUid();
+      const key = athletesKey(uid);
+
+      const next: Athlete[] = [
+        {
+          id: `${Date.now()}`,
+          name: n,
+        },
+        ...athletes,
+      ];
+
+      await AsyncStorage.setItem(key, JSON.stringify(next));
+
+      setAthletes(next);
+      applyAthlete(n);
+      setNewName('');
+      setPickerOpen(false);
+    } catch (e) {
+      console.log('[recordingScreen] add athlete failed:', e);
+      Alert.alert('Add athlete failed', 'Could not add athlete.');
     }
   };
 
   const AthleteCard = () => {
     const current = athletes.find((a) => a.name === athlete);
+
     const photo =
       current?.photoLocalUri ||
       current?.cachedPhotoLocalUri ||
@@ -420,14 +419,28 @@ export default function RecordingScreen() {
           backgroundColor: 'rgba(255,255,255,0.08)',
         }}
       >
-        <Text style={{ color: 'white', opacity: 0.8, fontSize: 12, fontWeight: '700' }}>
+        <Text
+          style={{
+            color: 'white',
+            opacity: 0.8,
+            fontSize: 12,
+            fontWeight: '700',
+          }}
+        >
           Recording for
         </Text>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginTop: 10,
+          }}
+        >
           {photo ? (
             <Image
               source={{ uri: photo }}
+              resizeMode="cover"
               style={{
                 width: 48,
                 height: 48,
@@ -448,25 +461,49 @@ export default function RecordingScreen() {
                 marginRight: 12,
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '900' }}>
+              <Text
+                style={{
+                  color: 'white',
+                  fontWeight: '900',
+                }}
+              >
                 {initials(athlete || 'Unassigned')}
               </Text>
             </View>
           )}
 
           <View style={{ flex: 1 }}>
-            <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }} numberOfLines={1}>
+            <Text
+              style={{
+                color: 'white',
+                fontSize: 20,
+                fontWeight: '900',
+              }}
+              numberOfLines={1}
+            >
               {athlete || 'Unassigned'}
             </Text>
-            <Text style={{ color: 'white', opacity: 0.7, marginTop: 2, fontSize: 12 }}>
-              Tap “Change” to switch athlete. Long-press “Change” to toggle Unassigned.
+
+            <Text
+              style={{
+                color: 'white',
+                opacity: 0.7,
+                marginTop: 2,
+                fontSize: 12,
+              }}
+            >
+              Tap “Change” to switch athlete.
             </Text>
           </View>
 
           <TouchableOpacity
             onPress={() => setPickerOpen(true)}
             onLongPress={() =>
-              applyAthlete(athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned')
+              applyAthlete(
+                athlete === 'Unassigned'
+                  ? athletes[0]?.name || 'Unassigned'
+                  : 'Unassigned',
+              )
             }
             style={{
               paddingVertical: 8,
@@ -476,181 +513,15 @@ export default function RecordingScreen() {
               marginLeft: 10,
             }}
           >
-            <Text style={{ color: 'black', fontWeight: '900' }}>Change</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  const AthletePickerOverlay = () => {
-    if (!pickerOpen) return null;
-
-    return (
-      <View
-        pointerEvents="auto"
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.6)',
-          justifyContent: 'center',
-          padding: 20,
-          zIndex: 999,
-        }}
-      >
-        <Pressable
-          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-          onPress={() => setPickerOpen(false)}
-        />
-
-        <View
-          style={{
-            backgroundColor: '#121212',
-            borderRadius: 16,
-            padding: 16,
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.15)',
-            maxHeight: '85%',
-          }}
-        >
-          <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Choose Athlete</Text>
-
-          <Pressable
-            onPress={() => {
-              applyAthlete('Unassigned');
-              setPickerOpen(false);
-            }}
-            style={{ paddingVertical: 12 }}
-          >
-            <Text style={{ color: 'white', fontWeight: athlete === 'Unassigned' ? '900' : '600' }}>
-              • Unassigned
+            <Text
+              style={{
+                color: 'black',
+                fontWeight: '900',
+              }}
+            >
+              Change
             </Text>
-          </Pressable>
-
-          <View style={{ maxHeight: 360 }}>
-            <ScrollView showsVerticalScrollIndicator>
-              {athletes.map((a) => {
-                const photo =
-                  a.photoLocalUri ||
-                  a.cachedPhotoLocalUri ||
-                  a.photoUri ||
-                  a.photoUrl ||
-                  null;
-
-                return (
-                  <Pressable
-                    key={a.id}
-                    onPress={() => {
-                      applyAthlete(a.name);
-                      setPickerOpen(false);
-                    }}
-                    style={{ paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}
-                  >
-                    {photo ? (
-                      <Image
-                        source={{ uri: photo }}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 14,
-                          backgroundColor: 'rgba(255,255,255,0.15)',
-                          marginRight: 8,
-                        }}
-                      />
-                    ) : (
-                      <View
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 14,
-                          backgroundColor: 'rgba(255,255,255,0.15)',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          marginRight: 8,
-                        }}
-                      >
-                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
-                          {initials(a.name)}
-                        </Text>
-                      </View>
-                    )}
-
-                    <Text
-                      style={{ color: 'white', fontWeight: athlete === a.name ? '900' : '600' }}
-                      numberOfLines={1}
-                    >
-                      {a.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 12 }} />
-
-          <Text style={{ color: 'white', opacity: 0.8, marginBottom: 6 }}>New athlete</Text>
-          <TextInput
-            placeholder="Enter new name"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            value={newName}
-            onChangeText={setNewName}
-            style={{
-              color: 'white',
-              borderColor: 'rgba(255,255,255,0.25)',
-              borderWidth: 1,
-              borderRadius: 10,
-              paddingHorizontal: 10,
-              paddingVertical: 8,
-            }}
-          />
-
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
-            <TouchableOpacity
-              onPress={() => setPickerOpen(false)}
-              style={{
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderRadius: 999,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={async () => {
-                const n = newName.trim();
-                if (!n) return;
-
-                try {
-                  const uid = await getActiveUid();
-                  const key = athletesKey(uid);
-
-                  const next: Athlete[] = [{ id: `${Date.now()}`, name: n }, ...athletes];
-                  await AsyncStorage.setItem(key, JSON.stringify(next));
-                  setAthletes(next);
-
-                  applyAthlete(n);
-                  setNewName('');
-                  setPickerOpen(false);
-                } catch (e) {
-                  console.log('[recordingScreen] add athlete failed:', e);
-                }
-              }}
-              style={{
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderRadius: 999,
-                backgroundColor: 'white',
-              }}
-            >
-              <Text style={{ color: 'black', fontWeight: '800' }}>Add</Text>
-            </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -667,10 +538,23 @@ export default function RecordingScreen() {
         borderColor: 'rgba(255,255,255,0.10)',
       }}
     >
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 12 }}>
+      <Text
+        style={{
+          color: 'white',
+          fontWeight: '900',
+          fontSize: 12,
+        }}
+      >
         Free plan: 1 sport unlocked
       </Text>
-      <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 4 }}>
+
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.65)',
+          fontSize: 12,
+          marginTop: 4,
+        }}
+      >
         Upgrade to record all sports.
       </Text>
 
@@ -685,7 +569,14 @@ export default function RecordingScreen() {
           backgroundColor: 'white',
         }}
       >
-        <Text style={{ color: 'black', fontWeight: '900' }}>Upgrade</Text>
+        <Text
+          style={{
+            color: 'black',
+            fontWeight: '900',
+          }}
+        >
+          Upgrade
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -694,7 +585,10 @@ export default function RecordingScreen() {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: 'black' }}
+      style={{
+        flex: 1,
+        backgroundColor: 'black',
+      }}
       edges={['top', 'left', 'right']}
     >
       <ScrollView
@@ -709,7 +603,14 @@ export default function RecordingScreen() {
       >
         <AthleteCard />
 
-        <Text style={{ color: 'white', fontSize: 22, fontWeight: '900', marginBottom: 12 }}>
+        <Text
+          style={{
+            color: 'white',
+            fontSize: 22,
+            fontWeight: '900',
+            marginBottom: 12,
+          }}
+        >
           Record
         </Text>
 
@@ -729,17 +630,46 @@ export default function RecordingScreen() {
             backgroundColor: 'white',
           }}
         >
-          <Text style={{ fontSize: 18, color: 'black', fontWeight: '900' }}>Plain Camera</Text>
-          <Text style={{ fontSize: 12, color: 'black', opacity: 0.6, marginTop: 2 }}>
+          <Text
+            style={{
+              fontSize: 18,
+              color: 'black',
+              fontWeight: '900',
+            }}
+          >
+            Plain Camera
+          </Text>
+
+          <Text
+            style={{
+              fontSize: 12,
+              color: 'black',
+              opacity: 0.6,
+              marginTop: 2,
+            }}
+          >
             No overlay
           </Text>
         </TouchableOpacity>
 
-        <Text style={{ color: 'white', opacity: 0.8, marginBottom: 10, fontWeight: '800' }}>
+        <Text
+          style={{
+            color: 'white',
+            opacity: 0.8,
+            marginBottom: 10,
+            fontWeight: '800',
+          }}
+        >
           Choose a sport
         </Text>
 
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+          }}
+        >
           {SPORTS.map((sport) => {
             const locked = isLockedSport(sport);
             const bg = locked ? 'rgba(255,255,255,0.18)' : 'white';
@@ -778,13 +708,27 @@ export default function RecordingScreen() {
                       borderColor: 'rgba(0,0,0,0.18)',
                     }}
                   >
-                    <Text style={{ color: 'rgba(0,0,0,0.65)', fontWeight: '900', fontSize: 11 }}>
+                    <Text
+                      style={{
+                        color: 'rgba(0,0,0,0.65)',
+                        fontWeight: '900',
+                        fontSize: 11,
+                      }}
+                    >
                       LOCKED
                     </Text>
                   </View>
                 )}
 
-                <Text style={{ fontSize: 22, color: titleColor, fontWeight: '800' }}>{sport}</Text>
+                <Text
+                  style={{
+                    fontSize: 22,
+                    color: titleColor,
+                    fontWeight: '800',
+                  }}
+                >
+                  {sport}
+                </Text>
 
                 {locked && (
                   <Text
@@ -806,7 +750,19 @@ export default function RecordingScreen() {
         {access.isSignedIn && !access.isPro && !!access.allowedSport && <LockedHint />}
       </ScrollView>
 
-      <AthletePickerOverlay />
+      <AthletePickerOverlay
+        visible={pickerOpen}
+        athletes={athletes}
+        selectedAthlete={athlete}
+        newName={newName}
+        onChangeNewName={setNewName}
+        onClose={() => setPickerOpen(false)}
+        onSelectAthlete={(name) => {
+          applyAthlete(name);
+          setPickerOpen(false);
+        }}
+        onAddAthlete={addAthleteFromPicker}
+      />
     </SafeAreaView>
   );
 }

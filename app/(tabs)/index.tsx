@@ -439,13 +439,20 @@ export default function HomeAthletes() {
   };
 
   const pickPendingPhoto = async () => {
-    setAddOpen(false);
-
-    const uri = Platform.OS === 'android' ? await pickImageFromLibraryOnly() : await pickImageWithChoice();
-
+    if (Platform.OS === 'android') {
+      setAddOpen(false);
+  
+      const uri = await pickImageFromLibraryOnly();
+  
+      if (uri) setPendingPhotoTempUri(uri);
+  
+      setAddOpen(true);
+      return;
+    }
+  
+    const uri = await pickImageWithChoice();
+  
     if (uri) setPendingPhotoTempUri(uri);
-
-    setAddOpen(true);
   };
 
   const setPhotoForAthlete = async (id: string) => {
