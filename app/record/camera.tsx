@@ -40,6 +40,7 @@ import type {
 
 type RouteParams = {
   athlete?: string | string[];
+  athleteId?: string | string[];
   sport?: string | string[];
   style?: string | string[];
   stroke?: string | string[];
@@ -63,6 +64,7 @@ export default function CameraScreen() {
   const sportParam = useMemo(() => paramToStr(params.sport, 'wrestling'), [params.sport]);
   const styleParam = useMemo(() => paramToStr(params.style, 'folkstyle'), [params.style]);
   const athleteName = useMemo(() => paramToStr(params.athlete, 'Unassigned'), [params.athlete]);
+  const athleteId = useMemo(() => paramToStr(params.athleteId, ''), [params.athleteId]);
   const rawSwimRace = useMemo(() => paramToStr(params.swimRace, ''), [params.swimRace]);
 
 const parsedSwimRace = useMemo(() => {
@@ -391,7 +393,8 @@ const raceLabelParam = useMemo(
           viewportWidth: recordingViewportRef.current.width,
           viewportHeight: recordingViewportRef.current.height,
           orientationOverride: 0,
-        },
+          athleteId,
+        } as any,
       );
 
       try {

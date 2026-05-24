@@ -81,6 +81,10 @@ function sportKeyToNiceLabel(key: string) {
   }
 }
 
+function makeAthleteId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 async function getActiveUid(): Promise<string> {
   const u = await ensureAnonymous();
   return u.uid;
@@ -117,7 +121,11 @@ async function fileExists(uri: string): Promise<boolean> {
 }
 
 export default function RecordingScreen() {
-  const params = useLocalSearchParams<{ athlete?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    athlete?: string | string[];
+    athleteId?: string | string[];
+  }>();
+
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
 
@@ -126,7 +134,13 @@ export default function RecordingScreen() {
     [],
   );
 
+  const initialAthleteId = useMemo(
+    () => paramToStr(params.athleteId, '').trim(),
+    [],
+  );
+
   const [athlete, setAthlete] = useState<string>(initialAthlete);
+  const [athleteId, setAthleteId] = useState<string>(initialAthleteId);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -152,11 +166,21 @@ export default function RecordingScreen() {
     return v.length ? v : null;
   }, [params.athlete]);
 
+  const athleteIdParam = useMemo(() => {
+    const v = paramToStr(params.athleteId, '').trim();
+    return v.length ? v : null;
+  }, [params.athleteId]);
+
   useEffect(() => {
     if (!athleteParam) return;
     setAthlete(athleteParam);
     setControlledByParam(true);
   }, [athleteParam]);
+
+  useEffect(() => {
+    if (!athleteIdParam) return;
+    setAthleteId(athleteIdParam);
+  }, [athleteIdParam]);
 
   const loadAthletes = useCallback(async () => {
     try {
@@ -223,11 +247,25 @@ export default function RecordingScreen() {
       }
 
       setAthletes(withCache);
+
+      if (!athleteId && athlete && athlete !== 'Unassigned') {
+        const match = withCache.find(
+          (a) => a.name.trim().toLowerCase() === athlete.trim().toLowerCase(),
+        );
+
+        if (match?.id) {
+          setAthleteId(match.id);
+
+          try {
+            router.setParams({ athleteId: match.id });
+          } catch {}
+        }
+      }
     } catch (e) {
       console.log('[recordingScreen] loadAthletes failed:', e);
       setAthletes([]);
     }
-  }, []);
+  }, [athlete, athleteId]);
 
   useEffect(() => {
     loadAthletes();
@@ -253,7 +291,12 @@ export default function RecordingScreen() {
   const toCam = (sportKey: string, styleKey: string) =>
     router.push({
       pathname: '/record/camera',
-      params: { sport: sportKey, style: styleKey, athlete },
+      params: {
+        sport: sportKey,
+        style: styleKey,
+        athlete,
+        athleteId,
+      },
     });
 
   const startImportVideo = async () => {
@@ -268,6 +311,7 @@ export default function RecordingScreen() {
           videoUri: picked.uri,
           fileName: picked.fileName ?? 'Imported video',
           athlete,
+          athleteId,
         },
       });
     } catch (e: any) {
@@ -318,21 +362,23 @@ export default function RecordingScreen() {
       }
     }
 
+    const baseParams = { athlete, athleteId };
+
     switch (sport) {
       case 'Wrestling':
-        router.push({ pathname: '/screens/wrestlingselection', params: { athlete } });
+        router.push({ pathname: '/screens/wrestlingselection', params: baseParams });
         break;
 
       case 'Baseball':
-        router.push({ pathname: '/screens/baseballselection', params: { athlete } });
+        router.push({ pathname: '/screens/baseballselection', params: baseParams });
         break;
 
       case 'Softball':
-        router.push({ pathname: '/screens/softballselection', params: { athlete } });
+        router.push({ pathname: '/screens/softballselection', params: baseParams });
         break;
 
       case 'Swimming':
-        router.push({ pathname: '/screens/swimmingselection', params: { athlete } });
+        router.push({ pathname: '/screens/swimmingselection', params: baseParams });
         break;
 
       case 'Basketball':
@@ -344,7 +390,7 @@ export default function RecordingScreen() {
         break;
 
       case 'BJJ':
-        router.push({ pathname: '/screens/bjjselection', params: { athlete } });
+        router.push({ pathname: '/screens/bjjselection', params: baseParams });
         break;
     }
   };
@@ -360,12 +406,25 @@ export default function RecordingScreen() {
   const applyAthlete = (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
 
+    const match =
+      clean === 'Unassigned'
+        ? null
+        : athletes.find(
+            (a) => a.name.trim().toLowerCase() === clean.toLowerCase(),
+          );
+
+    const nextId = match?.id ?? '';
+
     if (controlledByParam) setControlledByParam(false);
 
     setAthlete(clean);
+    setAthleteId(nextId);
 
     try {
-      router.setParams({ athlete: clean });
+      router.setParams({
+        athlete: clean,
+        athleteId: nextId,
+      });
     } catch {}
   };
 
@@ -377,10 +436,11 @@ export default function RecordingScreen() {
     try {
       const uid = await getActiveUid();
       const key = athletesKey(uid);
+      const id = makeAthleteId();
 
       const next: Athlete[] = [
         {
-          id: `${Date.now()}`,
+          id,
           name: n,
         },
         ...athletes,
@@ -389,7 +449,16 @@ export default function RecordingScreen() {
       await AsyncStorage.setItem(key, JSON.stringify(next));
 
       setAthletes(next);
-      applyAthlete(n);
+      setAthlete(n);
+      setAthleteId(id);
+
+      try {
+        router.setParams({
+          athlete: n,
+          athleteId: id,
+        });
+      } catch {}
+
       setNewName('');
       setPickerOpen(false);
     } catch (e) {
@@ -399,7 +468,9 @@ export default function RecordingScreen() {
   };
 
   const AthleteCard = () => {
-    const current = athletes.find((a) => a.name === athlete);
+    const current =
+      athletes.find((a) => a.id === athleteId) ||
+      athletes.find((a) => a.name === athlete);
 
     const photo =
       current?.photoLocalUri ||
