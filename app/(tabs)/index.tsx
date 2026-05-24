@@ -33,6 +33,7 @@ import type { Athlete } from '../../src/lib/athleteTypes';
 import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
 
 const CURRENT_ATHLETE_KEY_PREFIX = 'currentAthleteName';
+const CURRENT_ATHLETE_ID_KEY_PREFIX = 'currentAthleteId';
 const ATHLETES_KEY_PREFIX = 'athletes:list';
 
 function toStringOrNull(v: any): string | null {
@@ -53,6 +54,14 @@ function athletesKey(uid: string) {
 
 function currentAthleteKey(uid: string) {
   return `${CURRENT_ATHLETE_KEY_PREFIX}:${uid}`;
+}
+
+function currentAthleteIdKey(uid: string) {
+  return `${CURRENT_ATHLETE_ID_KEY_PREFIX}:${uid}`;
+}
+
+function makeAthleteId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function getActiveUid(): Promise<string> {
@@ -402,7 +411,7 @@ export default function HomeAthletes() {
       return;
     }
 
-    const id = `${Date.now()}`;
+    const id = makeAthleteId();
     let photoLocalUri: string | null = null;
 
     const photoUrl: string | null = null;
@@ -441,17 +450,17 @@ export default function HomeAthletes() {
   const pickPendingPhoto = async () => {
     if (Platform.OS === 'android') {
       setAddOpen(false);
-  
+
       const uri = await pickImageFromLibraryOnly();
-  
+
       if (uri) setPendingPhotoTempUri(uri);
-  
+
       setAddOpen(true);
       return;
     }
-  
+
     const uri = await pickImageWithChoice();
-  
+
     if (uri) setPendingPhotoTempUri(uri);
   };
 
@@ -508,30 +517,71 @@ export default function HomeAthletes() {
     await saveAthletes(next);
 
     const effectiveUid = uid ?? (await getActiveUid());
-    const curKey = currentAthleteKey(effectiveUid);
+    const curNameKey = currentAthleteKey(effectiveUid);
+    const curIdKey = currentAthleteIdKey(effectiveUid);
 
-    const current = await AsyncStorage.getItem(curKey);
-    if (current && !next.find((a) => a.name === current)) {
-      await AsyncStorage.removeItem(curKey);
+    const currentName = await AsyncStorage.getItem(curNameKey);
+    const currentId = await AsyncStorage.getItem(curIdKey);
+
+    if (currentId && !next.find((a) => a.id === currentId)) {
+      await AsyncStorage.removeItem(curIdKey);
+      await AsyncStorage.removeItem(curNameKey);
+      return;
+    }
+
+    if (currentName && !next.find((a) => a.name === currentName)) {
+      await AsyncStorage.removeItem(curNameKey);
     }
   };
 
   const recordNoAthlete = async () => {
     const effectiveUid = uid ?? (await getActiveUid());
     await AsyncStorage.removeItem(currentAthleteKey(effectiveUid));
+    await AsyncStorage.removeItem(currentAthleteIdKey(effectiveUid));
 
     router.push({
       pathname: '/record/camera',
-      params: { athlete: 'Unassigned', sport: 'plain', style: 'none' },
+      params: {
+        athlete: 'Unassigned',
+        athleteId: '',
+        sport: 'plain',
+        style: 'none',
+      },
     });
   };
 
-  const recordWithAthlete = async (name: string) => {
-    const clean = (name || '').trim() || 'Unassigned';
-    const effectiveUid = uid ?? (await getActiveUid());
-    await AsyncStorage.setItem(currentAthleteKey(effectiveUid), clean);
+  const recordWithAthlete = async (value: Athlete | string) => {
+    const found =
+      typeof value === 'string'
+        ? athletes.find(
+            (a) =>
+              String(a.name || '').trim().toLowerCase() ===
+              String(value || '').trim().toLowerCase()
+          )
+        : value;
 
-    router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
+    const athleteId = String((found as any)?.id ?? '').trim();
+    const athleteName =
+      String((found as any)?.name ?? (typeof value === 'string' ? value : '')).trim() ||
+      'Unassigned';
+
+    const effectiveUid = uid ?? (await getActiveUid());
+
+    await AsyncStorage.setItem(currentAthleteKey(effectiveUid), athleteName);
+
+    if (athleteId) {
+      await AsyncStorage.setItem(currentAthleteIdKey(effectiveUid), athleteId);
+    } else {
+      await AsyncStorage.removeItem(currentAthleteIdKey(effectiveUid));
+    }
+
+    router.push({
+      pathname: '/recordingScreen',
+      params: {
+        athlete: athleteName,
+        athleteId,
+      },
+    });
   };
 
   const openStatsForAthlete = (name: string) => {
@@ -597,31 +647,31 @@ export default function HomeAthletes() {
       </View>
 
       <FlatList
-  data={athletes}
-  extraData={athletes}
-  keyExtractor={(a) => a.id}
-  renderItem={({ item }) => (
-    <AthleteCard
-      a={item}
-      isWide={isWide}
-      onRecord={recordWithAthlete}
-      onStats={openStatsForAthlete}
-      onSetPhoto={setPhotoForAthlete}
-      onRename={renameAthlete}
-      onDelete={deleteAthleteShell}
-    />
-  )}
-  refreshing={refreshing}
-  onRefresh={onRefresh}
-  contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}
-  scrollIndicatorInsets={{ bottom: tabBarHeight + insets.bottom }}
-  ListFooterComponent={<View style={{ height: tabBarHeight + insets.bottom + 8 }} />}
-  ListEmptyComponent={
-    <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
-      No athletes yet. Tap “Add Athlete”, then “Record”.
-    </Text>
-  }
-/>
+        data={athletes}
+        extraData={athletes}
+        keyExtractor={(a) => a.id}
+        renderItem={({ item }) => (
+          <AthleteCard
+            a={item}
+            isWide={isWide}
+            onRecord={recordWithAthlete}
+            onStats={openStatsForAthlete}
+            onSetPhoto={setPhotoForAthlete}
+            onRename={renameAthlete}
+            onDelete={deleteAthleteShell}
+          />
+        )}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}
+        scrollIndicatorInsets={{ bottom: tabBarHeight + insets.bottom }}
+        ListFooterComponent={<View style={{ height: tabBarHeight + insets.bottom + 8 }} />}
+        ListEmptyComponent={
+          <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
+            No athletes yet. Tap “Add Athlete”, then “Record”.
+          </Text>
+        }
+      />
 
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
