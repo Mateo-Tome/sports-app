@@ -1,6 +1,7 @@
 // app/(tabs)/index.tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
@@ -10,7 +11,6 @@ import {
   Alert,
   FlatList,
   Image,
-  InteractionManager,
   Linking,
   Modal,
   Platform,
@@ -35,8 +35,6 @@ import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
 const CURRENT_ATHLETE_KEY_PREFIX = 'currentAthleteName';
 const ATHLETES_KEY_PREFIX = 'athletes:list';
 
-const wait = (ms = 160) => new Promise((res) => setTimeout(res, ms));
-
 function toStringOrNull(v: any): string | null {
   if (typeof v !== 'string') return null;
   const s = v.trim();
@@ -52,6 +50,7 @@ function toNumberOrNull(v: any): number | null {
 function athletesKey(uid: string) {
   return `${ATHLETES_KEY_PREFIX}:${uid}`;
 }
+
 function currentAthleteKey(uid: string) {
   return `${CURRENT_ATHLETE_KEY_PREFIX}:${uid}`;
 }
@@ -66,56 +65,79 @@ function imagesMediaTypesLegacy(): any {
   return MT?.Images ?? MT?.images ?? undefined;
 }
 
-async function ensurePickerPermissions(): Promise<boolean> {
+async function askOpenSettings(message: string) {
+  const go = await new Promise<boolean>((resolve) => {
+    Alert.alert(
+      'Permissions needed',
+      message,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Open Settings', onPress: () => resolve(true) },
+      ],
+      { cancelable: true }
+    );
+  });
+
+  if (go) Linking.openSettings();
+}
+
+async function ensureCameraPermission(): Promise<boolean> {
   try {
     let cam = await ImagePicker.getCameraPermissionsAsync();
-    let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
-    if (cam.status !== 'granted') cam = await ImagePicker.requestCameraPermissionsAsync();
-    if (lib.status !== 'granted') lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-    const blocked = (p: ImagePicker.PermissionResponse) =>
-      p.status === 'denied' && p.canAskAgain === false;
+    if (cam.status !== 'granted') {
+      cam = await ImagePicker.requestCameraPermissionsAsync();
+    }
 
-    if (blocked(cam) || blocked(lib)) {
-      const go = await new Promise<boolean>((resolve) => {
-        Alert.alert(
-          'Permissions needed',
-          'Camera/Photos access is blocked. Open Settings to enable?',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Open Settings', onPress: () => resolve(true) },
-          ],
-          { cancelable: true }
-        );
-      });
-      if (go) Linking.openSettings();
+    if (cam.status === 'denied' && cam.canAskAgain === false) {
+      await askOpenSettings('Camera access is blocked. Open Settings to enable it?');
       return false;
     }
-    return true;
+
+    return cam.status === 'granted';
   } catch {
     return false;
   }
 }
 
-async function pickImageWithChoice(launchedFromModal: boolean): Promise<string | null> {
-  const ok = await ensurePickerPermissions();
+async function ensureLibraryPermission(): Promise<boolean> {
+  try {
+    let lib = await ImagePicker.getMediaLibraryPermissionsAsync();
+
+    if (lib.status !== 'granted') {
+      lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    }
+
+    if (lib.status === 'denied' && lib.canAskAgain === false) {
+      await askOpenSettings('Photos access is blocked. Open Settings to enable it?');
+      return false;
+    }
+
+    return lib.status === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+async function pickImageFromLibraryOnly(): Promise<string | null> {
+  const ok = await ensureLibraryPermission();
   if (!ok) return null;
 
   try {
-    const pending = await (ImagePicker as any).getPendingResultAsync?.();
-    if (Array.isArray(pending) && pending.length) {
-      // read & ignore to clear internal state
-    }
-  } catch {}
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: imagesMediaTypesLegacy(),
+      allowsEditing: true,
+      quality: 0.85,
+    } as any);
 
-  if (launchedFromModal) {
-    await wait(250);
+    return res.canceled ? null : res.assets?.[0]?.uri ?? null;
+  } catch (e) {
+    console.log('[pickImageFromLibraryOnly] failed:', e);
+    return null;
   }
+}
 
-  await new Promise<void>((resolve) => InteractionManager.runAfterInteractions(() => resolve()));
-  await new Promise((r) => requestAnimationFrame(() => r(null)));
-  await wait(140);
-
+async function pickImageWithChoice(): Promise<string | null> {
   const mediaTypes = imagesMediaTypesLegacy();
 
   if (Platform.OS === 'ios') {
@@ -129,24 +151,26 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
         async (idx) => {
           try {
             if (idx === 1) {
-              await new Promise<void>((resolve2) =>
-                InteractionManager.runAfterInteractions(() => resolve2())
-              );
-              await new Promise((r) => requestAnimationFrame(() => r(null)));
-              await wait(120);
+              const ok = await ensureCameraPermission();
+              if (!ok) return resolve(null);
 
               const res = await ImagePicker.launchCameraAsync({
                 mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
               } as any);
+
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             } else if (idx === 2) {
+              const ok = await ensureLibraryPermission();
+              if (!ok) return resolve(null);
+
               const res = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes,
                 allowsEditing: true,
                 quality: 0.85,
               } as any);
+
               resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
             } else {
               resolve(null);
@@ -159,52 +183,9 @@ async function pickImageWithChoice(launchedFromModal: boolean): Promise<string |
     });
   }
 
-  return new Promise((resolve) => {
-    const defer = (fn: () => Promise<void>) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            fn().catch(() => resolve(null));
-          }, 220);
-        });
-      });
-    };
-    Alert.alert(
-      'Set Athlete Photo',
-      undefined,
-      [
-        {
-          text: 'Take Photo',
-          onPress: () =>
-            defer(async () => {
-              const res = await ImagePicker.launchCameraAsync({
-                mediaTypes,
-                allowsEditing: true,
-                quality: 0.85,
-              } as any);
-              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
-            }),
-        },
-        {
-          text: 'Choose from Library',
-          onPress: () =>
-            defer(async () => {
-              const res = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes,
-                allowsEditing: true,
-                quality: 0.85,
-              } as any);
-              resolve(res.canceled ? null : res.assets?.[0]?.uri ?? null);
-            }),
-        },
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
-      ],
-      { cancelable: true }
-    );
-  });
+  return pickImageFromLibraryOnly();
 }
 
-// ✅ If the local file is missing, clear photoLocalUri so UI falls back to cloud later
 async function scrubMissingLocalPhotos(storageKey: string, list: Athlete[]): Promise<Athlete[]> {
   const out: Athlete[] = [];
   let changed = false;
@@ -233,6 +214,7 @@ async function scrubMissingLocalPhotos(storageKey: string, list: Athlete[]): Pro
   if (changed) {
     await AsyncStorage.setItem(storageKey, JSON.stringify(out));
   }
+
   return out;
 }
 
@@ -272,7 +254,12 @@ export default function HomeAthletes() {
     loadLocal(uid ?? undefined);
   }, [loadLocal, uid]);
 
-  // ✅ Initial cloud pull (does not bring photoLocalUri)
+  useFocusEffect(
+    useCallback(() => {
+      loadLocal(uid ?? undefined);
+    }, [loadLocal, uid])
+  );
+
   useEffect(() => {
     const normalizeLocal = (list: Athlete[]): Athlete[] => {
       const out: Athlete[] = [];
@@ -297,6 +284,7 @@ export default function HomeAthletes() {
           photoNeedsUpload: (a as any)?.photoNeedsUpload === true,
         } as any);
       }
+
       return out;
     };
 
@@ -320,6 +308,7 @@ export default function HomeAthletes() {
           photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
         });
       }
+
       return out;
     };
 
@@ -336,14 +325,11 @@ export default function HomeAthletes() {
         byId.set(c.id, {
           id: c.id,
           name: c.name?.trim() ? c.name.trim() : (l as any)?.name ?? c.name,
-
           photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
           photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
           photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
-
           photoLocalUri: (l as any)?.photoLocalUri ?? null,
           photoUri: (l as any)?.photoUri ?? null,
-
           photoNeedsUpload: (l as any)?.photoNeedsUpload === true,
         } as any);
       }
@@ -358,6 +344,7 @@ export default function HomeAthletes() {
           used.add(v.id);
         }
       }
+
       for (const a of L) {
         const v = byId.get(a.id);
         if (v && !used.has(v.id)) {
@@ -409,6 +396,7 @@ export default function HomeAthletes() {
 
   const addAthlete = async () => {
     const n = nameInput.trim();
+
     if (!n) {
       Alert.alert('Name required', 'Please enter a name.');
       return;
@@ -417,14 +405,12 @@ export default function HomeAthletes() {
     const id = `${Date.now()}`;
     let photoLocalUri: string | null = null;
 
-    // cross-device fields (only become real after Sync upload)
     const photoUrl: string | null = null;
     const photoKey: string | null = null;
     const photoUpdatedAt = Date.now();
 
     if (pendingPhotoTempUri) {
       try {
-        // ✅ Always save locally immediately (offline safe)
         photoLocalUri = await persistAthleteProfilePhoto(pendingPhotoTempUri, id);
       } catch (e: any) {
         console.log('[addAthlete] persist photo failed:', e);
@@ -440,33 +426,42 @@ export default function HomeAthletes() {
         photoUrl,
         photoKey,
         photoUpdatedAt,
-        // ✅ queue upload for Sync button
         photoNeedsUpload: !!photoLocalUri,
       } as any,
       ...athletes,
     ];
+
     await saveAthletes(next);
 
     setNameInput('');
     setPendingPhotoTempUri(null);
     setAddOpen(false);
-
-    // ❌ no auto-sync (you want user to tap Sync)
   };
 
   const pickPendingPhoto = async () => {
     setAddOpen(false);
-    const uri = await pickImageWithChoice(true);
+
+    const uri = Platform.OS === 'android' ? await pickImageFromLibraryOnly() : await pickImageWithChoice();
+
     if (uri) setPendingPhotoTempUri(uri);
+
     setAddOpen(true);
   };
 
   const setPhotoForAthlete = async (id: string) => {
-    const tempUri = await pickImageWithChoice(false);
+    if (Platform.OS === 'android') {
+      router.push({
+        pathname: '/athletes/ProfilePhotoCamera',
+        params: { athleteId: id },
+      });
+      return;
+    }
+
+    const tempUri = await pickImageWithChoice();
+
     if (!tempUri) return;
 
     try {
-      // ✅ save local immediately
       const localUri = await persistAthleteProfilePhoto(tempUri, id);
 
       const next = athletes.map((a) =>
@@ -475,7 +470,7 @@ export default function HomeAthletes() {
               ...a,
               photoLocalUri: localUri,
               photoUpdatedAt: Date.now(),
-              photoNeedsUpload: true, // ✅ queue upload
+              photoNeedsUpload: true,
             } as any)
           : a
       );
@@ -491,14 +486,14 @@ export default function HomeAthletes() {
 
   const renameAthlete = async (id: string, newName: string) => {
     const name = newName.trim();
+
     if (!name) {
       Alert.alert('Name required');
       return;
     }
+
     const next = athletes.map((a) => (a.id === id ? ({ ...a, name } as any) : a));
     await saveAthletes(next);
-
-    // you probably DO want rename to sync on button only, so no auto sync here either
   };
 
   const deleteAthleteShell = async (id: string) => {
@@ -512,13 +507,12 @@ export default function HomeAthletes() {
     if (current && !next.find((a) => a.name === current)) {
       await AsyncStorage.removeItem(curKey);
     }
-
-    // deletion also stays local until Sync
   };
 
   const recordNoAthlete = async () => {
     const effectiveUid = uid ?? (await getActiveUid());
     await AsyncStorage.removeItem(currentAthleteKey(effectiveUid));
+
     router.push({
       pathname: '/record/camera',
       params: { athlete: 'Unassigned', sport: 'plain', style: 'none' },
@@ -529,11 +523,13 @@ export default function HomeAthletes() {
     const clean = (name || '').trim() || 'Unassigned';
     const effectiveUid = uid ?? (await getActiveUid());
     await AsyncStorage.setItem(currentAthleteKey(effectiveUid), clean);
+
     router.push({ pathname: '/recordingScreen', params: { athlete: clean } });
   };
 
   const openStatsForAthlete = (name: string) => {
     const clean = (name || '').trim() || 'Unassigned';
+
     router.push({
       pathname: '/athletes/[athlete]/stats',
       params: { athlete: clean },
@@ -551,7 +547,11 @@ export default function HomeAthletes() {
       opacity: syncing ? 0.78 : 1,
     } as const;
 
-    const syncText = { color: 'rgba(224,251,255,1)', fontWeight: '900' as const, letterSpacing: 0.2 };
+    const syncText = {
+      color: 'rgba(224,251,255,1)',
+      fontWeight: '900' as const,
+      letterSpacing: 0.2,
+    };
 
     const secondaryPill = {
       ...pillBase,
@@ -561,9 +561,7 @@ export default function HomeAthletes() {
     } as const;
 
     const secondaryText = { color: 'white', fontWeight: '900' as const };
-
     const primaryPill = { ...pillBase, backgroundColor: '#DC2626' } as const;
-
     const primaryText = { color: 'white', fontWeight: '900' as const };
 
     return { syncPill, syncText, secondaryPill, secondaryText, primaryPill, primaryText };
@@ -592,30 +590,31 @@ export default function HomeAthletes() {
       </View>
 
       <FlatList
-        data={athletes}
-        keyExtractor={(a) => a.id}
-        renderItem={({ item }) => (
-          <AthleteCard
-            a={item}
-            isWide={isWide}
-            onRecord={recordWithAthlete}
-            onStats={openStatsForAthlete}
-            onSetPhoto={setPhotoForAthlete}
-            onRename={renameAthlete}
-            onDelete={deleteAthleteShell}
-          />
-        )}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-        contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}
-        scrollIndicatorInsets={{ bottom: tabBarHeight + insets.bottom }}
-        ListFooterComponent={<View style={{ height: tabBarHeight + insets.bottom + 8 }} />}
-        ListEmptyComponent={
-          <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
-            No athletes yet. Tap “Add Athlete”, then “Record”.
-          </Text>
-        }
-      />
+  data={athletes}
+  extraData={athletes}
+  keyExtractor={(a) => a.id}
+  renderItem={({ item }) => (
+    <AthleteCard
+      a={item}
+      isWide={isWide}
+      onRecord={recordWithAthlete}
+      onStats={openStatsForAthlete}
+      onSetPhoto={setPhotoForAthlete}
+      onRename={renameAthlete}
+      onDelete={deleteAthleteShell}
+    />
+  )}
+  refreshing={refreshing}
+  onRefresh={onRefresh}
+  contentContainerStyle={{ paddingBottom: tabBarHeight + insets.bottom + 24 }}
+  scrollIndicatorInsets={{ bottom: tabBarHeight + insets.bottom }}
+  ListFooterComponent={<View style={{ height: tabBarHeight + insets.bottom + 8 }} />}
+  ListEmptyComponent={
+    <Text style={{ color: 'white', opacity: 0.7, textAlign: 'center', marginTop: 40 }}>
+      No athletes yet. Tap “Add Athlete”, then “Record”.
+    </Text>
+  }
+/>
 
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
@@ -629,8 +628,9 @@ export default function HomeAthletes() {
             }}
           >
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Add Athlete</Text>
+
             <Text style={{ color: 'white', opacity: 0.7, marginTop: 8 }}>
-              Enter a name and (optionally) pick a photo.
+              Enter a name and optionally pick a photo.
             </Text>
 
             <TextInput
@@ -691,6 +691,12 @@ export default function HomeAthletes() {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {Platform.OS === 'android' && (
+              <Text style={{ color: 'white', opacity: 0.55, marginTop: 8, fontSize: 12 }}>
+                On Android, save the athlete first, then tap “Set Photo” to take a new camera photo.
+              </Text>
+            )}
 
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
               <TouchableOpacity

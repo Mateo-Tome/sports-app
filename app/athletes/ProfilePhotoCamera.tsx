@@ -1,14 +1,23 @@
-// app/athlete/ProfilePhotoCamera.tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ensureAnonymous } from '../../lib/firebase';
-import { getCloudAthletes, setCloudAthletes } from '../../src/hooks/athletes/cloudAthletes';
+import {
+  getCloudAthletes,
+  setCloudAthletes,
+} from '../../src/hooks/athletes/cloudAthletes';
+
 import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
 import { uploadAthleteProfilePhotoToB2 } from '../../src/lib/athletePhotoUpload';
 
@@ -16,10 +25,12 @@ type Athlete = {
   id: string;
   name: string;
   photoLocalUri?: string | null;
-  photoUrl?: string | null; // legacy / tokened or public
-  photoKey?: string | null; // ✅ stable B2 object key
+  photoUrl?: string | null;
+  photoKey?: string | null;
   photoUpdatedAt?: number | null;
 };
+
+type CameraFacing = 'back' | 'front';
 
 function toStringOrNull(v: any): string | null {
   if (typeof v !== 'string') return null;
@@ -37,15 +48,15 @@ function athletesKey(uid: string) {
   return `athletes:list:${uid}`;
 }
 
-async function getActiveUid(): Promise<string> {
+async function getActiveUid() {
   const u = await ensureAnonymous();
   return u.uid;
 }
 
-async function readLocalList(uid: string): Promise<Athlete[]> {
+async function readLocalList(uid: string) {
   try {
     const raw = await AsyncStorage.getItem(athletesKey(uid));
-    const list: Athlete[] = raw ? JSON.parse(raw) : [];
+    const list = raw ? JSON.parse(raw) : [];
     return Array.isArray(list) ? list : [];
   } catch {
     return [];
@@ -53,21 +64,26 @@ async function readLocalList(uid: string): Promise<Athlete[]> {
 }
 
 async function writeLocalList(uid: string, list: Athlete[]) {
-  await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(Array.isArray(list) ? list : []));
+  await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(list));
 }
 
-async function updateLocalAthlete(uid: string, athleteId: string, patch: Partial<Athlete>) {
+async function updateLocalAthlete(
+  uid: string,
+  athleteId: string,
+  patch: Partial<Athlete>,
+) {
   const list = await readLocalList(uid);
 
   const next = list.map((a) => {
     if (a.id !== athleteId) return a;
+
     return {
       ...a,
       ...patch,
       photoLocalUri: patch.photoLocalUri ?? a.photoLocalUri ?? null,
       photoUrl: patch.photoUrl ?? a.photoUrl ?? null,
-      photoKey: patch.photoKey ?? (a as any).photoKey ?? null,
-      photoUpdatedAt: patch.photoUpdatedAt ?? (a as any).photoUpdatedAt ?? null,
+      photoKey: patch.photoKey ?? a.photoKey ?? null,
+      photoUpdatedAt: patch.photoUpdatedAt ?? a.photoUpdatedAt ?? null,
     };
   });
 
@@ -87,41 +103,76 @@ export default function ProfilePhotoCamera() {
   const [mountCam, setMountCam] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [facing, setFacing] = useState<CameraFacing>('back');
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   useEffect(() => {
-    if (permission?.granted) {
-      setMountCam(true);
-      setCameraReady(false);
-
-      const t = setTimeout(() => {
-        if (!cameraReady) {
-          setMountCam(false);
-          setTimeout(() => setMountCam(true), 30);
-        }
-      }, 1200);
-
-      return () => clearTimeout(t);
+    if (!permission?.granted) {
+      setMountCam(false);
+      return;
     }
-  }, [permission?.granted]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!permission?.granted) {
-    return (
-      <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
-        <TouchableOpacity
-          onPress={requestPermission}
-          style={{ padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'white' }}
-        >
-          <Text style={{ color: 'white', fontWeight: '700' }}>Enable Camera</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+    setCameraReady(false);
 
-  const take = async () => {
-    if (!cameraReady || busy) return;
+    const first = setTimeout(() => {
+      setMountCam(true);
+    }, 150);
+
+    return () => {
+      clearTimeout(first);
+    };
+  }, [permission?.granted]);
+
+  const flipCamera = () => {
+    if (busy || previewUri) return;
+
+    setCameraReady(false);
+    setMountCam(false);
+    setFacing((prev) => (prev === 'back' ? 'front' : 'back'));
+
+    setTimeout(() => {
+      setMountCam(true);
+    }, 120);
+  };
+
+  async function take() {
+    if (!cameraReady || busy || previewUri) return;
 
     if (!athleteId) {
-      Alert.alert('Missing athleteId', 'Open this screen with params: ?athleteId=...');
+      Alert.alert('Missing athleteId');
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      const res = await (camRef.current as any)?.takePictureAsync({
+        quality: 0.9,
+        skipProcessing: false,
+      });
+
+      const uri = res?.uri;
+
+      if (!uri) {
+        throw new Error('No image captured');
+      }
+
+      setPreviewUri(uri);
+      setCameraReady(false);
+      setMountCam(false);
+    } catch (e: any) {
+      console.log('[ProfilePhotoCamera] take failed:', e);
+      Alert.alert('Failed', String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function usePhoto() {
+    if (!previewUri || busy) return;
+
+    if (!athleteId) {
+      Alert.alert('Missing athleteId');
       return;
     }
 
@@ -130,117 +181,241 @@ export default function ProfilePhotoCamera() {
     try {
       const uid = await getActiveUid();
 
-      const res = await (camRef.current as any)?.takePictureAsync?.({
-        skipProcessing: true,
-        quality: 0.9,
-      });
-
-      const uri = res?.uri as string | undefined;
-      if (!uri) {
-        Alert.alert('Failed', 'No image captured');
-        return;
-      }
-
-      // Optional: permissions to save to Photos app (not required for in-app save)
-      try {
-        await MediaLibrary.requestPermissionsAsync();
-      } catch {
-        // ignore
-      }
-
-      // 1) Persist local (documentDirectory)
-      const savedUri = await persistAthleteProfilePhoto(uri, athleteId);
-      console.log('[ProfilePhotoCamera] savedUri:', savedUri);
-
+      const savedUri = await persistAthleteProfilePhoto(previewUri, athleteId);
       const updatedAt = Date.now();
 
-      // Update local immediately so THIS device shows it right away
-      await updateLocalAthlete(uid, athleteId, { photoLocalUri: savedUri, photoUpdatedAt: updatedAt });
-
-      // 2) Upload to Backblaze B2 (now returns photoUrl + photoKey)
-      const up = await uploadAthleteProfilePhotoToB2({
-        athleteId,
-        localFileUri: savedUri,
-      });
-
-      const photoUrl = up.photoUrl;
-      const photoKey = (up as any).photoKey ?? null;
-
-      console.log('[ProfilePhotoCamera] photoUrl:', photoUrl);
-      console.log('[ProfilePhotoCamera] photoKey:', photoKey);
-
-      // Update local with cross-device fields
-      const localAfter = await updateLocalAthlete(uid, athleteId, {
-        photoUrl,
-        photoKey: toStringOrNull(photoKey),
+      await updateLocalAthlete(uid, athleteId, {
+        photoLocalUri: savedUri,
         photoUpdatedAt: updatedAt,
       });
 
-      // 3) Push to cloud so OTHER devices get it on Sync
-      const cloud = await getCloudAthletes(uid);
+      nav.goBack();
 
-      const byId = new Map<string, Athlete>();
-      for (const c of cloud as any) byId.set(String((c as any)?.id ?? ''), c as any);
+      try {
+        const upload = await uploadAthleteProfilePhotoToB2({
+          athleteId,
+          localFileUri: savedUri,
+        });
 
-      for (const l of localAfter) {
-        const c = byId.get(l.id);
-        byId.set(l.id, {
-          id: l.id,
-          name: (c?.name ?? l.name).trim(),
+        const local = await updateLocalAthlete(uid, athleteId, {
+          photoUrl: upload.photoUrl,
+          photoKey: upload.photoKey,
+          photoUpdatedAt: updatedAt,
+        });
 
-          // ✅ cloud-safe
-          photoUrl: toStringOrNull(l.photoUrl) ?? toStringOrNull((c as any)?.photoUrl) ?? null,
-          photoKey: toStringOrNull((l as any).photoKey) ?? toStringOrNull((c as any)?.photoKey) ?? null,
-          photoUpdatedAt: toNumberOrNull((l as any).photoUpdatedAt) ?? toNumberOrNull((c as any)?.photoUpdatedAt) ?? null,
-        } as any);
+        const cloud = await getCloudAthletes(uid);
+        const byId = new Map<string, Athlete>();
+
+        for (const c of cloud as any[]) {
+          byId.set(String(c.id), c as Athlete);
+        }
+
+        for (const a of local) {
+          byId.set(a.id, {
+            id: a.id,
+            name: a.name,
+            photoUrl: toStringOrNull(a.photoUrl),
+            photoKey: toStringOrNull(a.photoKey),
+            photoUpdatedAt: toNumberOrNull(a.photoUpdatedAt),
+          });
+        }
+
+        await setCloudAthletes(uid, Array.from(byId.values()) as any);
+      } catch (uploadError) {
+        console.log('[ProfilePhotoCamera] upload later failed:', uploadError);
       }
-
-      await setCloudAthletes(uid, Array.from(byId.values()) as any);
-
-      Alert.alert('Saved', 'Profile photo saved + uploaded.');
-      (nav as any)?.goBack?.();
     } catch (e: any) {
-      console.log('[ProfilePhotoCamera] failed:', e);
+      console.log('[ProfilePhotoCamera] save failed:', e);
       Alert.alert('Failed', String(e?.message ?? e));
-    } finally {
       setBusy(false);
     }
+  }
+
+  const retake = () => {
+    if (busy) return;
+
+    setPreviewUri(null);
+    setCameraReady(false);
+    setMountCam(false);
+
+    setTimeout(() => {
+      setMountCam(true);
+    }, 120);
   };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: 'black' }}>
-      {mountCam ? (
-        <CameraView
-          ref={camRef}
-          style={{ flex: 1 }}
-          facing="front"
-          mode="picture"
-          onCameraReady={() => setCameraReady(true)}
-          onMountError={(e: any) => {
-            const msg = e?.message || e?.nativeEvent?.message || 'Camera mount error';
-            console.warn('[profile camera mount error]', e);
-            Alert.alert('Camera error', msg);
-            setCameraReady(false);
-          }}
-        />
-      ) : (
-        <View style={{ flex: 1, backgroundColor: 'black' }} />
-      )}
+  if (!permission) {
+    return (
+      <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color="white" />
+      </View>
+    );
+  }
 
-      <View style={{ position: 'absolute', bottom: insets.bottom + 20, left: 0, right: 0, alignItems: 'center' }}>
+  if (!permission.granted) {
+    return (
+      <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+        <Text style={{ color: 'white', fontSize: 18, fontWeight: '900', marginBottom: 10, textAlign: 'center' }}>
+          Camera Access Needed
+        </Text>
+
+        <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginBottom: 18 }}>
+          Allow camera access to take an athlete profile photo.
+        </Text>
+
         <TouchableOpacity
-          disabled={!cameraReady || busy}
-          onPress={take}
+          onPress={async () => {
+            const res = await requestPermission();
+
+            if (res.granted) {
+              setCameraReady(false);
+              setMountCam(false);
+              setTimeout(() => setMountCam(true), 150);
+            }
+          }}
           style={{
-            opacity: cameraReady && !busy ? 1 : 0.5,
             backgroundColor: 'white',
-            paddingVertical: 12,
-            paddingHorizontal: 24,
+            paddingVertical: 14,
+            paddingHorizontal: 20,
             borderRadius: 999,
           }}
         >
-          <Text style={{ color: 'black', fontWeight: '900' }}>{busy ? 'Saving…' : 'Take Photo'}</Text>
+          <Text style={{ color: 'black', fontWeight: '900' }}>Enable Camera</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: 'black' }}>
+      {previewUri ? (
+        <Image source={{ uri: previewUri }} style={{ flex: 1 }} resizeMode="cover" />
+      ) : mountCam ? (
+        <CameraView
+          ref={camRef}
+          style={{ flex: 1 }}
+          facing={facing}
+          mode="picture"
+          onCameraReady={() => setCameraReady(true)}
+          onMountError={(e) => {
+            console.log('[ProfilePhotoCamera] mount error:', e);
+            setCameraReady(false);
+            setMountCam(false);
+            setTimeout(() => setMountCam(true), 250);
+          }}
+        />
+      ) : (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator color="white" />
+          <Text style={{ color: 'white', marginTop: 12 }}>Opening Camera...</Text>
+        </View>
+      )}
+
+      <View
+        style={{
+          position: 'absolute',
+          top: insets.top + 12,
+          left: 16,
+          right: 16,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <TouchableOpacity
+          onPress={() => nav.goBack()}
+          disabled={busy}
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            paddingVertical: 10,
+            paddingHorizontal: 14,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.25)',
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '900' }}>Close</Text>
+        </TouchableOpacity>
+
+        {!previewUri && (
+          <TouchableOpacity
+            onPress={flipCamera}
+            disabled={busy}
+            style={{
+              backgroundColor: 'rgba(0,0,0,0.65)',
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.25)',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '900' }}>
+              Flip: {facing === 'back' ? 'Back' : 'Front'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View
+        style={{
+          position: 'absolute',
+          bottom: insets.bottom + 20,
+          left: 0,
+          right: 0,
+          alignItems: 'center',
+        }}
+      >
+        {previewUri ? (
+          <View style={{ flexDirection: 'row', gap: 14 }}>
+            <TouchableOpacity
+              disabled={busy}
+              onPress={retake}
+              style={{
+                opacity: busy ? 0.5 : 1,
+                backgroundColor: 'rgba(0,0,0,0.65)',
+                paddingHorizontal: 22,
+                paddingVertical: 14,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.35)',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900' }}>Retake</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              disabled={busy}
+              onPress={usePhoto}
+              style={{
+                opacity: busy ? 0.5 : 1,
+                backgroundColor: 'white',
+                paddingHorizontal: 24,
+                paddingVertical: 14,
+                borderRadius: 999,
+              }}
+            >
+              <Text style={{ color: 'black', fontWeight: '900' }}>
+                {busy ? 'Saving...' : 'Use Photo'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            disabled={!cameraReady || busy}
+            onPress={take}
+            style={{
+              opacity: cameraReady && !busy ? 1 : 0.5,
+              backgroundColor: 'white',
+              paddingHorizontal: 26,
+              paddingVertical: 15,
+              borderRadius: 999,
+            }}
+          >
+            <Text style={{ color: 'black', fontWeight: '900' }}>
+              {busy ? 'Saving...' : 'Take Photo'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

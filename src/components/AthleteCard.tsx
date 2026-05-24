@@ -14,8 +14,6 @@ import {
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
 
-// IMPORTANT: adjust this relative import if your AthleteCard is in a different folder.
-// This should point to your existing ensureAnonymous() helper.
 import { ensureAnonymous } from '../../lib/firebase';
 
 import type { Athlete } from '../lib/athleteTypes';
@@ -31,10 +29,8 @@ function mustBaseUrl() {
 type Props = {
   a: Athlete;
   isWide: boolean;
-
   onRecord: (athleteName: string) => void;
   onStats: (athleteName: string) => void;
-
   onSetPhoto: (athleteId: string) => void;
   onRename: (athleteId: string, newName: string) => void;
   onDelete: (athleteId: string) => void;
@@ -54,7 +50,6 @@ function safeNum(v: any): number | null {
 
 function cachePathForAthlete(athleteId: string, photoUpdatedAt?: number | null) {
   const ver = safeNum(photoUpdatedAt) ?? 0;
-  // ✅ stable file path per athlete + version
   return `${FileSystem.documentDirectory}athlete_photos/${athleteId}/profile_${ver || 'v0'}.jpg`;
 }
 
@@ -64,9 +59,7 @@ async function ensureDir(dirUri: string) {
     if (!info.exists) {
       await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 async function fileInfo(uri: string) {
@@ -78,7 +71,6 @@ async function fileInfo(uri: string) {
 }
 
 async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; expiresInSec?: number } | null> {
-  // ✅ guarantee auth user exists (anon ok)
   await ensureAnonymous();
 
   const user = getAuth().currentUser;
@@ -99,7 +91,10 @@ async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; 
   const photoUrl = safeStr(j?.photoUrl);
   if (!photoUrl) return null;
 
-  return { photoUrl, expiresInSec: typeof j?.expiresInSec === 'number' ? j.expiresInSec : undefined };
+  return {
+    photoUrl,
+    expiresInSec: typeof j?.expiresInSec === 'number' ? j.expiresInSec : undefined,
+  };
 }
 
 export default function AthleteCard({
@@ -113,12 +108,9 @@ export default function AthleteCard({
 }: Props) {
   const [editOpen, setEditOpen] = useState(false);
   const [renameInput, setRenameInput] = useState(a.name);
-
-  // ✅ we resolve remote signed URL into a permanent cached local file
   const [resolvedRemoteUrl, setResolvedRemoteUrl] = useState<string | null>(null);
   const [cachedLocalUri, setCachedLocalUri] = useState<string | null>(null);
 
-  // avoids race conditions when scrolling list fast
   const reqIdRef = useRef(0);
 
   const styles = useMemo(() => {
@@ -138,7 +130,11 @@ export default function AthleteCard({
         backgroundColor: 'rgba(255,255,255,0.12)',
         borderColor: 'rgba(255,255,255,0.35)',
       },
-      btnDanger: { ...base, backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.35)' },
+      btnDanger: {
+        ...base,
+        backgroundColor: 'transparent',
+        borderColor: 'rgba(255,255,255,0.35)',
+      },
       btnStats: {
         ...base,
         backgroundColor: 'rgba(34,211,238,0.14)',
@@ -148,6 +144,81 @@ export default function AthleteCard({
       txtStats: { color: 'rgba(224,251,255,1)', fontWeight: '900' as const },
     };
   }, []);
+
+  const photoLocalUri = safeStr((a as any).photoLocalUri);
+  const photoKey = safeStr((a as any).photoKey);
+  const photoUpdatedAt = safeNum((a as any).photoUpdatedAt);
+  const photoUrlLegacy = safeStr((a as any).photoUrl);
+  const photoUriLegacy = safeStr((a as any).photoUri);
+
+  const displayUri =
+    photoLocalUri ||
+    cachedLocalUri ||
+    resolvedRemoteUrl ||
+    photoUrlLegacy ||
+    photoUriLegacy ||
+    null;
+
+  const imageVersionKey = `${a.id}:${photoUpdatedAt ?? 0}:${displayUri ?? 'none'}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    const myReq = ++reqIdRef.current;
+
+    async function run() {
+      if (photoLocalUri) {
+        setResolvedRemoteUrl(null);
+        setCachedLocalUri(null);
+        return;
+      }
+
+      setResolvedRemoteUrl(null);
+      setCachedLocalUri(null);
+
+      if (!photoKey) return;
+
+      const cacheUri = cachePathForAthlete(a.id, photoUpdatedAt);
+      const cacheDir = cacheUri.replace(/[^/]+$/, '');
+
+      const pre = await fileInfo(cacheUri);
+      if (pre?.exists && typeof pre.size === 'number' && pre.size > 2000) {
+        if (!cancelled && reqIdRef.current === myReq) setCachedLocalUri(cacheUri);
+        return;
+      }
+
+      const signed = await getSignedPhotoUrl(photoKey);
+      if (!signed?.photoUrl) return;
+
+      if (cancelled || reqIdRef.current !== myReq) return;
+      setResolvedRemoteUrl(signed.photoUrl);
+
+      try {
+        await ensureDir(cacheDir);
+        await FileSystem.downloadAsync(signed.photoUrl, cacheUri);
+
+        const post = await fileInfo(cacheUri);
+        if (post?.exists && typeof post.size === 'number' && post.size > 2000) {
+          if (!cancelled && reqIdRef.current === myReq) {
+            setCachedLocalUri(cacheUri);
+          }
+        } else {
+          try {
+            await FileSystem.deleteAsync(cacheUri, { idempotent: true });
+          } catch {}
+        }
+      } catch (e) {
+        console.log('[AthleteCard] cache download failed:', { id: a.id, name: a.name, e });
+      }
+    }
+
+    run().catch((e) => {
+      console.log('[AthleteCard] resolve remote photo failed:', { id: a.id, name: a.name, e });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [a.id, photoKey, photoUpdatedAt, photoLocalUri]);
 
   const openMore = () => {
     if (Platform.OS === 'ios') {
@@ -198,94 +269,6 @@ export default function AthleteCard({
     );
   };
 
-  const photoLocalUri = safeStr((a as any).photoLocalUri);
-  const photoKey = safeStr((a as any).photoKey);
-  const photoUpdatedAt = safeNum((a as any).photoUpdatedAt);
-
-  // legacy values kept but NOT trusted (can 401)
-  const photoUrlLegacy = safeStr((a as any).photoUrl);
-  const photoUriLegacy = safeStr((a as any).photoUri);
-
-  /**
-   * ✅ Display priority:
-   * 1) device-local
-   * 2) cached local from signed url
-   * 3) signed remote url
-   * 4) legacy (may 401)
-   */
-  const displayUri =
-    photoLocalUri ||
-    cachedLocalUri ||
-    resolvedRemoteUrl ||
-    photoUrlLegacy ||
-    photoUriLegacy ||
-    null;
-
-  // ✅ When athlete has photoKey but no local file, fetch signed url and cache it locally
-  useEffect(() => {
-    let cancelled = false;
-    const myReq = ++reqIdRef.current;
-
-    async function run() {
-      // If we have a local photo, we don't need cache/remote.
-      if (photoLocalUri) {
-        setResolvedRemoteUrl(null);
-        setCachedLocalUri(null);
-        return;
-      }
-
-      // cross-device requires photoKey
-      if (!photoKey) return;
-
-      const cacheUri = cachePathForAthlete(a.id, photoUpdatedAt);
-      const cacheDir = cacheUri.replace(/[^/]+$/, '');
-
-      // If cache already exists (and is non-trivial), use it.
-      const pre = await fileInfo(cacheUri);
-      if (pre?.exists && typeof pre.size === 'number' && pre.size > 2000) {
-        if (!cancelled && reqIdRef.current === myReq) setCachedLocalUri(cacheUri);
-        return;
-      }
-
-      // Get signed URL
-      const signed = await getSignedPhotoUrl(photoKey);
-      if (!signed?.photoUrl) return;
-
-      if (cancelled || reqIdRef.current !== myReq) return;
-      setResolvedRemoteUrl(signed.photoUrl);
-
-      // Cache permanently on this device
-      try {
-        await ensureDir(cacheDir);
-
-        await FileSystem.downloadAsync(signed.photoUrl, cacheUri);
-
-        const post = await fileInfo(cacheUri);
-        // Basic sanity check: image should be > ~2KB
-        if (post?.exists && typeof post.size === 'number' && post.size > 2000) {
-          if (!cancelled && reqIdRef.current === myReq) {
-            setCachedLocalUri(cacheUri);
-          }
-        } else {
-          // if we cached junk, remove it
-          try {
-            await FileSystem.deleteAsync(cacheUri, { idempotent: true });
-          } catch {}
-        }
-      } catch (e) {
-        console.log('[AthleteCard] cache download failed:', { id: a.id, name: a.name, e });
-      }
-    }
-
-    run().catch((e) => {
-      console.log('[AthleteCard] resolve remote photo failed:', { id: a.id, name: a.name, e });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [a.id, photoKey, photoUpdatedAt, photoLocalUri]);
-
   return (
     <View
       style={{
@@ -301,7 +284,9 @@ export default function AthleteCard({
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         {displayUri ? (
           <Image
+            key={imageVersionKey}
             source={{ uri: displayUri }}
+            resizeMode="cover"
             onError={(e) => {
               const native = (e as any)?.nativeEvent;
               console.log('[AthleteCard] image load failed:', {
@@ -311,12 +296,10 @@ export default function AthleteCard({
                 nativeEvent: native,
               });
 
-              // If signed url fails (expired), clear it and let effect refetch later
               if (resolvedRemoteUrl && displayUri === resolvedRemoteUrl) {
                 setResolvedRemoteUrl(null);
               }
 
-              // If cached local file got deleted or was bad, clear and refetch/cache again
               if (cachedLocalUri && displayUri === cachedLocalUri) {
                 setCachedLocalUri(null);
               }
