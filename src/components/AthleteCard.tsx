@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActionSheetIOS,
-  Alert,
   Image,
   Modal,
-  Platform,
+  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
@@ -99,51 +97,21 @@ async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; 
 
 export default function AthleteCard({
   a,
-  isWide,
   onRecord,
   onStats,
   onSetPhoto,
   onRename,
   onDelete,
 }: Props) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteStepTwo, setDeleteStepTwo] = useState(false);
   const [renameInput, setRenameInput] = useState(a.name);
   const [resolvedRemoteUrl, setResolvedRemoteUrl] = useState<string | null>(null);
   const [cachedLocalUri, setCachedLocalUri] = useState<string | null>(null);
 
   const reqIdRef = useRef(0);
-
-  const styles = useMemo(() => {
-    const base = {
-      paddingVertical: 8,
-      paddingHorizontal: 12,
-      borderRadius: 999,
-      marginRight: 8,
-      marginTop: 8,
-      borderWidth: 1 as const,
-    };
-
-    return {
-      btnPrimary: { ...base, backgroundColor: '#DC2626', borderColor: '#DC2626' },
-      btnSecondary: {
-        ...base,
-        backgroundColor: 'rgba(255,255,255,0.12)',
-        borderColor: 'rgba(255,255,255,0.35)',
-      },
-      btnDanger: {
-        ...base,
-        backgroundColor: 'transparent',
-        borderColor: 'rgba(255,255,255,0.35)',
-      },
-      btnStats: {
-        ...base,
-        backgroundColor: 'rgba(34,211,238,0.14)',
-        borderColor: 'rgba(34,211,238,0.55)',
-      },
-      txtWhite: { color: 'white', fontWeight: '800' as const },
-      txtStats: { color: 'rgba(224,251,255,1)', fontWeight: '900' as const },
-    };
-  }, []);
 
   const photoLocalUri = safeStr((a as any).photoLocalUri);
   const photoKey = safeStr((a as any).photoKey);
@@ -160,6 +128,21 @@ export default function AthleteCard({
     null;
 
   const imageVersionKey = `${a.id}:${photoUpdatedAt ?? 0}:${displayUri ?? 'none'}`;
+
+  const initials = useMemo(() => {
+    return (
+      a.name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((s) => s[0]?.toUpperCase() ?? '')
+        .join('') || 'U'
+    );
+  }, [a.name]);
+
+  useEffect(() => {
+    setRenameInput(a.name);
+  }, [a.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,9 +181,7 @@ export default function AthleteCard({
 
         const post = await fileInfo(cacheUri);
         if (post?.exists && typeof post.size === 'number' && post.size > 2000) {
-          if (!cancelled && reqIdRef.current === myReq) {
-            setCachedLocalUri(cacheUri);
-          }
+          if (!cancelled && reqIdRef.current === myReq) setCachedLocalUri(cacheUri);
         } else {
           try {
             await FileSystem.deleteAsync(cacheUri, { idempotent: true });
@@ -218,53 +199,68 @@ export default function AthleteCard({
     return () => {
       cancelled = true;
     };
-  }, [a.id, photoKey, photoUpdatedAt, photoLocalUri]);
+  }, [a.id, a.name, photoKey, photoUpdatedAt, photoLocalUri]);
 
-  const openMore = () => {
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Cancel', 'Delete'],
-          cancelButtonIndex: 0,
-          destructiveButtonIndex: 1,
-          userInterfaceStyle: 'dark',
-          title: a.name,
-        },
-        (idx) => {
-          if (idx === 1) onDelete(a.id);
-        }
-      );
-    } else {
-      Alert.alert(a.name, undefined, [
-        { text: 'Delete', style: 'destructive', onPress: () => onDelete(a.id) },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
+  const closeMenu = () => setMenuOpen(false);
+
+  const closeDelete = () => {
+    setDeleteOpen(false);
+    setDeleteStepTwo(false);
   };
 
-  const ActionBtn = ({
-    label,
-    onPress,
-    kind = 'secondary',
-  }: {
-    label: string;
-    onPress: () => void;
-    kind?: 'primary' | 'secondary' | 'danger' | 'stats';
-  }) => {
-    const style =
-      kind === 'primary'
-        ? styles.btnPrimary
-        : kind === 'danger'
-          ? styles.btnDanger
-          : kind === 'stats'
-            ? styles.btnStats
-            : styles.btnSecondary;
+  const menuPhotoLabel = displayUri ? 'Change Photo' : 'Set Photo';
 
-    const textStyle = kind === 'stats' ? styles.txtStats : styles.txtWhite;
+  const MenuButton = ({
+    title,
+    subtitle,
+    variant = 'default',
+    onPress,
+  }: {
+    title: string;
+    subtitle: string;
+    variant?: 'default' | 'photo' | 'rename' | 'danger';
+    onPress: () => void;
+  }) => {
+    const isDanger = variant === 'danger';
 
     return (
-      <TouchableOpacity onPress={onPress} style={style}>
-        <Text style={textStyle}>{label}</Text>
+      <TouchableOpacity
+        onPress={onPress}
+        style={{
+          paddingVertical: 13,
+          paddingHorizontal: 14,
+          borderRadius: 14,
+          backgroundColor:
+            variant === 'photo'
+              ? 'rgba(34,211,238,0.18)'
+              : variant === 'rename'
+                ? 'rgba(255,255,255,0.14)'
+                : isDanger
+                  ? '#DC2626'
+                  : 'rgba(255,255,255,0.12)',
+          borderWidth: 1,
+          borderColor:
+            variant === 'photo'
+              ? 'rgba(34,211,238,0.65)'
+              : variant === 'rename'
+                ? 'rgba(255,255,255,0.22)'
+                : isDanger
+                  ? '#DC2626'
+                  : 'rgba(255,255,255,0.16)',
+          marginTop: 9,
+        }}
+      >
+        <Text style={{ color: 'white', fontSize: 15, fontWeight: '900' }}>{title}</Text>
+        <Text
+          style={{
+            color: isDanger ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.62)',
+            fontSize: 12,
+            fontWeight: '700',
+            marginTop: 2,
+          }}
+        >
+          {subtitle}
+        </Text>
       </TouchableOpacity>
     );
   };
@@ -272,13 +268,13 @@ export default function AthleteCard({
   return (
     <View
       style={{
-        padding: 12,
+        padding: 13,
         marginHorizontal: 16,
-        marginVertical: 8,
-        borderRadius: 16,
+        marginVertical: 7,
+        borderRadius: 18,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.12)',
-        backgroundColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: 'rgba(255,255,255,0.055)',
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -296,13 +292,8 @@ export default function AthleteCard({
                 nativeEvent: native,
               });
 
-              if (resolvedRemoteUrl && displayUri === resolvedRemoteUrl) {
-                setResolvedRemoteUrl(null);
-              }
-
-              if (cachedLocalUri && displayUri === cachedLocalUri) {
-                setCachedLocalUri(null);
-              }
+              if (resolvedRemoteUrl && displayUri === resolvedRemoteUrl) setResolvedRemoteUrl(null);
+              if (cachedLocalUri && displayUri === cachedLocalUri) setCachedLocalUri(null);
             }}
             style={{
               width: 56,
@@ -322,55 +313,301 @@ export default function AthleteCard({
               justifyContent: 'center',
             }}
           >
-            <Text style={{ color: 'white', opacity: 0.7, fontSize: 22 }}>👤</Text>
+            <Text style={{ color: 'white', opacity: 0.82, fontSize: 16, fontWeight: '900' }}>
+              {initials}
+            </Text>
           </View>
         )}
 
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }} numberOfLines={1}>
             {a.name}
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
-            Record or manage athlete
+          <Text style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, marginTop: 2 }}>
+            Athlete profile
           </Text>
         </View>
+
+        <TouchableOpacity
+          onPress={() => setMenuOpen(true)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(255,255,255,0.09)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.14)',
+          }}
+        >
+          <Text style={{ color: 'white', fontSize: 23, fontWeight: '900', marginTop: -5 }}>
+            ⋯
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-        <ActionBtn label="Record" kind="primary" onPress={() => onRecord(a.name)} />
-        <ActionBtn label="Stats" kind="stats" onPress={() => onStats(a.name)} />
-        <ActionBtn label={displayUri ? 'Change Photo' : 'Set Photo'} onPress={() => onSetPhoto(a.id)} />
-        <ActionBtn label="Rename" onPress={() => setEditOpen(true)} />
-        {isWide ? (
-          <ActionBtn label="Delete" kind="danger" onPress={() => onDelete(a.id)} />
-        ) : (
-          <ActionBtn label="More" onPress={openMore} />
-        )}
+      <View style={{ flexDirection: 'row', gap: 9, marginTop: 12 }}>
+        <TouchableOpacity
+          onPress={() => onRecord(a.name)}
+          style={{
+            flex: 1,
+            paddingVertical: 12,
+            borderRadius: 13,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#DC2626',
+          }}
+        >
+          <Text style={{ color: 'white', fontSize: 14, fontWeight: '900' }}>Record</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => onStats(a.name)}
+          style={{
+            flex: 1,
+            paddingVertical: 12,
+            borderRadius: 13,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(34,211,238,0.13)',
+            borderWidth: 1,
+            borderColor: 'rgba(34,211,238,0.50)',
+          }}
+        >
+          <Text style={{ color: 'rgba(224,251,255,1)', fontSize: 14, fontWeight: '900' }}>
+            Stats
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 }}>
+      <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={closeMenu}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.68)', justifyContent: 'flex-end' }}>
+          <Pressable
+            onPress={closeMenu}
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+          />
+
+          <View
+            style={{
+              marginHorizontal: 14,
+              marginBottom: 16,
+              borderRadius: 22,
+              padding: 14,
+              backgroundColor: '#101010',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.16)',
+            }}
+          >
+            <View
+              style={{
+                width: 42,
+                height: 4,
+                borderRadius: 999,
+                backgroundColor: 'rgba(255,255,255,0.22)',
+                alignSelf: 'center',
+                marginBottom: 12,
+              }}
+            />
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              {displayUri ? (
+                <Image
+                  source={{ uri: displayUri }}
+                  resizeMode="cover"
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 21,
+                    marginRight: 10,
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                  }}
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 21,
+                    marginRight: 10,
+                    backgroundColor: 'rgba(255,255,255,0.12)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '900' }}>{initials}</Text>
+                </View>
+              )}
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: 'white', fontSize: 17, fontWeight: '900' }} numberOfLines={1}>
+                  {a.name}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.52)', fontSize: 12, marginTop: 2 }}>
+                  Manage athlete
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={closeMenu}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 17,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.10)',
+                }}
+              >
+                <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <MenuButton
+              title={menuPhotoLabel}
+              subtitle="Update this athlete’s profile picture"
+              variant="photo"
+              onPress={() => {
+                closeMenu();
+                onSetPhoto(a.id);
+              }}
+            />
+
+            <MenuButton
+              title="Rename"
+              subtitle="Edit the athlete name"
+              variant="rename"
+              onPress={() => {
+                closeMenu();
+                setEditOpen(true);
+              }}
+            />
+
+            <MenuButton
+              title="Delete"
+              subtitle="Requires two confirmations"
+              variant="danger"
+              onPress={() => {
+                closeMenu();
+                setDeleteStepTwo(false);
+                setDeleteOpen(true);
+              }}
+            />
+
+            <TouchableOpacity
+              onPress={closeMenu}
+              style={{
+                marginTop: 11,
+                paddingVertical: 12,
+                borderRadius: 14,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.10)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.12)',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={deleteOpen} animationType="fade" onRequestClose={closeDelete}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'center', padding: 24 }}>
           <View
             style={{
               backgroundColor: '#121212',
-              borderRadius: 16,
+              borderRadius: 20,
+              padding: 16,
+              borderWidth: 1,
+              borderColor: deleteStepTwo ? 'rgba(248,113,113,0.65)' : 'rgba(255,255,255,0.15)',
+            }}
+          >
+            <Text style={{ color: 'white', fontSize: 19, fontWeight: '900' }}>
+              {deleteStepTwo ? 'Final confirmation' : 'Delete athlete?'}
+            </Text>
+
+            <Text style={{ color: 'rgba(255,255,255,0.70)', marginTop: 8, lineHeight: 20 }}>
+              {deleteStepTwo
+                ? `This will delete “${a.name}” from your athlete list. Tap Confirm Delete to finish.`
+                : `Are you sure you want to delete “${a.name}”? This is meant to prevent accidental taps.`}
+            </Text>
+
+            <View style={{ marginTop: 16, gap: 10 }}>
+              {!deleteStepTwo ? (
+                <TouchableOpacity
+                  onPress={() => setDeleteStepTwo(true)}
+                  style={{
+                    paddingVertical: 13,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                    backgroundColor: '#DC2626',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '900' }}>Yes, Continue</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => {
+                    closeDelete();
+                    onDelete(a.id);
+                  }}
+                  style={{
+                    paddingVertical: 13,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                    backgroundColor: '#DC2626',
+                    borderWidth: 1,
+                    borderColor: 'rgba(248,113,113,0.9)',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '900' }}>Confirm Delete</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                onPress={closeDelete}
+                style={{
+                  paddingVertical: 13,
+                  borderRadius: 14,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.14)',
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '900' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => setEditOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 24 }}>
+          <View
+            style={{
+              backgroundColor: '#121212',
+              borderRadius: 18,
               padding: 16,
               borderWidth: 1,
               borderColor: 'rgba(255,255,255,0.15)',
             }}
           >
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Rename Athlete</Text>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>Rename Athlete</Text>
 
             <TextInput
               value={renameInput}
               onChangeText={setRenameInput}
               placeholder="Name"
               placeholderTextColor="rgba(255,255,255,0.4)"
+              autoCorrect={false}
               style={{
                 marginTop: 12,
-                paddingVertical: 10,
+                paddingVertical: 11,
                 paddingHorizontal: 12,
-                borderRadius: 10,
+                borderRadius: 12,
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.25)',
                 color: 'white',
@@ -379,7 +616,10 @@ export default function AthleteCard({
 
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 14 }}>
               <TouchableOpacity
-                onPress={() => setEditOpen(false)}
+                onPress={() => {
+                  setRenameInput(a.name);
+                  setEditOpen(false);
+                }}
                 style={{
                   paddingVertical: 10,
                   paddingHorizontal: 14,
@@ -387,7 +627,7 @@ export default function AthleteCard({
                   backgroundColor: 'rgba(255,255,255,0.12)',
                 }}
               >
-                <Text style={{ color: 'white', fontWeight: '700' }}>Cancel</Text>
+                <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -402,7 +642,7 @@ export default function AthleteCard({
                   backgroundColor: 'white',
                 }}
               >
-                <Text style={{ color: 'black', fontWeight: '800' }}>Save</Text>
+                <Text style={{ color: 'black', fontWeight: '900' }}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
