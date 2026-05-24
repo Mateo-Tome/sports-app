@@ -27,7 +27,7 @@ function mustBaseUrl() {
 type Props = {
   a: Athlete;
   isWide: boolean;
-  onRecord: (athleteName: string) => void;
+  onRecord: (athlete: Athlete) => void;
   onStats: (athleteName: string) => void;
   onSetPhoto: (athleteId: string) => void;
   onRename: (athleteId: string, newName: string) => void;
@@ -350,7 +350,7 @@ export default function AthleteCard({
 
       <View style={{ flexDirection: 'row', gap: 9, marginTop: 12 }}>
         <TouchableOpacity
-          onPress={() => onRecord(a.name)}
+          onPress={() => onRecord(a)}
           style={{
             flex: 1,
             paddingVertical: 12,
