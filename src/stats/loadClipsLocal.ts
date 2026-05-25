@@ -1,9 +1,19 @@
 // src/stats/loadClipsLocal.ts
+
 import { readIndex } from '../../lib/library/indexStore';
 import { readSidecarForUpload } from '../../lib/library/sidecars';
 import type { ClipSidecar } from './types';
 
 type Outcome = 'W' | 'L' | 'T';
+
+function clean(v: any): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+function cleanOrNull(v: any): string | null {
+  const s = clean(v);
+  return s.length ? s : null;
+}
 
 function computeOutcome(sc: any): Outcome | null {
   const existing = String(sc?.outcome ?? '').trim().toUpperCase();
@@ -47,13 +57,15 @@ function computeOutcome(sc: any): Outcome | null {
 
 /**
  * Local clips = on THIS device
- * - list from documentDirectory/videos/index.json
- * - sidecar JSON next to each mp4
+ * New clips match by athleteId first.
+ * Old clips fallback to athlete name.
  */
 export async function loadClipsForAthleteFromLocal(
   athleteName: string,
+  athleteId?: string | null,
 ): Promise<ClipSidecar[]> {
-  const athlete = String(athleteName || '').trim() || 'Unassigned';
+  const athlete = clean(athleteName) || 'Unassigned';
+  const wantedAthleteId = cleanOrNull(athleteId);
 
   const index = await readIndex();
   const sorted = [...index].sort(
@@ -63,17 +75,29 @@ export async function loadClipsForAthleteFromLocal(
   const out: ClipSidecar[] = [];
 
   for (const meta of sorted) {
-    const uri = String(meta?.uri ?? '');
+    const uri = clean(meta?.uri);
     if (!uri) continue;
     if (uri.startsWith('cloud:')) continue;
 
     const sc: any = await readSidecarForUpload(uri);
     if (!sc) continue;
 
-    const scAthlete =
-      String(sc?.athlete ?? meta?.athlete ?? '').trim() || 'Unassigned';
+    const clipAthleteId =
+      cleanOrNull(sc?.athleteId) ?? cleanOrNull((meta as any)?.athleteId);
 
-    if (scAthlete.toLowerCase() !== athlete.toLowerCase()) continue;
+    const clipAthleteName =
+      clean(sc?.athleteName) ||
+      clean(sc?.athlete) ||
+      clean((meta as any)?.athleteName) ||
+      clean((meta as any)?.athlete) ||
+      'Unassigned';
+
+    const matches =
+      wantedAthleteId && clipAthleteId
+        ? clipAthleteId === wantedAthleteId
+        : clipAthleteName.toLowerCase() === athlete.toLowerCase();
+
+    if (!matches) continue;
 
     const homeIsAthlete =
       typeof sc?.homeIsAthlete === 'boolean' ? sc.homeIsAthlete : true;
@@ -84,7 +108,10 @@ export async function loadClipsForAthleteFromLocal(
     });
 
     out.push({
-      athlete: scAthlete,
+      athlete: clipAthleteName,
+      athleteName: clipAthleteName,
+      athleteId: clipAthleteId,
+
       sport: sc?.sport ?? meta?.sport ?? 'unknown',
       style: sc?.style ?? null,
       events: Array.isArray(sc?.events) ? sc.events : [],

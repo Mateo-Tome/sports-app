@@ -49,16 +49,30 @@ function Header({
   );
 }
 
+function cleanParam(v: unknown, fallback = '') {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const s = String(raw ?? fallback).trim();
+  return s || fallback;
+}
+
 export default function AthleteSportStatsScreen() {
   const insets = useSafeAreaInsets();
+
   const params = useLocalSearchParams<{
     athlete: string;
+    athleteId?: string;
     sportKey: string;
     source?: string;
   }>();
 
-  const athleteName = decodeURIComponent(String(params.athlete ?? 'Unassigned'));
-  const sportKey = decodeURIComponent(String(params.sportKey ?? ''));
+  const athleteName = decodeURIComponent(
+    cleanParam(params.athlete, 'Unassigned'),
+  );
+
+  const athleteId = cleanParam(params.athleteId, '');
+
+  const sportKey = decodeURIComponent(cleanParam(params.sportKey, ''));
+
   const source = (params.source === 'cloud' ? 'cloud' : 'local') as
     | 'local'
     | 'cloud';
@@ -77,8 +91,14 @@ export default function AthleteSportStatsScreen() {
 
         const clips =
           source === 'cloud'
-            ? await loadVerifiedClipsForAthleteFromCloud(athleteName)
-            : await loadClipsForAthleteFromLocal(athleteName);
+            ? await (loadVerifiedClipsForAthleteFromCloud as any)(
+                athleteName,
+                athleteId || null,
+              )
+            : await loadClipsForAthleteFromLocal(
+                athleteName,
+                athleteId || null,
+              );
 
         const s = buildAthleteStats(athleteName, clips);
 
@@ -96,7 +116,7 @@ export default function AthleteSportStatsScreen() {
     return () => {
       alive = false;
     };
-  }, [athleteName, source]);
+  }, [athleteName, athleteId, source]);
 
   const sportStats = summary?.bySport?.[sportKey];
 
