@@ -11,6 +11,13 @@ type SwimEvent = {
   distance: string;
 };
 
+function paramToStr(v: unknown, fallback = '') {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const s = raw == null ? '' : String(raw);
+  const t = s.trim();
+  return t.length ? t : fallback;
+}
+
 const YOUTH_EVENTS: SwimEvent[] = [
   { label: '25 Free', raceLabel: '25 Free', stroke: 'freestyle', distance: '25' },
   { label: '25 Back', raceLabel: '25 Back', stroke: 'backstroke', distance: '25' },
@@ -73,9 +80,13 @@ export default function SwimmingSelection() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const params = useLocalSearchParams<{ athlete?: string | string[] }>();
-  const athleteParam = Array.isArray(params.athlete) ? params.athlete[0] : params.athlete;
-  const athlete = (athleteParam ?? 'Unassigned').trim() || 'Unassigned';
+  const params = useLocalSearchParams<{
+    athlete?: string | string[];
+    athleteId?: string | string[];
+  }>();
+
+  const athlete = paramToStr(params.athlete, 'Unassigned') || 'Unassigned';
+  const athleteId = paramToStr(params.athleteId, '');
 
   const go = (event: SwimEvent) => {
     const swimRace = JSON.stringify({
@@ -88,15 +99,14 @@ export default function SwimmingSelection() {
       pathname: '/record/camera',
       params: {
         athlete,
+        athleteId,
         sport: 'swimming',
         style: 'race',
 
-        // normal params
         stroke: event.stroke,
         distance: event.distance,
         raceLabel: event.raceLabel,
 
-        // backup single param in case individual params get dropped
         swimRace,
       },
     });
