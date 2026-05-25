@@ -571,6 +571,7 @@ function LibraryVideoRowComponent({
         }
   }
 >
+  
   {uploaded ? (
     shareId ? (
       <ShareButton shareId={shareId} />
