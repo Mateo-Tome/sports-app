@@ -34,10 +34,19 @@ type FinalizeRecordingOptions = {
   orientationOverride?: OrientationOverride;
   viewportWidth?: number;
   viewportHeight?: number;
+
+  // permanent athlete identity
+  athleteId?: string | null;
 };
 
 type SidecarPayload = {
+  // legacy/display
   athlete: string;
+  athleteName: string;
+
+  // permanent identity
+  athleteId?: string | null;
+
   sport: string;
   style: string;
   createdAt: number;
@@ -115,9 +124,15 @@ export async function finalizeRecording(
   const athlete = (chosenAthlete || '').trim() || 'Unassigned';
   const sport = (sportKey || '').trim() || 'unknown';
 
+  const athleteId =
+    typeof options.athleteId === 'string' && options.athleteId.trim()
+      ? options.athleteId.trim()
+      : null;
+
   const { appUri } = await saveToAppStorage(finalPath, athlete, sport, {
     importToPhotos: false,
-  });
+    athleteId,
+  } as any);
 
   log('saveToAppStorage done');
 
@@ -130,6 +145,9 @@ export async function finalizeRecording(
 
     const payload: SidecarPayload = {
       athlete,
+      athleteName: athlete,
+      athleteId,
+
       sport: sportOnlyRaw || 'unknown',
       style: styleRaw || 'default',
       createdAt: Date.now(),
@@ -183,7 +201,8 @@ export async function finalizeRecording(
         const clips = await processHighlights(appUri, markers, HILITE_DURATION_SEC, athlete, {
           importHighlightsToPhotos: false,
           maxClips: 12,
-        });
+          athleteId,
+        } as any);
 
         log(`post: highlights done clips=${clips.length}`);
 
@@ -196,6 +215,9 @@ export async function finalizeRecording(
               url: c.url,
               markerTime: c.markerTime,
             }));
+
+            parsed.athleteName = parsed.athleteName || parsed.athlete || athlete;
+            parsed.athleteId = parsed.athleteId ?? athleteId;
 
             parsed.orientationOverride = normalizeOrientationOverride(parsed.orientationOverride);
             parsed.recordingOrientation = normalizeRecordingOrientation(parsed.recordingOrientation);
