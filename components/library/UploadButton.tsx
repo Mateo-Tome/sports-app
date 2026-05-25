@@ -381,8 +381,16 @@ export function UploadButton(props: Props) {
   }
 
   return (
-    <View style={{ alignItems: "flex-start", gap: 6, minWidth: 180 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View style={{ width: "100%", alignItems: "stretch", gap: 6, minWidth: 0 }}>
+     <View
+  style={{
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    maxWidth: "100%",
+  }}
+>
         <Pressable
           disabled={isBusy}
           onPress={async (e: any) => {
@@ -801,8 +809,8 @@ export function UploadButton(props: Props) {
         </Text>
       )}
 
-      {showProgressBar && currentProgress && (
-        <View style={{ width: 180, gap: 4 }}>
+{showProgressBar && currentProgress && (
+  <View style={{ width: "100%", gap: 4 }}>
           <View
             style={{
               width: "100%",
