@@ -556,27 +556,41 @@ function LibraryVideoRowComponent({
                   <ActionButton label="Delete" onPress={onPressDelete} danger />
                 </View>
 
-                <View style={{ marginTop: 2, alignItems: 'flex-start' }}>
-                  {uploaded ? (
-                    shareId ? (
-                      <ShareButton shareId={shareId} />
-                    ) : (
-                      <UploadedStatus />
-                    )
-                  ) : (
-                    <UploadButton
-                      localUri={row.uri}
-                      uploaded={uploaded}
-                      sidecar={{
-                        videoPath: row.uri,
-                        athlete: row.athlete,
-                        sport: row.sport,
-                        createdAt: row.mtime ?? Date.now(),
-                      }}
-                      onUploaded={onUploaded}
-                    />
-                  )}
-                </View>
+                <View
+  style={
+    uploaded
+      ? {
+          marginTop: 2,
+          alignItems: 'flex-start',
+        }
+      : {
+          marginTop: 2,
+          width: '100%',
+          alignSelf: 'stretch',
+          alignItems: 'stretch',
+        }
+  }
+>
+  {uploaded ? (
+    shareId ? (
+      <ShareButton shareId={shareId} />
+    ) : (
+      <UploadedStatus />
+    )
+  ) : (
+    <UploadButton
+      localUri={row.uri}
+      uploaded={uploaded}
+      sidecar={{
+        videoPath: row.uri,
+        athlete: row.athlete,
+        sport: row.sport,
+        createdAt: row.mtime ?? Date.now(),
+      }}
+      onUploaded={onUploaded}
+    />
+  )}
+</View>
               </View>
             ) : null}
           </View>
