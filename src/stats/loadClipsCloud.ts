@@ -1,16 +1,23 @@
 // src/stats/loadClipsCloud.ts
-import { collection, getDocs, getFirestore, limit, orderBy, query, where } from 'firebase/firestore';
+
+import {
+  collection,
+  getDocs,
+  getFirestore,
+  limit,
+  orderBy,
+  query,
+  where,
+} from 'firebase/firestore';
+
 import { app, auth, ensureAnonymous } from '../../lib/firebase';
 import { fetchClipSidecarByShareId } from './fetchSidecarByShareId';
 import type { ClipSidecar } from './types';
 
-/**
- * Run async work in parallel, but limit concurrency so you don't spike network / function limits.
- */
 async function mapLimit<T, R>(
   items: T[],
   maxConcurrent: number,
-  fn: (item: T, idx: number) => Promise<R>
+  fn: (item: T, idx: number) => Promise<R>,
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let nextIndex = 0;
@@ -27,47 +34,89 @@ async function mapLimit<T, R>(
   return out;
 }
 
-/**
- * Cloud = "verified" stats = stats computed ONLY from clips that were uploaded
- * and have a shareId (and usually a sidecar in B2).
- *
- * IMPORTANT:
- * - Firestore is used ONLY to list which clips exist (metadata).
- * - Sidecar JSON is fetched from B2 through your Firebase Function proxy (getSidecar).
- * - No video downloading.
- */
-export async function loadClipsForAthleteFromCloud(athleteName: string): Promise<ClipSidecar[]> {
-  const clean = (athleteName || '').trim();
-  if (!clean) return [];
+function clean(v: any): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
 
-  // make sure we have a user (anon ok)
+function cleanOrNull(v: any): string | null {
+  const s = clean(v);
+  return s.length ? s : null;
+}
+
+export async function loadClipsForAthleteFromCloud(
+  athleteName: string,
+  athleteId?: string | null,
+): Promise<ClipSidecar[]> {
+  const cleanName = clean(athleteName);
+  const cleanId = cleanOrNull(athleteId);
+
+  if (!cleanName && !cleanId) return [];
+
   await ensureAnonymous();
+
   const uid = auth.currentUser?.uid;
   if (!uid) return [];
 
   const db = getFirestore(app);
+  const videosRef = collection(db, 'videos');
 
-  // Only read metadata docs for this user + athlete
-  const q = query(
-    collection(db, 'videos'),
-    where('ownerUid', '==', uid),
-    where('athleteName', '==', clean),
-    orderBy('createdAt', 'desc'),
-    limit(100)
-  );
+  const snaps = [];
 
-  const snap = await getDocs(q);
+  if (cleanId) {
+    const byId = query(
+      videosRef,
+      where('ownerUid', '==', uid),
+      where('athleteId', '==', cleanId),
+      orderBy('createdAt', 'desc'),
+      limit(100),
+    );
 
-  // fetch sidecars in parallel (6 at a time)
-  const results = await mapLimit(snap.docs, 6, async (doc) => {
+    snaps.push(await getDocs(byId));
+  }
+
+  if (cleanName) {
+    const byName = query(
+      videosRef,
+      where('ownerUid', '==', uid),
+      where('athleteName', '==', cleanName),
+      orderBy('createdAt', 'desc'),
+      limit(100),
+    );
+
+    snaps.push(await getDocs(byName));
+  }
+
+  const docsById = new Map<string, any>();
+
+  for (const snap of snaps) {
+    for (const doc of snap.docs) {
+      docsById.set(doc.id, doc);
+    }
+  }
+
+  const docs = Array.from(docsById.values());
+
+  const results = await mapLimit(docs, 6, async (doc) => {
     const d: any = doc.data() || {};
-    const shareId = String(d?.shareId || '').trim();
+    const shareId = clean(d?.shareId);
+
     if (!shareId) return null;
 
     try {
       const sc = await fetchClipSidecarByShareId(shareId);
 
-      // Make sure createdAt exists (prefer Firestore timestamp/number if present)
+      const sidecarAthleteName =
+        clean((sc as any)?.athleteName) ||
+        clean((sc as any)?.athlete) ||
+        clean(d?.athleteName) ||
+        cleanName ||
+        'Unassigned';
+
+      const sidecarAthleteId =
+        cleanOrNull((sc as any)?.athleteId) ??
+        cleanOrNull(d?.athleteId) ??
+        cleanId;
+
       const createdAt =
         typeof d?.createdAt === 'number'
           ? d.createdAt
@@ -77,33 +126,37 @@ export async function loadClipsForAthleteFromCloud(athleteName: string): Promise
 
       const clip: ClipSidecar = {
         ...(sc as any),
-        athlete: (sc as any)?.athlete?.trim() ? (sc as any).athlete : clean,
+
+        athlete: sidecarAthleteName,
+        athleteName: sidecarAthleteName,
+        athleteId: sidecarAthleteId,
+
         createdAt,
       } as any;
 
       return clip;
     } catch (e) {
-      // If one clip fails, skip it (don’t break the whole stats page)
       console.log('[loadClipsForAthleteFromCloud] sidecar fetch failed', {
         shareId,
-        athleteName: clean,
+        athleteName: cleanName,
+        athleteId: cleanId,
         e,
       });
+
       return null;
     }
   });
 
   const out = results.filter(Boolean) as ClipSidecar[];
 
-  // newest first
   out.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
   return out;
 }
 
-/**
- * Your screens import this name, so keep it.
- * For now it’s the same as loadClipsForAthleteFromCloud().
- */
-export async function loadVerifiedClipsForAthleteFromCloud(athleteName: string): Promise<ClipSidecar[]> {
-  return loadClipsForAthleteFromCloud(athleteName);
+export async function loadVerifiedClipsForAthleteFromCloud(
+  athleteName: string,
+  athleteId?: string | null,
+): Promise<ClipSidecar[]> {
+  return loadClipsForAthleteFromCloud(athleteName, athleteId);
 }

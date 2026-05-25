@@ -545,10 +545,18 @@ export function UploadButton(props: Props) {
                 const localName = fileNameFromUri(localUri);
                 const fallbackTitle = stripExt(localName);
 
-                const athleteName = safeString(fullSidecar?.athlete, "Unassigned");
+                const athleteName = safeString(
+                  fullSidecar?.athleteName ?? fullSidecar?.athlete,
+                  "Unassigned"
+                );
+                
+                const athleteId =
+                  typeof fullSidecar?.athleteId === "string" && fullSidecar.athleteId.trim()
+                    ? fullSidecar.athleteId.trim()
+                    : null;
+                
                 const sport = safeString(fullSidecar?.sport, "unknown");
                 const style = safeString(fullSidecar?.style, "");
-
                 const effectiveSport = fullSidecar
                   ? getSportKeyFromSidecar(fullSidecar)
                   : sport;
@@ -646,6 +654,7 @@ export function UploadButton(props: Props) {
 
                   title,
                   athleteName,
+                  athleteId,
                   sport,
                   style: style || null,
                   sportStyle: sportStyle || null,
