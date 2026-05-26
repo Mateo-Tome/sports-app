@@ -13,6 +13,10 @@ import {
 type OrientationOverride = 0 | 90 | 180 | 270;
 
 type SidecarMeta = {
+  athlete?: string | null;
+  athleteName?: string | null;
+  athleteId?: string | null;
+
   sport?: string;
   style?: string;
   createdAt?: number;
@@ -24,6 +28,9 @@ type SidecarMeta = {
 };
 
 type SidecarWithOrientation = Sidecar & {
+  athleteName?: string | null;
+  athleteId?: string | null;
+
   orientationOverride?: OrientationOverride;
 
   raceLabel?: string | null;
@@ -50,7 +57,7 @@ function accumulate(evts: EventRow[]) {
 
     return {
       ...e,
-      scoreAfter: e.scoreAfter ?? {
+      scoreAfter: {
         home: h,
         opponent: o,
       },
@@ -203,6 +210,14 @@ export function useLocalSidecar(args: {
 
       const pathGuess = videoPath ? parseSportStyleFromVideoPath(videoPath) : {};
 
+      const finalAthleteName =
+        cleanString(athleteName) ||
+        cleanString(sidecarMeta.current.athleteName) ||
+        cleanString(sidecarMeta.current.athlete) ||
+        'Athlete';
+
+      const finalAthleteId = cleanString(sidecarMeta.current.athleteId);
+
       const finalSport =
         (sport ?? '').trim() ||
         (sidecarMeta.current.sport ?? '').trim() ||
@@ -231,7 +246,10 @@ export function useLocalSidecar(args: {
       );
 
       const payload: SidecarWithOrientation = {
-        athlete: athleteName,
+        athlete: finalAthleteName,
+        athleteName: finalAthleteName,
+        athleteId: finalAthleteId,
+
         sport: finalSport,
         style: finalStyle,
 
@@ -275,6 +293,10 @@ export function useLocalSidecar(args: {
 
       sidecarMeta.current = {
         ...sidecarMeta.current,
+        athlete: finalAthleteName,
+        athleteName: finalAthleteName,
+        athleteId: finalAthleteId,
+
         sport: finalSport,
         style: finalStyle,
         raceLabel: finalRaceLabel,
@@ -283,6 +305,7 @@ export function useLocalSidecar(args: {
         orientationOverride: finalOrientationOverride,
       };
 
+      setAthleteName(finalAthleteName);
       setRaceLabel(finalRaceLabel);
       setStroke(finalStroke);
       setDistance(finalDistance);
@@ -367,6 +390,10 @@ export function useLocalSidecar(args: {
         setDebugMsg(`No sidecar found. Will create on save.\n${resolvedPath}`);
 
         sidecarMeta.current = {
+          athlete: 'Athlete',
+          athleteName: 'Athlete',
+          athleteId: null,
+
           sport: fromPath.sport,
           style: fromPath.style,
           createdAt: Date.now(),
@@ -402,7 +429,14 @@ export function useLocalSidecar(args: {
       setHomeColorIsGreen(hcG);
       setOrientationOverride(parsedOrientationOverride);
 
-      setAthleteName(parsed.athlete?.trim() || 'Athlete');
+      const parsedAthleteName =
+        cleanString((parsed as any).athleteName) ||
+        cleanString(parsed.athlete) ||
+        'Athlete';
+
+      const parsedAthleteId = cleanString((parsed as any).athleteId);
+
+      setAthleteName(parsedAthleteName);
 
       const parsedSport =
         String(parsed.sport ?? '').trim() || fromPath.sport || 'unknown';
@@ -415,6 +449,10 @@ export function useLocalSidecar(args: {
       const parsedDistance = cleanString((parsed as any).distance);
 
       sidecarMeta.current = {
+        athlete: parsedAthleteName,
+        athleteName: parsedAthleteName,
+        athleteId: parsedAthleteId,
+
         sport: parsedSport,
         style: parsedStyle,
         createdAt: parsed.createdAt ?? Date.now(),
@@ -443,13 +481,12 @@ export function useLocalSidecar(args: {
       setEvents(withScores);
 
       const fs =
-        parsed.finalScore ??
-        (withScores.length
+        withScores.length
           ? withScores[withScores.length - 1].scoreAfter
-          : {
+          : parsed.finalScore ?? {
               home: 0,
               opponent: 0,
-            });
+            };
 
       setFinalScore(fs);
 

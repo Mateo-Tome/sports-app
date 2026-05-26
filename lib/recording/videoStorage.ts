@@ -1,11 +1,3 @@
-// lib/recording/videoStorage.ts
-// Handles saving full videos + building highlight clips and sidecars.
-//
-// Goals:
-// ✅ Stop/save should be FAST (move when possible, do not block on Photos / highlights)
-// ✅ No startup crash: ffmpeg-kit is always lazy-loaded
-// ✅ Post-processing never crashes the app: fully guarded fire-and-forget
-
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { Alert, InteractionManager } from 'react-native';
@@ -14,14 +6,12 @@ const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
 const INDEX_PATH = VIDEOS_DIR + 'index.json';
 const HIGHLIGHTS_SPORT = 'highlights';
 
-// ---------- small utils (local to this module) ----------
+// ---------- small utils ----------
 
 const ensureDir = async (dir: string) => {
   try {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  } catch {
-    // ignore
-  }
+  } catch {}
 };
 
 const slug = (s: string) =>
@@ -42,6 +32,12 @@ const tsStamp = () => {
 
 const q = (p: string) => `"${String(p).replace(/"/g, '\\"')}"`;
 
+function cleanAthleteId(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
 // Lazy loader to avoid iOS NativeEventEmitter crash on import
 async function getFFmpeg() {
   const mod = await import('ffmpeg-kit-react-native');
@@ -54,6 +50,8 @@ type VideoMeta = {
   uri: string;
   displayName: string;
   athlete: string;
+  athleteName?: string;
+  athleteId?: string | null;
   sport: string;
   createdAt: number;
   assetId?: string;
@@ -117,15 +115,15 @@ export async function importToPhotosAndAlbums(fileUri: string, athlete: string, 
   }
 }
 
-// ---------- exported: save full match video (FAST) ----------
+// ---------- exported: save full match video ----------
 
 export const saveToAppStorage = async (
   srcUri?: string | null,
   athleteRaw?: string,
   sportRaw?: string,
   opts?: {
-    // default: false (so Stop is fast). You can flip true in some flows if you want.
     importToPhotos?: boolean;
+    athleteId?: string | null;
   }
 ) => {
   if (!srcUri) {
@@ -135,6 +133,10 @@ export const saveToAppStorage = async (
 
   const athlete = (athleteRaw || '').trim() || 'Unassigned';
   const sport = (sportRaw || '').trim() || 'unknown';
+  const athleteId = cleanAthleteId(opts?.athleteId);
+
+  // Keep folder path name-based for now so old file browsing still works.
+  // The permanent key is stored in index + sidecar as athleteId.
   const dir = `${VIDEOS_DIR}${slug(athlete)}/${slug(sport)}/`;
   await ensureDir(dir);
 
@@ -142,7 +144,6 @@ export const saveToAppStorage = async (
   const filename = `match_${tsStamp()}.${ext}`;
   const destUri = dir + filename;
 
-  // ✅ FAST PATH: move first (instant if same volume), copy fallback.
   try {
     await FileSystem.moveAsync({ from: srcUri, to: destUri });
   } catch {
@@ -154,11 +155,12 @@ export const saveToAppStorage = async (
 
   const displayName = `${athlete} - ${sport} - ${new Date().toLocaleString()}`;
 
-  // Write index immediately (fast) so the match appears right away.
   await appendVideoIndex({
     uri: destUri,
     displayName,
     athlete,
+    athleteName: athlete,
+    athleteId,
     sport,
     createdAt: Date.now(),
     assetId: undefined,
@@ -166,11 +168,9 @@ export const saveToAppStorage = async (
 
   let assetId: string | undefined;
 
-  // Optional: Photos import. Default OFF so Stop is fast.
   if (opts?.importToPhotos) {
     assetId = await importToPhotosAndAlbums(destUri, athlete, sport);
 
-    // Update index entry with assetId if we got it (best-effort).
     if (assetId) {
       try {
         const list = await readIndex();
@@ -188,13 +188,23 @@ export const saveToAppStorage = async (
 
 // ---------- exported: highlights & sidecars ----------
 
-async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: number, duration: number) {
+async function writeHighlightSidecar(
+  clipUri: string,
+  athlete: string,
+  fromT: number,
+  duration: number,
+  athleteId?: string | null
+) {
   try {
+    const cleanId = cleanAthleteId(athleteId);
     const jsonUri = clipUri.replace(/\.[^/.]+$/, '') + '.json';
+
     await FileSystem.writeAsStringAsync(
       jsonUri,
       JSON.stringify({
         athlete,
+        athleteName: athlete,
+        athleteId: cleanId,
         sport: HIGHLIGHTS_SPORT,
         createdAt: Date.now(),
         source: 'auto-clip',
@@ -204,7 +214,13 @@ async function writeHighlightSidecar(clipUri: string, athlete: string, fromT: nu
   } catch {}
 }
 
-async function addClipToIndexAndAlbums(clipUri: string, athlete: string, importToPhotos: boolean) {
+async function addClipToIndexAndAlbums(
+  clipUri: string,
+  athlete: string,
+  importToPhotos: boolean,
+  athleteId?: string | null
+) {
+  const cleanId = cleanAthleteId(athleteId);
   const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
 
   let assetId: string | undefined;
@@ -216,6 +232,8 @@ async function addClipToIndexAndAlbums(clipUri: string, athlete: string, importT
     uri: clipUri,
     displayName,
     athlete,
+    athleteName: athlete,
+    athleteId: cleanId,
     sport: HIGHLIGHTS_SPORT,
     createdAt: Date.now(),
     assetId,
@@ -234,19 +252,17 @@ export const processHighlights = async (
   durationSec: number,
   athleteName: string,
   opts?: {
-    // default: false so Stop doesn’t block on Photos
     importHighlightsToPhotos?: boolean;
-    // optional: cap highlight work to avoid huge stalls if someone taps 30 times
     maxClips?: number;
+    athleteId?: string | null;
   }
 ) => {
   if (!markers.length) return [];
 
+  const athleteId = cleanAthleteId(opts?.athleteId);
   const importToPhotos = Boolean(opts?.importHighlightsToPhotos);
   const maxClips = typeof opts?.maxClips === 'number' ? opts!.maxClips! : markers.length;
 
-  // If ffmpeg isn't linked correctly, this is where it will fail.
-  // We'll just skip highlights instead of crashing the whole save.
   let FFmpegKit: any;
   let ReturnCode: any;
   try {
@@ -267,24 +283,22 @@ export const processHighlights = async (
     const start = Math.max(0, markersToProcess[i]);
     const outPath = `${destDir}clip_${i + 1}_${tsStamp()}.mp4`;
 
-    // first attempt: stream copy (fast)
     let cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c copy ${q(outPath)}`;
     let s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos);
-      await writeHighlightSidecar(outPath, athleteName, start, durationSec);
+      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos, athleteId);
+      await writeHighlightSidecar(outPath, athleteName, start, durationSec, athleteId);
       results.push({ url: outPath, markerTime: start });
       continue;
     }
 
-    // fallback: re-encode (still guarded)
     cmd = `-y -ss ${start} -t ${durationSec} -i ${q(videoUri)} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k ${q(outPath)}`;
     s = await FFmpegKit.execute(cmd);
 
     if (ReturnCode.isSuccess(await s.getReturnCode())) {
-      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos);
-      await writeHighlightSidecar(outPath, athleteName, start, durationSec);
+      await addClipToIndexAndAlbums(outPath, athleteName, importToPhotos, athleteId);
+      await writeHighlightSidecar(outPath, athleteName, start, durationSec, athleteId);
       results.push({ url: outPath, markerTime: start });
     }
   }
@@ -295,11 +309,9 @@ export const processHighlights = async (
 // ---------- exported: safe fire-and-forget post processing ----------
 
 export function runPostSaveTasksSafe(tasks: Array<() => Promise<void>>) {
-  // run after nav/animations so we don't compete with UI thread
   InteractionManager.runAfterInteractions(() => {
     setTimeout(() => {
       for (const t of tasks) {
-        // fire and forget, never throw
         Promise.resolve()
           .then(() => t())
           .catch((e) => console.log('[postSaveTask error]', e));
