@@ -43,12 +43,36 @@ function cleanString(v: unknown): string | null {
   return s.length ? s : null;
 }
 
+function readPoints(e: any): number | undefined {
+  if (typeof e?.points === 'number') return e.points;
+  if (typeof e?.value === 'number') return e.value;
+
+  const n = Number(e?.points ?? e?.value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function normalizeEventShape(e: any): EventRow {
+  const meta = {
+    ...(e?.label ? { label: e.label } : {}),
+    ...(e?.meta ?? {}),
+  };
+
+  return {
+    ...(e ?? {}),
+    kind: String(e?.kind ?? e?.key ?? 'unknown'),
+    points: readPoints(e),
+    actor: e?.actor,
+    meta,
+  } as EventRow;
+}
+
 function accumulate(evts: EventRow[]) {
   let h = 0;
   let o = 0;
 
-  return evts.map((e) => {
-    const pts = typeof e.points === 'number' ? e.points : 0;
+  return evts.map((raw) => {
+    const e = normalizeEventShape(raw);
+    const pts = readPoints(e) ?? 0;
 
     if (pts > 0) {
       if (e.actor === 'home') h += pts;
@@ -157,7 +181,7 @@ function ensureEventIds(input: any[]): EventRow[] {
         : Math.random().toString(36).slice(2, 9);
 
     return {
-      ...(e as any),
+      ...normalizeEventShape(e),
       _id,
     } as EventRow;
   });
@@ -202,7 +226,7 @@ export function useLocalSidecar(args: {
       const path = sidecarPathRef.current;
       if (!path) return;
 
-      const ordered = [...nextEvents].sort((a, b) => a.t - b.t);
+      const ordered = [...nextEvents].map(normalizeEventShape).sort((a, b) => a.t - b.t);
       const withScores = accumulate(ordered);
 
       const o = deriveOutcome(withScores, homeIsAthlete);
@@ -230,14 +254,9 @@ export function useLocalSidecar(args: {
         (pathGuess.style ?? '').trim() ||
         'default';
 
-      const finalRaceLabel =
-        sidecarMeta.current.raceLabel ?? raceLabel ?? null;
-
-      const finalStroke =
-        sidecarMeta.current.stroke ?? stroke ?? null;
-
-      const finalDistance =
-        sidecarMeta.current.distance ?? distance ?? null;
+      const finalRaceLabel = sidecarMeta.current.raceLabel ?? raceLabel ?? null;
+      const finalStroke = sidecarMeta.current.stroke ?? stroke ?? null;
+      const finalDistance = sidecarMeta.current.distance ?? distance ?? null;
 
       const finalOrientationOverride = normalizeOrientationOverride(
         overrideArg ??
@@ -281,22 +300,16 @@ export function useLocalSidecar(args: {
       await FileSystem.writeAsStringAsync(tmp, JSON.stringify(payload, null, 2));
 
       try {
-        await FileSystem.deleteAsync(path, {
-          idempotent: true,
-        });
+        await FileSystem.deleteAsync(path, { idempotent: true });
       } catch {}
 
-      await FileSystem.moveAsync({
-        from: tmp,
-        to: path,
-      });
+      await FileSystem.moveAsync({ from: tmp, to: path });
 
       sidecarMeta.current = {
         ...sidecarMeta.current,
         athlete: finalAthleteName,
         athleteName: finalAthleteName,
         athleteId: finalAthleteId,
-
         sport: finalSport,
         style: finalStyle,
         raceLabel: finalRaceLabel,
@@ -393,7 +406,6 @@ export function useLocalSidecar(args: {
           athlete: 'Athlete',
           athleteName: 'Athlete',
           athleteId: null,
-
           sport: fromPath.sport,
           style: fromPath.style,
           createdAt: Date.now(),
@@ -471,7 +483,7 @@ export function useLocalSidecar(args: {
       setDistance(parsedDistance);
 
       const rawEvts = Array.isArray(parsed.events) ? parsed.events : [];
-      const normalized = normalizeEvents(rawEvts, hiA);
+      const normalized = normalizeEvents(rawEvts.map(normalizeEventShape), hiA);
 
       const withIds = ensureEventIds(assignIds(normalized) as any);
 
@@ -483,10 +495,7 @@ export function useLocalSidecar(args: {
       const fs =
         withScores.length
           ? withScores[withScores.length - 1].scoreAfter
-          : parsed.finalScore ?? {
-              home: 0,
-              opponent: 0,
-            };
+          : parsed.finalScore ?? { home: 0, opponent: 0 };
 
       setFinalScore(fs);
 

@@ -16,10 +16,21 @@ type BeltLane = 'top' | 'bottom' | undefined;
 
 function beltLaneForKeyPitching(key: string): BeltLane {
   const k = String(key || '').toLowerCase();
-  if (k === 'ball' || k === 'hit' || k === 'walk' || k === 'homerun' || k === 'hit_by_pitch') {
+
+  if (
+    k === 'ball' ||
+    k === 'hit' ||
+    k === 'walk' ||
+    k === 'homerun' ||
+    k === 'hit_by_pitch'
+  ) {
     return 'top';
   }
-  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') return 'bottom';
+
+  if (k === 'strike' || k === 'foul' || k === 'strikeout' || k === 'out') {
+    return 'bottom';
+  }
+
   return undefined;
 }
 
@@ -32,8 +43,6 @@ export default function BaseballPitchingPlaybackModule({
   events,
   now,
 }: PlaybackModuleProps) {
-  if (!overlayOn) return null;
-
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
@@ -52,7 +61,8 @@ export default function BaseballPitchingPlaybackModule({
 
   const CHOOSER_TOP = isPortrait ? TOP + 40 : TOP + 10;
 
-  const showPalette = !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
+  const showPalette =
+    !!editMode && (editSubmode === 'add' || editSubmode === 'replace');
 
   const PITCHER_GOOD = '#22c55e';
   const PITCHER_BAD = '#ef4444';
@@ -70,9 +80,10 @@ export default function BaseballPitchingPlaybackModule({
     strikeout: PITCHER_GOOD,
   };
 
-  const derived = useMemo(() => deriveCountAtTime(events as any[], now as any), [events, now]);
-  const derivedBalls = derived.balls;
-  const derivedStrikes = derived.strikes;
+  const derived = useMemo(
+    () => deriveCountAtTime(events as any[], now as any),
+    [events, now],
+  );
 
   const [balls, setBalls] = useState(0);
   const [strikes, setStrikes] = useState(0);
@@ -84,7 +95,12 @@ export default function BaseballPitchingPlaybackModule({
   const [strikeoutChooserOpen, setStrikeoutChooserOpen] = useState(false);
   const [hrConfirmOpen, setHrConfirmOpen] = useState(false);
 
-  const [toast, setToast] = useState<null | { text: string; tint: string }>(null);
+  const [toast, setToast] = useState<null | { text: string; tint: string }>(
+    null,
+  );
+
+  if (!overlayOn) return null;
+
   const showToast = (text: string, tint: string) => setToast({ text, tint });
 
   const resetCount = () => {
@@ -93,9 +109,14 @@ export default function BaseballPitchingPlaybackModule({
     setFouls(0);
   };
 
-  const actorForKey = (_key: string): 'home' | 'opponent' | 'neutral' => 'neutral';
+  const actorForKey = (_key: string): 'home' | 'opponent' | 'neutral' =>
+    'neutral';
 
-  const fire = (key: string, label: string, extraMeta?: Record<string, any>) => {
+  const fire = (
+    key: string,
+    label: string,
+    extraMeta?: Record<string, any>,
+  ) => {
     const color = KEY_COLOR_PITCHING[key] ?? 'rgba(148,163,184,0.9)';
     const beltLane = beltLaneForKeyPitching(key);
 
@@ -122,27 +143,31 @@ export default function BaseballPitchingPlaybackModule({
   };
 
   const onBall = () => {
-    setBalls((prev) => {
-      const next = Math.min(prev + 1, 4);
-      fire('ball', 'Ball', { ballsAfter: next });
-      showToast(`Ball ${next}`, KEY_COLOR_PITCHING.ball);
-      return next;
-    });
+    const next = Math.min(balls + 1, 4);
+
+    setBalls(next);
+    fire('ball', 'Ball', { ballsAfter: next });
+    showToast(`Ball ${next}`, KEY_COLOR_PITCHING.ball);
   };
 
-  const recordStrike = (kind: 'swinging' | 'looking') => {
-    setStrikes((prev) => {
-      const next = Math.min(prev + 1, 3);
-      fire('strike', kind === 'swinging' ? 'Strike Swinging' : 'Strike Looking', {
-        kind,
-        strikesAfter: next,
-      });
-      showToast(
-        kind === 'swinging' ? `Swinging Strike ${next}` : `Looking Strike ${next}`,
-        KEY_COLOR_PITCHING.strike,
-      );
-      return next;
+  const recordStrike = (strikeKind: 'swinging' | 'looking') => {
+    const next = Math.min(strikes + 1, 3);
+    const label =
+      strikeKind === 'swinging' ? 'Strike Swinging' : 'Strike Looking';
+
+    setStrikes(next);
+
+    fire('strike', label, {
+      kind: strikeKind,
+      strikesAfter: next,
     });
+
+    showToast(
+      strikeKind === 'swinging'
+        ? `Swinging Strike ${next}`
+        : `Looking Strike ${next}`,
+      KEY_COLOR_PITCHING.strike,
+    );
   };
 
   const onStrike = () => {
@@ -150,20 +175,18 @@ export default function BaseballPitchingPlaybackModule({
   };
 
   const onFoul = () => {
-    setFouls((prevFouls) => {
-      let nextStrikes = strikes;
-      setStrikes((prevStrikes) => {
-        nextStrikes = prevStrikes < 2 ? prevStrikes + 1 : prevStrikes;
-        fire('foul', 'Foul Ball', {
-          foulsAfter: prevFouls + 1,
-          strikesAfter: nextStrikes,
-        });
-        return nextStrikes;
-      });
-      const newFouls = prevFouls + 1;
-      showToast(`Foul (${newFouls})`, FOUL_COLOR);
-      return newFouls;
+    const nextFouls = fouls + 1;
+    const nextStrikes = strikes < 2 ? strikes + 1 : strikes;
+
+    setFouls(nextFouls);
+    setStrikes(nextStrikes);
+
+    fire('foul', 'Foul Ball', {
+      foulsAfter: nextFouls,
+      strikesAfter: nextStrikes,
     });
+
+    showToast(`Foul (${nextFouls})`, FOUL_COLOR);
   };
 
   const recordWalk = () => {
@@ -180,6 +203,7 @@ export default function BaseballPitchingPlaybackModule({
 
   const recordHit = (type: 'single' | 'double' | 'triple' | 'bunt') => {
     fire('hit', 'Hit Allowed', { type });
+
     showToast(
       type === 'single'
         ? '1B Allowed'
@@ -190,16 +214,21 @@ export default function BaseballPitchingPlaybackModule({
             : 'Bunt Hit',
       KEY_COLOR_PITCHING.hit,
     );
+
     resetCount();
   };
 
   const incrementOuts = (type: string) => {
-    setOuts((prev) => {
-      const next = Math.min(prev + 1, 3);
-      fire('out', 'Out', { type, outsAfter: next });
-      showToast(type, KEY_COLOR_PITCHING.out);
-      return next;
+    const next = Math.min(outs + 1, 3);
+
+    setOuts(next);
+
+    fire('out', 'Out', {
+      type,
+      outsAfter: next,
     });
+
+    showToast(type, KEY_COLOR_PITCHING.out);
     resetCount();
   };
 
@@ -209,34 +238,76 @@ export default function BaseballPitchingPlaybackModule({
     resetCount();
   };
 
-  const recordStrikeout = (kind: 'swinging' | 'looking') => {
-    setOuts((prev) => {
-      const next = Math.min(prev + 1, 3);
-      fire('strikeout', 'Strikeout', { kind, outsAfter: next });
-      showToast(kind === 'swinging' ? 'K Swinging' : 'K Looking', KEY_COLOR_PITCHING.strikeout);
-      return next;
+  const recordStrikeout = (strikeoutKind: 'swinging' | 'looking') => {
+    const next = Math.min(outs + 1, 3);
+
+    setOuts(next);
+
+    fire('strikeout', 'Strikeout', {
+      kind: strikeoutKind,
+      outsAfter: next,
     });
+
+    showToast(
+      strikeoutKind === 'swinging' ? 'K Swinging' : 'K Looking',
+      KEY_COLOR_PITCHING.strikeout,
+    );
+
     resetCount();
   };
 
-  const displayBalls = showPalette ? balls : derivedBalls;
-  const displayStrikes = showPalette ? strikes : derivedStrikes;
+  const displayBalls = showPalette ? balls : derived.balls;
+  const displayStrikes = showPalette ? strikes : derived.strikes;
 
   const PitchingCountBar = () => (
-    <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, alignItems: 'center' }}>
-      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}>
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: insets.top + 8,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+      }}
+    >
+      <View
+        style={{
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          borderRadius: 999,
+          backgroundColor: 'rgba(0,0,0,0.65)',
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.35)',
+        }}
+      >
         <Text style={{ fontSize: 11 }}>
-          <Text style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800' }}>Balls: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{displayBalls}</Text>
+          <Text style={{ color: KEY_COLOR_PITCHING.ball, fontWeight: '800' }}>
+            Balls:{' '}
+          </Text>
+          <Text style={{ color: 'white', fontWeight: '900' }}>
+            {displayBalls}
+          </Text>
           <Text style={{ color: 'white' }}>   </Text>
-          <Text style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800' }}>Strikes: </Text>
-          <Text style={{ color: 'white', fontWeight: '900' }}>{displayStrikes}</Text>
+          <Text style={{ color: KEY_COLOR_PITCHING.strike, fontWeight: '800' }}>
+            Strikes:{' '}
+          </Text>
+          <Text style={{ color: 'white', fontWeight: '900' }}>
+            {displayStrikes}
+          </Text>
         </Text>
       </View>
     </View>
   );
 
-  const Circle = ({ label, bg, onPress }: { label: string; bg: string; onPress: () => void }) => (
+  const Circle = ({
+    label,
+    bg,
+    onPress,
+  }: {
+    label: string;
+    bg: string;
+    onPress: () => void;
+  }) => (
     <TouchableOpacity
       disabled={!showPalette}
       onPress={() => showPalette && onPress()}
@@ -250,12 +321,17 @@ export default function BaseballPitchingPlaybackModule({
         opacity: showPalette ? 1 : 0.0,
       }}
     >
-      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+    >
       <PitchingCountBar />
 
       <HitOutChooser
@@ -333,22 +409,61 @@ export default function BaseballPitchingPlaybackModule({
       ) : null}
 
       {showPalette ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', left: EDGE_L, top: TOP, bottom: BOTTOM, justifyContent: 'center' }}>
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: EDGE_L,
+            top: TOP,
+            bottom: BOTTOM,
+            justifyContent: 'center',
+          }}
+        >
           <View style={{ gap: GAP }}>
             <Circle label="Ball" bg={KEY_COLOR_PITCHING.ball} onPress={onBall} />
-            <Circle label="Strike" bg={KEY_COLOR_PITCHING.strike} onPress={onStrike} />
+            <Circle
+              label="Strike"
+              bg={KEY_COLOR_PITCHING.strike}
+              onPress={onStrike}
+            />
             <Circle label="Foul" bg={FOUL_COLOR} onPress={onFoul} />
           </View>
         </View>
       ) : null}
 
       {showPalette ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', right: EDGE_R, top: TOP, bottom: BOTTOM, justifyContent: 'center', alignItems: 'flex-end' }}>
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            right: EDGE_R,
+            top: TOP,
+            bottom: BOTTOM,
+            justifyContent: 'center',
+            alignItems: 'flex-end',
+          }}
+        >
           <View style={{ gap: GAP }}>
-            <Circle label="Result" bg={KEY_COLOR_PITCHING.hit} onPress={() => setResultChooserOpen(true)} />
-            <Circle label="K" bg={KEY_COLOR_PITCHING.strikeout} onPress={() => setStrikeoutChooserOpen(true)} />
-            <Circle label="HR" bg={KEY_COLOR_PITCHING.homerun} onPress={() => setHrConfirmOpen(true)} />
-            <Circle label="Walk" bg={KEY_COLOR_PITCHING.walk} onPress={recordWalk} />
+            <Circle
+              label="Result"
+              bg={KEY_COLOR_PITCHING.hit}
+              onPress={() => setResultChooserOpen(true)}
+            />
+            <Circle
+              label="K"
+              bg={KEY_COLOR_PITCHING.strikeout}
+              onPress={() => setStrikeoutChooserOpen(true)}
+            />
+            <Circle
+              label="HR"
+              bg={KEY_COLOR_PITCHING.homerun}
+              onPress={() => setHrConfirmOpen(true)}
+            />
+            <Circle
+              label="Walk"
+              bg={KEY_COLOR_PITCHING.walk}
+              onPress={recordWalk}
+            />
           </View>
         </View>
       ) : null}

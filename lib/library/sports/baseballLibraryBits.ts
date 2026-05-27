@@ -1,7 +1,13 @@
 import { registerSportLibraryBits } from '../sportLibraryStyleRegistry';
 
 function lastMeaningfulEvent(sidecar: any) {
-  const events = sidecar?.events;
+  const events = Array.isArray(sidecar?.events)
+  ? [...sidecar.events].sort((a, b) => {
+      const ta = typeof a?.t === 'number' ? a.t : 0;
+      const tb = typeof b?.t === 'number' ? b.t : 0;
+      return ta - tb;
+    })
+  : null;
   if (!Array.isArray(events) || events.length === 0) return null;
 
   for (let i = events.length - 1; i >= 0; i--) {
@@ -11,6 +17,7 @@ function lastMeaningfulEvent(sidecar: any) {
     if (
       key === 'strikeout' ||
       key === 'walk' ||
+      key === 'hit_by_pitch' ||
       key === 'homerun' ||
       key === 'hit' ||
       key === 'out'
@@ -28,27 +35,37 @@ function shortLabelFromEvent(ev: any, mode: 'hitting' | 'pitching') {
 
   if (key === 'strikeout') return 'K';
   if (key === 'walk') return 'BB';
+  if (key === 'hit_by_pitch') return 'HBP';
   if (key === 'homerun') return 'HR';
 
   if (key === 'out') {
-    const t = String(m?.type ?? '').toLowerCase();
+    const t = String(m?.type ?? m?.label ?? ev?.label ?? '').toLowerCase();
 
     if (t.includes('ground')) return 'GO';
     if (t.includes('fly')) return 'FO';
     if (t.includes('fielder')) return 'FC';
+    if (t.includes('pop')) return 'PO';
+    if (t.includes('line')) return 'LO';
 
     return 'OUT';
   }
 
   if (key === 'hit') {
-    const t = String(m?.type ?? '').toLowerCase();
+    const t = String(
+      m?.type ??
+        m?.hitType ??
+        m?.result ??
+        m?.label ??
+        ev?.label ??
+        '',
+    ).toLowerCase();
 
-    if (t === 'single') return '1B';
-    if (t === 'double') return '2B';
-    if (t === 'triple') return '3B';
-    if (t === 'bunt') return 'BUNT';
+    if (t.includes('single')) return '1B';
+    if (t.includes('double')) return '2B';
+    if (t.includes('triple')) return '3B';
+    if (t.includes('bunt')) return 'BUNT';
 
-    return 'H';
+    return '1B';
   }
 
   return mode === 'pitching' ? 'Pitching' : 'Hitting';
@@ -67,7 +84,6 @@ function colorFromEvent(ev: any) {
 registerSportLibraryBits(
   (sport) => {
     const s = String(sport || '').toLowerCase();
-
     return s.includes('baseball') || s.includes('softball');
   },
   ({ sport, sidecar }) => {

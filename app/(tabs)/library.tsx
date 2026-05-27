@@ -299,10 +299,17 @@ export default function LibraryScreen() {
     const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
       const uri = evt?.uri as string | undefined;
       if (!uri) return;
+  
+      // Patch immediately so color/label can update fast.
       await patchRowFromSidecarPayload(uri, evt?.sidecar);
+  
+      // Then do a full rebuild from the saved sidecar so grouped views/sourceRows
+      // cannot keep stale baseball labels like K/1B.
+      await load();
     });
+  
     return () => sub.remove();
-  }, [patchRowFromSidecarPayload]);
+  }, [patchRowFromSidecarPayload, load]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

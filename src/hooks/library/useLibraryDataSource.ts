@@ -176,13 +176,13 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
       : !!(v as any).highlightGold;
 
       const hittingLabel =
-      (safeStr((v as any).hittingLabel, '') || null) ??
       sportBits.hittingLabel ??
+      (safeStr((v as any).hittingLabel, '') || null) ??
       null;
     
     const pitchingLabel =
-      (safeStr((v as any).pitchingLabel, '') || null) ??
       sportBits.pitchingLabel ??
+      (safeStr((v as any).pitchingLabel, '') || null) ??
       null;
 
   return {

@@ -633,70 +633,75 @@ export default function PlaybackScreen() {
   const handleOverlayEventFromModule = (evt: OverlayEvent) => {
     const actor: Actor = toActor((evt as any).actor);
     const kind = String((evt as any).key ?? (evt as any).kind ?? 'unknown');
-    const points = typeof (evt as any).value === 'number' ? (evt as any).value : undefined;
-
+    const points =
+      typeof (evt as any).value === 'number' ? (evt as any).value : undefined;
+  
     const baseMeta = ((evt as any).meta ?? {}) as Record<string, any>;
     const label = (evt as any).label;
     const metaForRow = { ...(label ? { label } : {}), ...baseMeta };
-
+  
     const tPlayer = clampToDuration(now || 0);
     const tEdit = clampToDuration(editAnchorTimeRef.current || 0);
     const tNow = editMode ? tEdit : tPlayer;
-
+  
     const addAtTime = (t: number) => {
       const newEvt: EventRow = {
         _id: genId(),
         t,
         kind,
+        key: kind,
         points,
+        value: points,
         actor,
+        label,
         meta: metaForRow,
-      };
-
+      } as EventRow;
+  
       const sorted = [...events, newEvt].sort((a, b) => a.t - b.t);
       const next: EventRow[] = accumulateEvents(sorted);
-
+  
       setEvents(next);
       saveSidecar(next);
     };
-
+  
     const replaceKeepingTime = (targetId: string) => {
       const target = events.find((e) => (e as any)._id === targetId);
       const tKeep = typeof (target as any)?.t === 'number' ? (target as any).t : tNow;
-
+  
       const nextBase: EventRow[] = events.map((e) => {
         if ((e as any)._id !== targetId) return e;
-
+  
         return {
-          ...(e as any),
           _id: (e as any)._id,
           t: tKeep,
           kind,
+          key: kind,
           points,
+          value: points,
           actor,
+          label,
           meta: metaForRow,
-          scoreAfter: undefined,
         } as EventRow;
       });
-
+  
       const next: EventRow[] = accumulateEvents(nextBase.sort((a, b) => a.t - b.t));
-
+  
       setEvents(next);
       saveSidecar(next);
     };
-
+  
     if (editSubmode === 'add') {
       addAtTime(tNow);
       exitEditMode();
       return;
     }
-
+  
     if (editSubmode === 'replace' && editTargetId) {
       replaceKeepingTime(editTargetId);
       exitEditMode();
       return;
     }
-
+  
     addAtTime(tNow);
   };
 
