@@ -601,7 +601,7 @@ export function QuickEditSheet(props: {
       pointerEvents="auto"
       style={{
         position: 'absolute',
-        bottom: insets.bottom + 16 + BELT_H + 8,
+        top: '38%',
         alignSelf: 'center',
         width: BOX_W,
         borderRadius: 14,
