@@ -226,7 +226,6 @@ export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => 
 
       merged = nextMerged;
 
-      console.log('[sync] pushing cloud athletes', toCloudPayload(merged));
       // ✅ Push ONLY cloud-safe fields (now includes photoKey)
       await setCloudAthletes(uid, toCloudPayload(merged) as any);
 

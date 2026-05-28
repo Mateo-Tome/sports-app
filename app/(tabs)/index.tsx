@@ -439,13 +439,6 @@ export default function HomeAthletes() {
           ? a.updatedAt
           : now,
     }));
-
-    console.log(
-      '[saveAthletes] normalized target',
-      normalized.find((a: any) =>
-        String(a.name).toLowerCase().includes('final')
-      )
-    );
   
     setAthletes(normalized as any);
     await AsyncStorage.setItem(key, JSON.stringify(normalized));
@@ -567,11 +560,6 @@ export default function HomeAthletes() {
         : a
     );
 
-    console.log('[renameAthlete] saving rename', {
-      id,
-      name,
-      updatedAt: next.find((a: any) => a.id === id)?.updatedAt,
-    });
 
     await saveAthletes(next);
   };
