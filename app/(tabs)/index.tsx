@@ -584,12 +584,16 @@ export default function HomeAthletes() {
     });
   };
 
-  const openStatsForAthlete = (name: string) => {
-    const clean = (name || '').trim() || 'Unassigned';
-
+  const openStatsForAthlete = (athlete: Athlete) => {
+    const cleanName = String(athlete?.name ?? '').trim() || 'Unassigned';
+    const athleteId = String(athlete?.id ?? '').trim();
+  
     router.push({
       pathname: '/athletes/[athlete]/stats',
-      params: { athlete: clean },
+      params: {
+        athlete: cleanName,
+        athleteId,
+      },
     });
   };
 

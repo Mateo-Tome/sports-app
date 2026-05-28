@@ -28,7 +28,7 @@ type Props = {
   a: Athlete;
   isWide: boolean;
   onRecord: (athlete: Athlete) => void;
-  onStats: (athleteName: string) => void;
+  onStats: (athlete: Athlete) => void;
   onSetPhoto: (athleteId: string) => void;
   onRename: (athleteId: string, newName: string) => void;
   onDelete: (athleteId: string) => void;
@@ -364,7 +364,7 @@ export default function AthleteCard({
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={() => onStats(a.name)}
+          onPress={() => onStats(a)}
           style={{
             flex: 1,
             paddingVertical: 12,

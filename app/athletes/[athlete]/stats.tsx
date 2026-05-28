@@ -117,8 +117,13 @@ function TogglePill({
 
 export default function AthleteStatsHomeScreen() {
   const insets = useSafeAreaInsets();
-  const { athlete } = useLocalSearchParams<{ athlete: string }>();
+  const { athlete, athleteId } = useLocalSearchParams<{
+    athlete: string;
+    athleteId?: string;
+  }>();
+  
   const athleteName = decodeURIComponent(String(athlete ?? 'Unassigned'));
+  const stableAthleteId = String(athleteId ?? '').trim() || null;
 
   const [source, setSource] = React.useState<'local' | 'cloud'>('local');
   const [loading, setLoading] = React.useState(true);
@@ -134,9 +139,9 @@ export default function AthleteStatsHomeScreen() {
         setError(null);
 
         const clips =
-          source === 'cloud'
-            ? await loadVerifiedClipsForAthleteFromCloud(athleteName)
-            : await loadClipsForAthleteFromLocal(athleteName);
+  source === 'cloud'
+    ? await loadVerifiedClipsForAthleteFromCloud(athleteName, stableAthleteId)
+    : await loadClipsForAthleteFromLocal(athleteName, stableAthleteId);
 
         const s = buildAthleteStats(athleteName, clips);
 
@@ -154,7 +159,7 @@ export default function AthleteStatsHomeScreen() {
     return () => {
       alive = false;
     };
-  }, [athleteName, source]);
+  }, [athleteName, stableAthleteId, source]);
 
   const sportKeys = Object.keys(summary?.bySport ?? {}).sort();
   const sportsCount = sportKeys.length;
@@ -261,6 +266,7 @@ export default function AthleteStatsHomeScreen() {
                         pathname: '/athletes/[athlete]/sport/[sportKey]',
                         params: {
                           athlete: athleteName,
+                          athleteId: stableAthleteId ?? '',
                           sportKey: encodeURIComponent(sportKey),
                           source,
                         },
