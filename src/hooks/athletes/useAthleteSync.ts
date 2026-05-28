@@ -29,6 +29,7 @@ function toNumberOrNull(v: any): number | null {
 type CloudAthlete = {
   id: string;
   name: string;
+  updatedAt?: number | null;
   photoUrl?: string | null; // legacy
   photoKey?: string | null; // stable
   photoUpdatedAt?: number | null;
@@ -47,6 +48,7 @@ function normalizeLocal(list: Athlete[]): Athlete[] {
     out.push({
       id,
       name,
+      updatedAt: toNumberOrNull((a as any)?.updatedAt),
       photoLocalUri: toStringOrNull((a as any)?.photoLocalUri),
       photoUri: toStringOrNull((a as any)?.photoUri),
       photoUrl: toStringOrNull((a as any)?.photoUrl),
@@ -71,6 +73,7 @@ function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
     out.push({
       id,
       name,
+      updatedAt: toNumberOrNull((a as any)?.updatedAt),
       photoUrl: toStringOrNull((a as any)?.photoUrl),
       photoKey: toStringOrNull((a as any)?.photoKey),
       photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
@@ -89,9 +92,24 @@ function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
   for (const c of C) {
     const l = byId.get(c.id);
 
-    byId.set(c.id, {
-      id: c.id,
-      name: c.name?.trim() ? c.name.trim() : (l?.name ?? c.name),
+    const localUpdated =
+  typeof (l as any)?.updatedAt === 'number'
+    ? (l as any).updatedAt
+    : 0;
+
+const cloudUpdated =
+  typeof (c as any)?.updatedAt === 'number'
+    ? (c as any).updatedAt
+    : 0;
+
+const useCloudName = cloudUpdated > localUpdated;
+
+byId.set(c.id, {
+  id: c.id,
+  name: useCloudName
+    ? c.name?.trim() || (l as any)?.name?.trim() || 'Unnamed Athlete'
+    : (l as any)?.name?.trim() || c.name?.trim() || 'Unnamed Athlete',
+  updatedAt: Math.max(localUpdated, cloudUpdated),
 
       // cloud truth
       photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
@@ -142,6 +160,12 @@ function toCloudPayload(list: Athlete[]): CloudAthlete[] {
   return (Array.isArray(list) ? list : []).map((a: any) => ({
     id: String(a?.id ?? '').trim(),
     name: String(a?.name ?? '').trim(),
+    updatedAt:
+    typeof a?.updatedAt === 'number' &&
+    Number.isFinite(a.updatedAt) &&
+    a.updatedAt > 0
+    ? a.updatedAt
+    : Date.now(),
     photoKey: toStringOrNull(a?.photoKey),
     photoUpdatedAt: toNumberOrNull(a?.photoUpdatedAt),
     // keep legacy for now (optional)
@@ -202,6 +226,7 @@ export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => 
 
       merged = nextMerged;
 
+      console.log('[sync] pushing cloud athletes', toCloudPayload(merged));
       // ✅ Push ONLY cloud-safe fields (now includes photoKey)
       await setCloudAthletes(uid, toCloudPayload(merged) as any);
 

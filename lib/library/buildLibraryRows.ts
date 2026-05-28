@@ -130,8 +130,8 @@ async function buildRow(
     uri: meta.uri,
 
     displayName:
-      meta.displayName ||
-      (meta.uri.split('/').pop() || 'video'),
+  (meta.displayName || meta.uri.split('/').pop() || 'video')
+    .replace(savedAthleteName, displayAthlete),
 
     // ✅ FIXED
     athlete: displayAthlete,

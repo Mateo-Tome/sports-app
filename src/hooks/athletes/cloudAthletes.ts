@@ -1,21 +1,14 @@
-// src/hooks/athletes/cloudAthletes.ts
+
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../../lib/firebase';
 
-/**
- * Cloud-safe athlete model (Firestore)
- * ✅ Never store file:// local URIs in cloud.
- *
- * We only WRITE stable fields:
- * - photoKey (stable forever)
- * - photoUpdatedAt (version)
- *
- * Legacy:
- * - photoUrl may exist in old data; we READ it but never WRITE it.
- */
+
 export type CloudAthlete = {
   id: string;
   name: string;
+
+  // ✅ rename/version sync
+  updatedAt?: number | null;
 
   // ✅ stable forever
   photoKey?: string | null;
@@ -33,16 +26,21 @@ function toStringOrNull(v: any): string | null {
 
 function toNumberOrNull(v: any): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
+
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
 function sanitize(list: any): CloudAthlete[] {
   if (!Array.isArray(list)) return [];
+
   return list
     .map((a) => ({
       id: String(a?.id ?? '').trim(),
       name: String(a?.name ?? '').trim(),
+
+      // ✅ rename/version sync
+      updatedAt: toNumberOrNull(a?.updatedAt),
 
       // legacy (read only)
       photoUrl: toStringOrNull(a?.photoUrl),
@@ -58,24 +56,42 @@ export function getCurrentUid(): string | null {
   return auth.currentUser?.uid ?? null;
 }
 
-export async function getCloudAthletes(uid: string): Promise<CloudAthlete[]> {
+export async function getCloudAthletes(
+  uid: string,
+): Promise<CloudAthlete[]> {
   const ref = doc(db, 'users', uid);
+
   const snap = await getDoc(ref);
+
   const data = snap.exists() ? snap.data() : {};
+
   return sanitize((data as any)?.athletes);
 }
 
-export async function setCloudAthletes(uid: string, athletes: CloudAthlete[]): Promise<void> {
+export async function setCloudAthletes(
+  uid: string,
+  athletes: CloudAthlete[],
+): Promise<void> {
   const ref = doc(db, 'users', uid);
 
   // ✅ sanitize, then STRIP legacy fields before writing
   const cloudSafe = sanitize(athletes).map((a) => ({
     id: a.id,
     name: a.name,
+
+    // ✅ rename/version sync
+    updatedAt: a.updatedAt ?? null,
+
+    // stable photo identity
     photoKey: a.photoKey ?? null,
     photoUpdatedAt: a.photoUpdatedAt ?? null,
+
     // 🚫 do NOT write photoUrl
   }));
 
-  await setDoc(ref, { athletes: cloudSafe }, { merge: true });
+  await setDoc(
+    ref,
+    { athletes: cloudSafe },
+    { merge: true },
+  );
 }

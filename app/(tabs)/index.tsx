@@ -285,6 +285,7 @@ export default function HomeAthletes() {
         out.push({
           id,
           name,
+          updatedAt: toNumberOrNull((a as any)?.updatedAt),
           photoLocalUri: toStringOrNull((a as any)?.photoLocalUri),
           photoUrl: toStringOrNull((a as any)?.photoUrl),
           photoKey: toStringOrNull((a as any)?.photoKey),
@@ -312,6 +313,7 @@ export default function HomeAthletes() {
         out.push({
           id,
           name,
+          updatedAt: toNumberOrNull((a as any)?.updatedAt),
           photoUrl: toStringOrNull((a as any)?.photoUrl),
           photoKey: toStringOrNull((a as any)?.photoKey),
           photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
@@ -331,9 +333,35 @@ export default function HomeAthletes() {
       for (const c of C) {
         const l = byId.get(c.id);
 
+        const localUpdated =
+          typeof (l as any)?.updatedAt === 'number'
+            ? (l as any).updatedAt
+            : 0;
+        
+        const cloudUpdated =
+          typeof (c as any)?.updatedAt === 'number'
+            ? (c as any).updatedAt
+            : 0;
+        
+        const useCloudName = cloudUpdated > localUpdated;
+        
         byId.set(c.id, {
           id: c.id,
-          name: c.name?.trim() ? c.name.trim() : (l as any)?.name ?? c.name,
+        
+          name: useCloudName
+            ? (
+                c.name?.trim()
+                || (l as any)?.name?.trim()
+                || 'Unnamed Athlete'
+              )
+            : (
+                (l as any)?.name?.trim()
+                || c.name?.trim()
+                || 'Unnamed Athlete'
+              ),
+        
+          updatedAt: Math.max(localUpdated, cloudUpdated),
+        
           photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
           photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
           photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
@@ -399,8 +427,28 @@ export default function HomeAthletes() {
   const saveAthletes = async (list: Athlete[]) => {
     const effectiveUid = uid ?? (await getActiveUid());
     const key = athletesKey(effectiveUid);
-    setAthletes(list);
-    await AsyncStorage.setItem(key, JSON.stringify(list));
+  
+    const now = Date.now();
+  
+    const normalized = list.map((a: any) => ({
+      ...a,
+      updatedAt:
+        typeof a?.updatedAt === 'number' &&
+        Number.isFinite(a.updatedAt) &&
+        a.updatedAt > 0
+          ? a.updatedAt
+          : now,
+    }));
+
+    console.log(
+      '[saveAthletes] normalized target',
+      normalized.find((a: any) =>
+        String(a.name).toLowerCase().includes('final')
+      )
+    );
+  
+    setAthletes(normalized as any);
+    await AsyncStorage.setItem(key, JSON.stringify(normalized));
   };
 
   const addAthlete = async () => {
@@ -432,6 +480,7 @@ export default function HomeAthletes() {
         id,
         name: n,
         photoLocalUri,
+        updatedAt: Date.now(),
         photoUrl,
         photoKey,
         photoUpdatedAt,
@@ -508,7 +557,22 @@ export default function HomeAthletes() {
       return;
     }
 
-    const next = athletes.map((a) => (a.id === id ? ({ ...a, name } as any) : a));
+    const next = athletes.map((a) =>
+      a.id === id
+        ? ({
+            ...a,
+            name,
+            updatedAt: Date.now(),
+          } as any)
+        : a
+    );
+
+    console.log('[renameAthlete] saving rename', {
+      id,
+      name,
+      updatedAt: next.find((a: any) => a.id === id)?.updatedAt,
+    });
+
     await saveAthletes(next);
   };
 
