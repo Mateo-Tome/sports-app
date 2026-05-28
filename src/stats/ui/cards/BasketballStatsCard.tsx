@@ -89,15 +89,17 @@ export default function BasketballStatsCard({
 
   const fgM = clamp0(stats?.shooting?.fgM);
   const fgA = clamp0(stats?.shooting?.fgA);
+
+  const t2M = clamp0(stats?.shooting?.t2M ?? Math.max(0, fgM - clamp0(stats?.shooting?.t3M)));
+  const t2A = clamp0(stats?.shooting?.t2A ?? Math.max(0, fgA - clamp0(stats?.shooting?.t3A)));
+
   const t3M = clamp0(stats?.shooting?.t3M);
   const t3A = clamp0(stats?.shooting?.t3A);
   const ftM = clamp0(stats?.shooting?.ftM);
   const ftA = clamp0(stats?.shooting?.ftA);
 
-  const twoM = Math.max(0, fgM - t3M);
-  const twoA = Math.max(0, fgA - t3A);
-
   const ast = clamp0(stats?.counts?.assist);
+  const pass = clamp0(stats?.counts?.pass);
   const stl = clamp0(stats?.counts?.steal);
   const blk = clamp0(stats?.counts?.block);
   const rebO = clamp0(stats?.counts?.reboundOff);
@@ -110,7 +112,7 @@ export default function BasketballStatsCard({
   const tsDen = 2 * (fgA + 0.44 * ftA);
   const tsPct = tsDen ? Math.round((points / tsDen) * 100) : 0;
 
-  const bestClipEstimate = Math.max(avg(points, clips) * 1.6, avg(points, clips) + 6).toFixed(1);
+  const bestClip = clamp0(stats?.bestClip?.points);
 
   return (
     <CardShell title={sportTitle('basketball:default')}>
@@ -120,14 +122,14 @@ export default function BasketballStatsCard({
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <HeroStat label="Pts / Clip" value={`${avg(points, clips)} avg`} sub={`${points} total`} />
+        <HeroStat label="Best Clip" value={`${bestClip} pts`} sub="highest scoring clip" />
         <HeroStat label="FG%" value={pct(fgM, fgA)} sub={`${fgM}/${fgA}`} />
-        <HeroStat label="3PT%" value={pct(t3M, t3A)} sub={`${t3M}/${t3A}`} />
       </View>
 
       <SectionTitle>Shooting Profile</SectionTitle>
 
       <BarRow label="Field Goals" made={fgM} attempts={fgA} />
-      <BarRow label="2PT Shots" made={twoM} attempts={twoA} />
+      <BarRow label="2PT Shots" made={t2M} attempts={t2A} />
       <BarRow label="3PT Shots" made={t3M} attempts={t3A} />
       <BarRow label="Free Throws" made={ftM} attempts={ftA} />
 
@@ -135,13 +137,14 @@ export default function BasketballStatsCard({
         <Chip label="eFG%" value={`${efgPct}%`} />
         <Chip label="TS%" value={`${tsPct}%`} />
         <Chip label="Shot Events" value={fgA + ftA} />
-        <Chip label="Best Clip*" value={`${bestClipEstimate} pts`} />
+        <Chip label="3PT%" value={`${pct(t3M, t3A)}`} />
       </View>
 
       <SectionTitle>Impact Stats</SectionTitle>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         <Chip label="AST" value={ast} />
+        <Chip label="PASS" value={pass} />
         <Chip label="REB" value={rebounds} />
         <Chip label="OREB" value={rebO} />
         <Chip label="DREB" value={rebD} />
@@ -169,14 +172,12 @@ export default function BasketballStatsCard({
         <Chip label="Clips" value={clips} />
         <Chip label="Events" value={events} />
         <Chip label="Points" value={points} />
+        <Chip label="Best Clip" value={`${bestClip} pts`} />
         <Chip label="FG" value={`${fgM}/${fgA} (${pct(fgM, fgA)})`} />
+        <Chip label="2PT" value={`${t2M}/${t2A} (${pct(t2M, t2A)})`} />
         <Chip label="3PT" value={`${t3M}/${t3A} (${pct(t3M, t3A)})`} />
         <Chip label="FT" value={`${ftM}/${ftA} (${pct(ftM, ftA)})`} />
       </View>
-
-      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 12 }}>
-        * Best Clip uses current totals estimate until per-clip history is added.
-      </Text>
     </CardShell>
   );
 }
