@@ -122,6 +122,28 @@ function readResult(clip: any): 'win' | 'loss' | 'tie' | null {
   return null;
 }
 
+function readPinResult(clip: any): 'win' | 'loss' | null {
+  const homeIsAthlete = clip?.homeIsAthlete !== false;
+  const events: any[] = clip?.events ?? [];
+
+  const pin = events.find((e) => {
+    const kind = String(e?.key ?? e?.kind ?? '').toLowerCase();
+    const label = String(e?.label ?? '').toLowerCase();
+    const winBy = String(e?.meta?.winBy ?? '').toLowerCase();
+
+    return kind === 'pin' || label.includes('pin') || winBy === 'pin';
+  });
+
+  if (!pin) return null;
+
+  const actor = pin.actor;
+  if (actor !== 'home' && actor !== 'opponent') return null;
+
+  const pinByMyKid = homeIsAthlete ? actor === 'home' : actor === 'opponent';
+
+  return pinByMyKid ? 'win' : 'loss';
+}
+
 function makeSplit(): ActionSplit {
   return { myKid: 0, opp: 0 };
 }
@@ -252,7 +274,8 @@ export function reduceWrestlingFreestyle(clips: ClipSidecar[]): FreestyleStats {
     const events: any[] = (clip as any).events ?? [];
     base.totals.events += events.length;
 
-    const result = readResult(clip as any);
+    const result = readPinResult(clip as any) ?? readResult(clip as any);
+
     if (result === 'win') base.derived.record.wins += 1;
     if (result === 'loss') base.derived.record.losses += 1;
     if (result === 'tie') base.derived.record.ties += 1;

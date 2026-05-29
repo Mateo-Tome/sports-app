@@ -12,13 +12,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayProps } from './types';
 
-/** Helper */
 function cleanName(v?: string) {
   const s = String(v ?? '').trim();
   return s.length ? s : 'Unassigned';
 }
 
-/** Tiny visual confirmation toast (no haptics) */
 function FlashToast({
   text,
   tint,
@@ -37,31 +35,14 @@ function FlashToast({
 
   React.useEffect(() => {
     const animIn = Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 120,
-        useNativeDriver: true,
-      }),
+      Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 120, useNativeDriver: true }),
     ]);
     const animOut = Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 150,
-        delay: 750,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: -6,
-        duration: 150,
-        delay: 750,
-        useNativeDriver: true,
-      }),
+      Animated.timing(opacity, { toValue: 0, duration: 150, delay: 750, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: -6, duration: 150, delay: 750, useNativeDriver: true }),
     ]);
+
     animIn.start(() => {
       animOut.start(({ finished }) => finished && onDone?.());
     });
@@ -99,47 +80,36 @@ export default function WrestlingFreestyleOverlay({
   sport: _sport,
   style: _style,
   score,
-  athleteName, // ✅ ADDED
+  athleteName,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
 
-  const recordedName = cleanName(athleteName); // ✅ ADDED
+  const recordedName = cleanName(athleteName);
 
-  // layout paddings (match folkstyle)
   const EDGE_L = insets.left + 10;
   const EDGE_R = insets.right + 10;
   const TOP = insets.top + 52;
   const BOTTOM = insets.bottom + 92;
 
-  // sizing (match folkstyle)
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
   const TITLE_H = 28;
   const ROWS = 3;
   const GAP = 10;
-  const maxSize = Math.floor(
-    (availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS,
-  );
+  const maxSize = Math.floor((availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS);
   const SIZE = Math.max(36, Math.min(60, maxSize));
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
-  // base colors (RED/BLUE for freestyle)
   const BASE_RED = '#ef4444';
   const BASE_BLUE = '#3b82f6';
 
-  // keep the same “my kid is left” behavior as folkstyle
   const [myKidSide] = React.useState<'left' | 'right'>('left');
-
-  // flip colors control (red <-> blue)
   const [myKidColor, setMyKidColor] = React.useState<'red' | 'blue'>('red');
-
-  // period tracker
   const [period, setPeriod] = React.useState<number>(1);
 
-  // fixed actor mapping
   const leftActor = myKidSide === 'left' ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
 
@@ -152,22 +122,17 @@ export default function WrestlingFreestyleOverlay({
   const leftColor = leftActor === 'home' ? HOME_COLOR : OPP_COLOR;
   const rightColor = rightActor === 'home' ? HOME_COLOR : OPP_COLOR;
 
-  const leftScore =
-    leftActor === 'home' ? score?.home ?? 0 : score?.opponent ?? 0;
-  const rightScore =
-    rightActor === 'home' ? score?.home ?? 0 : score?.opponent ?? 0;
+  const leftScore = leftActor === 'home' ? score?.home ?? 0 : score?.opponent ?? 0;
+  const rightScore = rightActor === 'home' ? score?.home ?? 0 : score?.opponent ?? 0;
 
-  const [toast, setToast] = React.useState<null | { text: string; tint: string }>(
-    null,
-  );
+  const [toast, setToast] = React.useState<null | { text: string; tint: string }>(null);
   const showToast = (text: string, tint: string) => setToast({ text, tint });
 
   const myKidCurrentColor = myKidColor.toUpperCase();
 
-  // Chooser states (NF-style) - keep only ones that have multiple choices
   const [bigFor, setBigFor] = React.useState<null | 'left' | 'right'>(null);
-  const [passFor, setPassFor] = React.useState<null | 'left' | 'right'>(null);
-  const [penFor, setPenFor] = React.useState<null | 'left' | 'right'>(null);
+  const [ppFor, setPpFor] = React.useState<null | 'left' | 'right'>(null);
+  const [pinFor, setPinFor] = React.useState<null | 'left' | 'right'>(null);
 
   const CHOOSER_TOP = isPortrait ? 140 : 6;
 
@@ -180,14 +145,18 @@ export default function WrestlingFreestyleOverlay({
   ) => {
     if (!isRecording) return;
 
-    const finalMeta = {
-      ...(meta || {}),
-      myKidColor,
-      opponentColor: myKidColor === 'red' ? 'blue' : 'red',
-      athleteName: recordedName, // ✅ ADDED (for exports/consistency)
-    };
-
-    onEvent({ key, label, actor, value, meta: finalMeta });
+    onEvent({
+      key,
+      label,
+      actor,
+      value,
+      meta: {
+        ...(meta || {}),
+        myKidColor,
+        opponentColor: myKidColor === 'red' ? 'blue' : 'red',
+        athleteName: recordedName,
+      },
+    });
   };
 
   const handleNextPeriod = () => {
@@ -198,7 +167,6 @@ export default function WrestlingFreestyleOverlay({
     showToast(`Period ${next}`, '#ffffff');
   };
 
-  // helpers to map side → actor/title/color
   const sideInfo = (side: 'left' | 'right') => {
     const actor = side === 'left' ? leftActor : rightActor;
     const color = side === 'left' ? leftColor : rightColor;
@@ -209,7 +177,6 @@ export default function WrestlingFreestyleOverlay({
   const receiverOf = (offender: 'home' | 'opponent'): 'home' | 'opponent' =>
     offender === 'home' ? 'opponent' : 'home';
 
-  // shared UI bits
   const ChooserClose = ({ onClose }: { onClose: () => void }) => (
     <TouchableOpacity
       onPress={onClose}
@@ -256,8 +223,6 @@ export default function WrestlingFreestyleOverlay({
     </TouchableOpacity>
   );
 
-  // --- Choosers ------------------------------------------------
-
   const BigChooser = () => {
     if (!bigFor) return null;
     const { actor, color, title } = sideInfo(bigFor);
@@ -285,34 +250,14 @@ export default function WrestlingFreestyleOverlay({
             paddingHorizontal: 12,
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 14,
-                marginRight: 8,
-              }}
-            >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
               {title}: Big Points
             </Text>
             <ChooserClose onClose={() => setBigFor(null)} />
           </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="FTD4"
               tint={color}
@@ -326,10 +271,7 @@ export default function WrestlingFreestyleOverlay({
               label="GA4"
               tint={color}
               onPress={() => {
-                fire(actor as any, 'grand_amplitude', 'GA4', 4, {
-                  kind: 'GA',
-                  danger: false,
-                });
+                fire(actor as any, 'grand_amplitude', 'GA4', 4, { kind: 'GA', danger: false });
                 showToast(`${title}: GA4`, color);
                 setBigFor(null);
               }}
@@ -338,10 +280,7 @@ export default function WrestlingFreestyleOverlay({
               label="GA5"
               tint={color}
               onPress={() => {
-                fire(actor as any, 'grand_amplitude', 'GA5', 5, {
-                  kind: 'GA',
-                  danger: true,
-                });
+                fire(actor as any, 'grand_amplitude', 'GA5', 5, { kind: 'GA', danger: true });
                 showToast(`${title}: GA5`, color);
                 setBigFor(null);
               }}
@@ -352,13 +291,15 @@ export default function WrestlingFreestyleOverlay({
     );
   };
 
-  const PassivityChooser = () => {
-    if (!passFor) return null;
+  const PassPenaltyChooser = () => {
+    if (!ppFor) return null;
+
     const {
       actor: offenderActor,
       color: offenderColor,
       title: offenderTitle,
-    } = sideInfo(passFor);
+    } = sideInfo(ppFor);
+
     const receiver = receiverOf(offenderActor as any);
 
     return (
@@ -376,7 +317,7 @@ export default function WrestlingFreestyleOverlay({
         <View
           style={{
             maxWidth: screenW - (EDGE_L + EDGE_R),
-            backgroundColor: 'rgba(0,0,0,0.70)',
+            backgroundColor: 'rgba(0,0,0,0.74)',
             borderWidth: 1,
             borderColor: 'rgba(255,255,255,0.25)',
             borderRadius: 16,
@@ -384,34 +325,18 @@ export default function WrestlingFreestyleOverlay({
             paddingHorizontal: 12,
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 14,
-                marginRight: 8,
-              }}
-            >
-              {offenderTitle}: Passivity
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}>
+              {offenderTitle}: Passivity / Penalty
             </Text>
-            <ChooserClose onClose={() => setPassFor(null)} />
+            <ChooserClose onClose={() => setPpFor(null)} />
           </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', textAlign: 'center', marginTop: 2 }}>
+            Passivity
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="WARN"
               tint={offenderColor}
@@ -420,95 +345,48 @@ export default function WrestlingFreestyleOverlay({
                   offender: offenderActor,
                 });
                 showToast(`${offenderTitle}: PASS WARN`, offenderColor);
-                setPassFor(null);
+                setPpFor(null);
               }}
             />
+
             <Chip
-              label="+1"
+              label="PASS +1"
               tint={offenderColor}
               onPress={() => {
                 fire(receiver, 'passivity', 'PASS +1', 1, {
                   offender: offenderActor,
                 });
                 showToast(`${offenderTitle}: PASS (+1 opp)`, offenderColor);
-                setPassFor(null);
+                setPpFor(null);
               }}
             />
           </View>
-        </View>
-      </View>
-    );
-  };
-
-  const PenaltyChooser = () => {
-    if (!penFor) return null;
-    const {
-      actor: offenderActor,
-      color: offenderColor,
-      title: offenderTitle,
-    } = sideInfo(penFor);
-    const receiver = receiverOf(offenderActor as any);
-
-    return (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          top: CHOOSER_TOP,
-          left: EDGE_L,
-          right: EDGE_R,
-          alignItems: 'center',
-          zIndex: 50,
-        }}
-      >
-        <View
-          style={{
-            maxWidth: screenW - (EDGE_L + EDGE_R),
-            backgroundColor: 'rgba(0,0,0,0.70)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.25)',
-            borderRadius: 16,
-            paddingVertical: 10,
-            paddingHorizontal: 12,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                color: 'white',
-                fontWeight: '900',
-                fontSize: 14,
-                marginRight: 8,
-              }}
-            >
-              {offenderTitle}: Penalty
-            </Text>
-            <ChooserClose onClose={() => setPenFor(null)} />
-          </View>
 
           <View
             style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
+              height: 1,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              marginVertical: 8,
             }}
-          >
+          />
+
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', textAlign: 'center' }}>
+            Penalty / Fleeing
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Chip
               label="P +1"
               tint={offenderColor}
               onPress={() => {
-                fire(receiver, 'penalty', 'P +1', 1, { offender: offenderActor });
+                fire(receiver, 'penalty', 'P +1', 1, {
+                  offender: offenderActor,
+                });
                 showToast(`${offenderTitle}: P (+1 opp)`, offenderColor);
-                setPenFor(null);
+                setPpFor(null);
               }}
             />
+
             <Chip
               label="FLEE +1"
               tint={offenderColor}
@@ -518,9 +396,10 @@ export default function WrestlingFreestyleOverlay({
                   where: 'mat',
                 });
                 showToast(`${offenderTitle}: FLEE (+1 opp)`, offenderColor);
-                setPenFor(null);
+                setPpFor(null);
               }}
             />
+
             <Chip
               label="FLEE +2"
               tint={offenderColor}
@@ -530,7 +409,7 @@ export default function WrestlingFreestyleOverlay({
                   where: 'danger',
                 });
                 showToast(`${offenderTitle}: FLEE (+2 opp)`, offenderColor);
-                setPenFor(null);
+                setPpFor(null);
               }}
             />
           </View>
@@ -539,7 +418,75 @@ export default function WrestlingFreestyleOverlay({
     );
   };
 
-  // --- Circles & grids ----------------------------------------
+  const PinConfirm = () => {
+    if (!pinFor) return null;
+
+    const { actor, color, title } = sideInfo(pinFor);
+
+    return (
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: CHOOSER_TOP,
+          left: EDGE_L,
+          right: EDGE_R,
+          alignItems: 'center',
+          zIndex: 60,
+        }}
+      >
+        <View
+          style={{
+            maxWidth: screenW - (EDGE_L + EDGE_R),
+            backgroundColor: 'rgba(0,0,0,0.78)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.28)',
+            borderRadius: 16,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
+            Confirm PIN for {title}?
+          </Text>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
+            <TouchableOpacity
+              onPress={() => setPinFor(null)}
+              style={{
+                paddingVertical: 9,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+                backgroundColor: 'rgba(255,255,255,0.12)',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '800' }}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                fire(actor as any, 'pin', 'PIN', 0, {
+                  winBy: 'pin',
+                  kind: 'fall',
+                  pinnedBy: actor,
+                });
+                showToast(`${title}: PIN`, color);
+                setPinFor(null);
+              }}
+              style={{
+                paddingVertical: 9,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+                backgroundColor: color,
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '900' }}>Confirm PIN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  };
 
   const Circle = ({
     label,
@@ -567,7 +514,6 @@ export default function WrestlingFreestyleOverlay({
 
         fire(actor, keyName, label, value);
 
-        // ✅ toast uses athlete name (no color words)
         if (actor === 'home') showToast(`${recordedName}: ${label}`, bg);
         else if (actor === 'opponent') showToast(`Opponent: ${label}`, bg);
         else showToast(label, bg);
@@ -593,7 +539,6 @@ export default function WrestlingFreestyleOverlay({
     </TouchableOpacity>
   );
 
-  // ✅ UPDATED: pill shows "Name: points" (no "Score:" and no color words)
   const ScorePill = ({
     title,
     value,
@@ -666,8 +611,8 @@ export default function WrestlingFreestyleOverlay({
         <Circle label="OB1" actor={leftActor as any} keyName="out" value={1} bg={leftColor} />
 
         <Circle label="BIG" actor="neutral" keyName="big" bg={leftColor} onPressOverride={() => setBigFor('left')} />
-        <Circle label="PASS" actor="neutral" keyName="pass" bg={leftColor} onPressOverride={() => setPassFor('left')} />
-        <Circle label="PEN" actor="neutral" keyName="pen" bg={leftColor} onPressOverride={() => setPenFor('left')} />
+        <Circle label="P/P" actor="neutral" keyName="pass_pen" bg={leftColor} onPressOverride={() => setPpFor('left')} />
+        <Circle label="PIN" actor="neutral" keyName="pin" bg={leftColor} onPressOverride={() => setPinFor('left')} />
       </View>
 
       <View style={{ flex: 1 }} />
@@ -721,8 +666,8 @@ export default function WrestlingFreestyleOverlay({
         <Circle label="OB1" actor={rightActor as any} keyName="out" value={1} bg={rightColor} />
 
         <Circle label="BIG" actor="neutral" keyName="big" bg={rightColor} onPressOverride={() => setBigFor('right')} />
-        <Circle label="PASS" actor="neutral" keyName="pass" bg={rightColor} onPressOverride={() => setPassFor('right')} />
-        <Circle label="PEN" actor="neutral" keyName="pen" bg={rightColor} onPressOverride={() => setPenFor('right')} />
+        <Circle label="P/P" actor="neutral" keyName="pass_pen" bg={rightColor} onPressOverride={() => setPpFor('right')} />
+        <Circle label="PIN" actor="neutral" keyName="pin" bg={rightColor} onPressOverride={() => setPinFor('right')} />
       </View>
 
       <View style={{ flex: 1 }} />
@@ -741,7 +686,6 @@ export default function WrestlingFreestyleOverlay({
       pointerEvents="box-none"
       style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
     >
-      {/* Flip colors control (same placement as folkstyle) */}
       <View
         style={{ position: 'absolute', top: -36, left: 0, right: 0, alignItems: 'center' }}
         pointerEvents="box-none"
@@ -761,7 +705,6 @@ export default function WrestlingFreestyleOverlay({
         </TouchableOpacity>
       </View>
 
-      {/* Period button (same placement) */}
       <View
         style={{ position: 'absolute', top: -36, right: EDGE_R, alignItems: 'flex-end' }}
         pointerEvents="box-none"
@@ -784,8 +727,8 @@ export default function WrestlingFreestyleOverlay({
       </View>
 
       <BigChooser />
-      <PassivityChooser />
-      <PenaltyChooser />
+      <PassPenaltyChooser />
+      <PinConfirm />
 
       {toast ? (
         <FlashToast
