@@ -125,7 +125,7 @@ export default function LibraryScreen() {
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
   const [gameEditRow, setGameEditRow] = useState<Row | null>(null);
 
-  const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
+  const [view, setView] = useState<'all' | 'athletes' | 'sports' | 'events'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
@@ -493,7 +493,7 @@ export default function LibraryScreen() {
       athleteId: gameEditRow.athleteId,
       athlete: gameEditRow.athlete,
       sport: gameEditRow.sport,
-      limit: 5,
+      limit: 10,
     });
   }, [gameEditRow, allRows]);
 
@@ -553,7 +553,7 @@ export default function LibraryScreen() {
 
   const handlePressAddToGame = useCallback((row: Row) => {
     if (String(row.uri).startsWith('cloud:')) {
-      Alert.alert('Cloud clip', 'Game grouping is local-only for now.');
+      Alert.alert('Cloud clip', 'Event grouping is local-only for now.');
       return;
     }
 
@@ -574,8 +574,8 @@ export default function LibraryScreen() {
         setGameEditRow(null);
         await load();
       } catch (e: any) {
-        console.log('add to game error', e);
-        Alert.alert('Add to Game failed', String(e?.message ?? e));
+        console.log('add to event error', e);
+        Alert.alert('Add to Event failed', String(e?.message ?? e));
       }
     },
     [gameEditRow, load],

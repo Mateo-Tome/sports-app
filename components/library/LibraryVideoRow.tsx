@@ -262,7 +262,7 @@ function LibraryVideoRowComponent({
   const subtitleBits = [
     clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
     clean(row.sport) ? `Sport: ${formatSportLabel(row.sport)}` : null,
-    clean(row.gameTitle) ? `Game: ${clean(row.gameTitle)}` : null,
+    clean(row.gameTitle) ? `Event: ${clean(row.gameTitle)}` : null,
     `Size: ${bytesToMB(row.size)}`,
   ].filter(Boolean);
 

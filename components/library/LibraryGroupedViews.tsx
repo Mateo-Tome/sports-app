@@ -10,12 +10,13 @@ import {
   View,
   ViewToken,
 } from 'react-native';
+import LibraryEventsView from './LibraryEventsView';
 
 import AllVideosList from './AllVideosList';
 import type { LibraryRow } from './LibraryVideoRow';
 
 type Row = LibraryRow;
-type ViewKey = 'all' | 'athletes' | 'sports';
+type ViewKey = 'all' | 'athletes' | 'sports' | 'events';
 
 interface LibraryGroupedViewsProps {
   view: ViewKey;
@@ -139,7 +140,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
         paddingBottom: 8,
       }}
     >
-      {(['all', 'athletes', 'sports'] as const).map((k) => (
+      {(['all', 'athletes', 'sports', 'events'] as const).map((k) => (
         <TouchableOpacity
           key={k}
           onPress={() => {
@@ -562,6 +563,16 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
       {view === 'sports' && selectedSport == null && renderSportsRoot()}
 
       {view === 'sports' && selectedSport != null && renderSportsVideos()}
+
+
+      {view === 'events' && (
+        <LibraryEventsView
+          rows={allRows}
+          tabBarHeight={tabBarHeight}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
+      )}
     </View>
   );
 };
