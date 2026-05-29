@@ -134,3 +134,43 @@ export function getRecentGamesForClip(params: {
       clipCount,
     }));
 }
+export async function removeClipFromGame(params: {
+    uri: string;
+  }) {
+    const uri = clean(params.uri);
+  
+    if (!uri) throw new Error('Missing clip uri.');
+  
+    const sidecarPath = sidecarPathForVideoUri(uri);
+    const existing = (await readSidecarForUpload(uri)) ?? {};
+  
+    await FileSystem.writeAsStringAsync(
+      sidecarPath,
+      JSON.stringify(
+        {
+          ...existing,
+          gameId: null,
+          gameTitle: null,
+          modifiedAt: Date.now(),
+        },
+        null,
+        2,
+      ),
+    );
+  
+    const list = await readIndex();
+  
+    const updated: IndexMeta[] = list.map((e) =>
+      e.uri === uri
+        ? {
+            ...e,
+            gameId: null,
+            gameTitle: null,
+          }
+        : e,
+    );
+  
+    await writeIndexAtomic(updated);
+  
+    return true;
+  }

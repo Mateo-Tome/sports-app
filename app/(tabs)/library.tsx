@@ -34,6 +34,7 @@ import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
 import {
   assignClipToGame,
   getRecentGamesForClip,
+  removeClipFromGame,
 } from '../../lib/library/gameGroups';
 import {
   readIndex,
@@ -165,7 +166,7 @@ export default function LibraryScreen() {
         try {
           const tInfo: any = await FileSystem.getInfoAsync(cached);
           if (tInfo?.exists) thumb = cached;
-        } catch {}
+        } catch { }
       }
 
       const row: Row = {
@@ -220,7 +221,7 @@ export default function LibraryScreen() {
 
     try {
       await sweepOrphanThumbs(sorted.map((m) => m.uri));
-    } catch {}
+    } catch { }
   }, []);
 
   const load = useCallback(async () => {
@@ -275,26 +276,26 @@ export default function LibraryScreen() {
         prev.map((r) =>
           r.uri === uri
             ? ({
-                ...r,
-                finalScore: isWrestling ? scoreBits.finalScore : null,
-                homeIsAthlete: isWrestling ? scoreBits.homeIsAthlete : null,
-                outcome: isWrestling ? (scoreBits.outcome ?? undefined) : undefined,
-                myScore: isWrestling ? scoreBits.myScore : null,
-                oppScore: isWrestling ? scoreBits.oppScore : null,
-                highlightGold: finalHighlightGold,
+              ...r,
+              finalScore: isWrestling ? scoreBits.finalScore : null,
+              homeIsAthlete: isWrestling ? scoreBits.homeIsAthlete : null,
+              outcome: isWrestling ? (scoreBits.outcome ?? undefined) : undefined,
+              myScore: isWrestling ? scoreBits.myScore : null,
+              oppScore: isWrestling ? scoreBits.oppScore : null,
+              highlightGold: finalHighlightGold,
+              edgeColor: finalEdgeColor,
+              libraryStyle: {
                 edgeColor: finalEdgeColor,
-                libraryStyle: {
-                  edgeColor: finalEdgeColor,
-                  badgeText: sportBits.badgeText ?? null,
-                  badgeColor:
-                    sportBits.badgeColor ??
-                    sportBits.edgeColor ??
-                    finalEdgeColor ??
-                    null,
-                },
-                hittingLabel: sportBits.hittingLabel ?? null,
-                pitchingLabel: sportBits.pitchingLabel ?? null,
-              } as any)
+                badgeText: sportBits.badgeText ?? null,
+                badgeColor:
+                  sportBits.badgeColor ??
+                  sportBits.edgeColor ??
+                  finalEdgeColor ??
+                  null,
+              },
+              hittingLabel: sportBits.hittingLabel ?? null,
+              pitchingLabel: sportBits.pitchingLabel ?? null,
+            } as any)
             : r,
         ),
       );
@@ -324,7 +325,7 @@ export default function LibraryScreen() {
         await load();
         try {
           await sweepOrphanThumbs();
-        } catch {}
+        } catch { }
       }
     } finally {
       setRefreshing(false);
@@ -356,13 +357,13 @@ export default function LibraryScreen() {
         try {
           try {
             await FileSystem.deleteAsync(row.uri, { idempotent: true });
-          } catch {}
+          } catch { }
 
           try {
             const t = thumbPathFor(row.uri);
             const info: any = await FileSystem.getInfoAsync(t);
             if (info?.exists) await FileSystem.deleteAsync(t, { idempotent: true });
-          } catch {}
+          } catch { }
 
           const current = await readIndex();
           const updated = current.filter((e) => e.uri !== row.uri);
@@ -372,7 +373,7 @@ export default function LibraryScreen() {
             try {
               const { granted } = await MediaLibrary.requestPermissionsAsync();
               if (granted) await MediaLibrary.deleteAssetsAsync([row.assetId]);
-            } catch {}
+            } catch { }
           }
 
           Alert.alert('Deleted', 'Video removed.');
@@ -581,6 +582,25 @@ export default function LibraryScreen() {
     [gameEditRow, load],
   );
 
+  const handleRemoveFromGame = useCallback(async () => {
+    if (!gameEditRow) return;
+
+    try {
+      await removeClipFromGame({
+        uri: gameEditRow.uri,
+      });
+
+      setGameEditRow(null);
+      await load();
+    } catch (e: any) {
+      console.log('remove from event error', e);
+      Alert.alert(
+        'Remove from Event failed',
+        String(e?.message ?? e),
+      );
+    }
+  }, [gameEditRow, load]);
+
   const handlePressEditAthlete = useCallback((row: Row) => {
     setAthletePickerOpen(row);
   }, []);
@@ -621,7 +641,7 @@ export default function LibraryScreen() {
         try {
           const u = await ensureAnonymous();
           await AsyncStorage.setItem(athletesKey(u.uid), JSON.stringify(nextList));
-        } catch {}
+        } catch { }
       }
 
       await doEditAthlete(athletePickerOpen, trimmed);
@@ -660,7 +680,7 @@ export default function LibraryScreen() {
             setUploadedMap((prev) => {
               const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
               AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(
-                () => {},
+                () => { },
               );
               return next;
             });
@@ -788,6 +808,7 @@ export default function LibraryScreen() {
         currentGameTitle={gameEditRow?.gameTitle ?? null}
         onClose={() => setGameEditRow(null)}
         onSubmit={handleSubmitGame}
+        onRemoveFromEvent={handleRemoveFromGame}
       />
     </View>
   );
