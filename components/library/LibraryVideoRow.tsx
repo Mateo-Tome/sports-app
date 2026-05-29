@@ -1,5 +1,3 @@
-
-
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo, useState } from 'react';
@@ -23,6 +21,10 @@ export type LibraryRow = {
   uri: string;
   displayName: string;
   athlete: string;
+  athleteId?: string | null;
+
+  gameId?: string | null;
+  gameTitle?: string | null;
   sport: string;
   size: number | null;
   mtime: number | null;
@@ -53,6 +55,7 @@ type Props = {
   onPressDelete: () => void;
   onPressEditAthlete: () => void;
   onPressEditTitle: () => void;
+  onPressAddToGame: () => void;
   onPressSaveToPhotos: () => void;
   onUploaded: (key: string, url: string) => void;
 };
@@ -249,6 +252,7 @@ function LibraryVideoRowComponent({
   onPressDelete,
   onPressEditAthlete,
   onPressEditTitle,
+  onPressAddToGame,
   onPressSaveToPhotos,
   onUploaded,
 }: Props) {
@@ -258,6 +262,7 @@ function LibraryVideoRowComponent({
   const subtitleBits = [
     clean(row.athlete) ? `Athlete: ${clean(row.athlete)}` : null,
     clean(row.sport) ? `Sport: ${formatSportLabel(row.sport)}` : null,
+    clean(row.gameTitle) ? `Game: ${clean(row.gameTitle)}` : null,
     `Size: ${bytesToMB(row.size)}`,
   ].filter(Boolean);
 
@@ -533,8 +538,45 @@ function LibraryVideoRowComponent({
               </TouchableOpacity>
             ) : null}
 
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-              <ActionButton label="Play" onPress={onPressPlay} />
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginTop: 10,
+              }}
+            >
+              <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+                <ActionButton label="Play" onPress={onPressPlay} />
+              </View>
+
+              <TouchableOpacity
+                onPress={(e: any) => {
+                  e?.stopPropagation?.();
+                  onPressAddToGame();
+                }}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 999,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text
+                  style={{
+                    color: 'white',
+                    fontSize: 22,
+                    fontWeight: '900',
+                    marginTop: -2,
+                  }}
+                >
+                  +
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {actionsOpen ? (
@@ -557,41 +599,40 @@ function LibraryVideoRowComponent({
                 </View>
 
                 <View
-  style={
-    uploaded
-      ? {
-          marginTop: 2,
-          alignItems: 'flex-start',
-        }
-      : {
-          marginTop: 2,
-          width: '100%',
-          alignSelf: 'stretch',
-          alignItems: 'stretch',
-        }
-  }
->
-  
-  {uploaded ? (
-    shareId ? (
-      <ShareButton shareId={shareId} />
-    ) : (
-      <UploadedStatus />
-    )
-  ) : (
-    <UploadButton
-      localUri={row.uri}
-      uploaded={uploaded}
-      sidecar={{
-        videoPath: row.uri,
-        athlete: row.athlete,
-        sport: row.sport,
-        createdAt: row.mtime ?? Date.now(),
-      }}
-      onUploaded={onUploaded}
-    />
-  )}
-</View>
+                  style={
+                    uploaded
+                      ? {
+                          marginTop: 2,
+                          alignItems: 'flex-start',
+                        }
+                      : {
+                          marginTop: 2,
+                          width: '100%',
+                          alignSelf: 'stretch',
+                          alignItems: 'stretch',
+                        }
+                  }
+                >
+                  {uploaded ? (
+                    shareId ? (
+                      <ShareButton shareId={shareId} />
+                    ) : (
+                      <UploadedStatus />
+                    )
+                  ) : (
+                    <UploadButton
+                      localUri={row.uri}
+                      uploaded={uploaded}
+                      sidecar={{
+                        videoPath: row.uri,
+                        athlete: row.athlete,
+                        sport: row.sport,
+                        createdAt: row.mtime ?? Date.now(),
+                      }}
+                      onUploaded={onUploaded}
+                    />
+                  )}
+                </View>
               </View>
             ) : null}
           </View>

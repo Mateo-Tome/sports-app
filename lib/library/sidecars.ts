@@ -17,6 +17,14 @@ export type SidecarEvent = {
 
 export type Sidecar = {
   athlete?: string;
+
+  // stable athlete identity
+  athleteName?: string;
+  athleteId?: string | null;
+
+  // optional game grouping
+  gameId?: string | null;
+  gameTitle?: string | null;
   sport?: string; // can be "wrestling" OR "wrestling:freestyle" (legacy tolerated)
   style?: string; // "folkstyle" | "freestyle" | "greco" | etc
   events?: SidecarEvent[];

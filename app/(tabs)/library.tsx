@@ -18,40 +18,42 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AddGameModal from '../../components/library/AddGameModal';
+import EditAthleteModal from '../../components/library/EditAthleteModal';
+import EditTitleModal from '../../components/library/EditTitleModal';
+import LibraryDataSourceToggle from '../../components/library/LibraryDataSourceToggle';
+import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
 import {
   LibraryVideoRow,
   type LibraryRow,
 } from '../../components/library/LibraryVideoRow';
 
-import EditAthleteModal from '../../components/library/EditAthleteModal';
-import EditTitleModal from '../../components/library/EditTitleModal';
-import LibraryDataSourceToggle from '../../components/library/LibraryDataSourceToggle';
-import LibraryGroupedViews from '../../components/library/LibraryGroupedViews';
-import { useLibraryDataSource } from '../../src/hooks/library/useLibraryDataSource';
-
+import { deleteCloudVideo } from '../../lib/backend';
+import { ensureAnonymous } from '../../lib/firebase';
+import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
+import {
+  assignClipToGame,
+  getRecentGamesForClip,
+} from '../../lib/library/gameGroups';
 import {
   readIndex,
   writeIndexAtomic,
   type IndexMeta,
 } from '../../lib/library/indexStore';
-
 import retagVideo from '../../lib/library/retag';
 import {
   getSportKeyFromSidecar,
   readOutcomeFor,
   readSidecarForUpload,
 } from '../../lib/library/sidecars';
+import '../../lib/library/sportLibraryBitsInit';
+import { buildSportLibraryBits } from '../../lib/library/sportLibraryStyleRegistry';
 import {
   getOrCreateThumb,
   sweepOrphanThumbs,
   thumbPathFor,
 } from '../../lib/library/thumbs';
-
-import { deleteCloudVideo } from '../../lib/backend';
-import { ensureAnonymous } from '../../lib/firebase';
-import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
-import '../../lib/library/sportLibraryBitsInit';
-import { buildSportLibraryBits } from '../../lib/library/sportLibraryStyleRegistry';
+import { useLibraryDataSource } from '../../src/hooks/library/useLibraryDataSource';
 
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
@@ -78,6 +80,7 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let i = 0;
+
   const workers = new Array(Math.min(limit, items.length))
     .fill(0)
     .map(async () => {
@@ -87,6 +90,7 @@ async function mapLimit<T, R>(
         results[idx] = await worker(items[idx], idx);
       }
     });
+
   await Promise.all(workers);
   return results;
 }
@@ -119,6 +123,7 @@ export default function LibraryScreen() {
   >({});
 
   const [titleEditRow, setTitleEditRow] = useState<Row | null>(null);
+  const [gameEditRow, setGameEditRow] = useState<Row | null>(null);
 
   const [view, setView] = useState<'all' | 'athletes' | 'sports'>('athletes');
   const [selectedAthlete, setSelectedAthlete] = useState<string | null>(null);
@@ -152,6 +157,7 @@ export default function LibraryScreen() {
       const scoreBits = await readOutcomeFor(meta.uri);
 
       let thumb: string | null = null;
+
       if (eagerThumb) {
         thumb = await getOrCreateThumb(meta.uri, meta.assetId);
       } else {
@@ -220,6 +226,7 @@ export default function LibraryScreen() {
   const load = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
+
     try {
       try {
         const out = await buildLibraryRows();
@@ -299,20 +306,17 @@ export default function LibraryScreen() {
     const sub = DeviceEventEmitter.addListener('sidecarUpdated', async (evt: any) => {
       const uri = evt?.uri as string | undefined;
       if (!uri) return;
-  
-      // Patch immediately so color/label can update fast.
+
       await patchRowFromSidecarPayload(uri, evt?.sidecar);
-  
-      // Then do a full rebuild from the saved sidecar so grouped views/sourceRows
-      // cannot keep stale baseball labels like K/1B.
       await load();
     });
-  
+
     return () => sub.remove();
   }, [patchRowFromSidecarPayload, load]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+
     try {
       if (dataSource === 'cloud') {
         await refreshCloudRows();
@@ -402,10 +406,12 @@ export default function LibraryScreen() {
 
   const saveToPhotos = useCallback(async (uri: string) => {
     const { granted } = await MediaLibrary.requestPermissionsAsync();
+
     if (!granted) {
       Alert.alert('Photos permission needed', 'Allow access to save your video.');
       return;
     }
+
     await MediaLibrary.saveToLibraryAsync(uri);
     Alert.alert('Saved to Photos', 'Check your Photos app.');
   }, []);
@@ -427,10 +433,12 @@ export default function LibraryScreen() {
           },
           newAthlete,
         );
+
         await load();
       } catch (e: any) {
         console.log('retag error', e);
         const msg = e?.message || String(e);
+
         Alert.alert(
           'Update failed',
           msg.includes('Original file not found')
@@ -477,6 +485,18 @@ export default function LibraryScreen() {
     };
   }, [sourceRows]);
 
+  const recentGamesForSelectedClip = useMemo(() => {
+    if (!gameEditRow) return [];
+
+    return getRecentGamesForClip({
+      rows: allRows,
+      athleteId: gameEditRow.athleteId,
+      athlete: gameEditRow.athlete,
+      sport: gameEditRow.sport,
+      limit: 5,
+    });
+  }, [gameEditRow, allRows]);
+
   const photoFor = useCallback(
     (name: string) => {
       const a = athleteList.find((x) => x.name === name);
@@ -507,6 +527,7 @@ export default function LibraryScreen() {
       }
 
       const trimmed = newTitle.trim();
+
       if (!trimmed) {
         Alert.alert('Enter a title', 'Please enter a video title.');
         return;
@@ -517,6 +538,7 @@ export default function LibraryScreen() {
         const updated: IndexMeta[] = list.map((e) =>
           e.uri === titleEditRow.uri ? { ...e, displayName: trimmed } : e,
         );
+
         await writeIndexAtomic(updated);
         await load();
       } catch (e: any) {
@@ -527,6 +549,36 @@ export default function LibraryScreen() {
       }
     },
     [titleEditRow, closeTitleModal, load],
+  );
+
+  const handlePressAddToGame = useCallback((row: Row) => {
+    if (String(row.uri).startsWith('cloud:')) {
+      Alert.alert('Cloud clip', 'Game grouping is local-only for now.');
+      return;
+    }
+
+    setGameEditRow(row);
+  }, []);
+
+  const handleSubmitGame = useCallback(
+    async (gameTitle: string, existingGameId?: string | null) => {
+      if (!gameEditRow) return;
+
+      try {
+        await assignClipToGame({
+          uri: gameEditRow.uri,
+          gameTitle,
+          existingGameId,
+        });
+
+        setGameEditRow(null);
+        await load();
+      } catch (e: any) {
+        console.log('add to game error', e);
+        Alert.alert('Add to Game failed', String(e?.message ?? e));
+      }
+    },
+    [gameEditRow, load],
   );
 
   const handlePressEditAthlete = useCallback((row: Row) => {
@@ -551,12 +603,15 @@ export default function LibraryScreen() {
       if (!athletePickerOpen) return;
 
       const trimmed = newName.trim();
+
       if (!trimmed) {
         Alert.alert('Enter a name', 'Please enter an athlete name.');
         return;
       }
 
-      const exists = athleteList.some((a) => a.name.toLowerCase() === trimmed.toLowerCase());
+      const exists = athleteList.some(
+        (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
+      );
 
       if (!exists) {
         const newEntry: Athlete = { id: `${Date.now()}`, name: trimmed };
@@ -588,20 +643,25 @@ export default function LibraryScreen() {
           onPressDelete={() => confirmRemove(item)}
           onPressEditAthlete={() => handlePressEditAthlete(item)}
           onPressEditTitle={() => openEditName(item)}
+          onPressAddToGame={() => handlePressAddToGame(item)}
           onPressSaveToPhotos={() => {
             if (isCloud) {
               Alert.alert('Cloud clip', 'Save to Photos is local-only for now.');
               return;
             }
+
             saveToPhotos(item.uri);
           }}
           onUploaded={(key, url) => {
             if (isCloud) return;
 
             const mapKey = keyFor(item);
+
             setUploadedMap((prev) => {
               const next = { ...prev, [mapKey]: { key, url, at: Date.now() } };
-              AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(() => {});
+              AsyncStorage.setItem(UPLOADED_MAP_KEY, JSON.stringify(next)).catch(
+                () => {},
+              );
               return next;
             });
           }}
@@ -616,6 +676,7 @@ export default function LibraryScreen() {
       handlePressEditAthlete,
       openEditName,
       saveToPhotos,
+      handlePressAddToGame,
     ],
   );
 
@@ -719,6 +780,14 @@ export default function LibraryScreen() {
         row={titleEditRow}
         onClose={closeTitleModal}
         onSubmit={handleSubmitTitle}
+      />
+
+      <AddGameModal
+        visible={!!gameEditRow}
+        recentGames={recentGamesForSelectedClip}
+        currentGameTitle={gameEditRow?.gameTitle ?? null}
+        onClose={() => setGameEditRow(null)}
+        onSubmit={handleSubmitGame}
       />
     </View>
   );

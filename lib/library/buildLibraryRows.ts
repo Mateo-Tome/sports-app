@@ -137,6 +137,12 @@ async function buildRow(
     athlete: displayAthlete,
     athleteId: clipAthleteId || null,
 
+    gameId:
+      String((sidecar as any)?.gameId ?? (meta as any)?.gameId ?? '').trim() || null,
+
+    gameTitle:
+      String((sidecar as any)?.gameTitle ?? (meta as any)?.gameTitle ?? '').trim() || null,
+
     sport:
       (effectiveSport || 'unknown').trim() ||
       'unknown',

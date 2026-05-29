@@ -9,9 +9,15 @@ export type IndexMeta = {
   uri: string;
   displayName: string;
   athlete: string;
+  athleteName?: string;
+  athleteId?: string | null;
   sport: string;
   createdAt: number;
   assetId?: string;
+
+  // Game grouping - optional so old clips do not break
+  gameId?: string | null;
+  gameTitle?: string | null;
 };
 
 // ---------- index helpers ----------
