@@ -270,13 +270,13 @@ function LibraryVideoRowComponent({
 
   const chip: Chip | null =
     row.sport !== 'highlights' &&
-    row.outcome &&
-    row.myScore != null &&
-    row.oppScore != null
+      row.outcome &&
+      row.myScore != null &&
+      row.oppScore != null
       ? {
-          text: `${row.outcome} ${row.myScore}–${row.oppScore}`,
-          color: outcomeColor(row.outcome),
-        }
+        text: `${row.outcome} ${row.myScore}–${row.oppScore}`,
+        color: outcomeColor(row.outcome),
+      }
       : null;
 
   const safeRow = {
@@ -556,7 +556,7 @@ function LibraryVideoRowComponent({
                   onPressAddToGame();
                 }}
                 style={{
-                  width: 34,
+                  width: clean(row.gameTitle) ? 58 : 34,
                   height: 34,
                   borderRadius: 999,
                   backgroundColor: 'rgba(255,255,255,0.12)',
@@ -569,12 +569,12 @@ function LibraryVideoRowComponent({
                 <Text
                   style={{
                     color: 'white',
-                    fontSize: 22,
+                    fontSize: clean(row.gameTitle) ? 12 : 22,
                     fontWeight: '900',
-                    marginTop: -2,
+                    marginTop: clean(row.gameTitle) ? 0 : -2,
                   }}
                 >
-                  +
+                  {clean(row.gameTitle) ? 'Event' : '+'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -602,15 +602,15 @@ function LibraryVideoRowComponent({
                   style={
                     uploaded
                       ? {
-                          marginTop: 2,
-                          alignItems: 'flex-start',
-                        }
+                        marginTop: 2,
+                        alignItems: 'flex-start',
+                      }
                       : {
-                          marginTop: 2,
-                          width: '100%',
-                          alignSelf: 'stretch',
-                          alignItems: 'stretch',
-                        }
+                        marginTop: 2,
+                        width: '100%',
+                        alignSelf: 'stretch',
+                        alignItems: 'stretch',
+                      }
                   }
                 >
                   {uploaded ? (

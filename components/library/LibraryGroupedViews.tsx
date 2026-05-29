@@ -10,6 +10,8 @@ import {
   View,
   ViewToken,
 } from 'react-native';
+import { buildEventGroups } from '../../lib/library/eventGroups';
+import LibraryEventDetailView from './LibraryEventDetailView';
 import LibraryEventsView from './LibraryEventsView';
 
 import AllVideosList from './AllVideosList';
@@ -75,6 +77,17 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
   loadingMore,
 }) => {
   const canLoadMore = !!onEndReached && !!hasMore && !loadingMore;
+
+  const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
+
+  const eventGroups = React.useMemo(() => {
+    return buildEventGroups(allRows);
+  }, [allRows]);
+
+  const selectedEvent = React.useMemo(() => {
+    if (!selectedEventId) return null;
+    return eventGroups.find((e) => e.eventId === selectedEventId) ?? null;
+  }, [selectedEventId, eventGroups]);
 
   const renderLoadMoreFooter = () => {
     if (!hasMore) return null;
@@ -147,6 +160,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
             setView(k);
             setSelectedAthlete(null);
             setSelectedSport(null);
+            setSelectedEventId(null);
           }}
           style={{
             paddingVertical: 8,
@@ -565,12 +579,25 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
       {view === 'sports' && selectedSport != null && renderSportsVideos()}
 
 
-      {view === 'events' && (
+      {view === 'events' && selectedEvent == null && (
         <LibraryEventsView
           rows={allRows}
           tabBarHeight={tabBarHeight}
           refreshing={refreshing}
           onRefresh={onRefresh}
+          onPressEvent={setSelectedEventId}
+        />
+      )}
+
+      {view === 'events' && selectedEvent != null && (
+        <LibraryEventDetailView
+          eventTitle={selectedEvent.eventTitle}
+          rows={selectedEvent.rows}
+          tabBarHeight={tabBarHeight}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onBack={() => setSelectedEventId(null)}
+          renderVideoRow={renderVideoRow}
         />
       )}
     </View>
