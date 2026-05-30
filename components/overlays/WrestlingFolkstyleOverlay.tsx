@@ -10,6 +10,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OverlayCompactText } from './OverlayCompactText';
 import { OverlayTitleText } from './OverlayTitleText';
 import { OverlayProps } from './types';
+import {
+  getFolkstylePeriod,
+  getNextFolkstylePeriod,
+} from './wrestlingFolkstylePeriods';
 
 /** Helper */
 function cleanName(v?: string) {
@@ -117,6 +121,7 @@ export default function WrestlingFolkstyleOverlay({
   const [myKidColor, setMyKidColor] = React.useState<'green' | 'red'>('green');
 
   const [period, setPeriod] = React.useState<number>(1);
+  const currentPeriod = getFolkstylePeriod(period);
 
   const leftActor = myKidSide === 'left' ? 'home' : 'opponent';
   const rightActor = myKidSide === 'right' ? 'home' : 'opponent';
@@ -183,13 +188,25 @@ export default function WrestlingFolkstyleOverlay({
 
   const handleNextPeriod = () => {
     if (!isRecording) return;
-    const next = period + 1;
-    setPeriod(next);
 
-    fire('neutral', 'period', `P${next}`, undefined, { period: next });
-    showToast(`Period ${next}`, '#ffffff');
+    const next = getNextFolkstylePeriod(period);
+    setPeriod(next.index);
 
-    setChoicePeriod(next);
+    fire('neutral', 'period', next.label, undefined, {
+      period: next.index,
+      periodLabel: next.label,
+      periodGroup: next.statGroup,
+      isOvertime: next.isOvertime,
+    });
+
+    showToast(next.label, '#ffffff');
+
+    if (next.requiresChoice) {
+      setChoicePeriod(next.index);
+    } else {
+      setChoicePeriod(null);
+    }
+
     setDeferredBySide(null);
     setPendingChoiceForSide(null);
   };
@@ -307,6 +324,12 @@ export default function WrestlingFolkstyleOverlay({
 
   const ChoicePopup = () => {
     if (!choicePeriod) return null;
+
+    const choicePeriodInfo = getFolkstylePeriod(choicePeriod);
+
+    if (!choicePeriodInfo.requiresChoice) {
+      return null;
+    }
 
     const leftReq = pendingChoiceForSide === 'left';
     const rightReq = pendingChoiceForSide === 'right';
@@ -440,7 +463,7 @@ export default function WrestlingFolkstyleOverlay({
             <OverlayTitleText
               style={{ color: 'white', fontWeight: '900', fontSize: 14, marginRight: 8 }}
             >
-              P{choicePeriod} Choice
+              {choicePeriodInfo.label} Choice
             </OverlayTitleText>
             <NFChooserClose onClose={close} />
           </View>
@@ -1036,7 +1059,7 @@ export default function WrestlingFolkstyleOverlay({
           }}
         >
           <OverlayCompactText style={{ color: 'white', fontWeight: '800', fontSize: 12 }}>
-            P{period}
+            {currentPeriod.label}
           </OverlayCompactText>
         </TouchableOpacity>
       </View>

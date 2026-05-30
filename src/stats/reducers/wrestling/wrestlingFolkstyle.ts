@@ -49,45 +49,33 @@ export type FolkstyleStats = {
   scoring: {
     myKidPoints: number;
     opponentPoints: number;
-
     takedown: ActionSplit;
     escape: ActionSplit;
     reversal: ActionSplit;
-
     nearfall2: ActionSplit;
     nearfall3: ActionSplit;
     nearfall4: ActionSplit;
-
     stallingGiven: number;
     cautionGiven: number;
     penaltyGiven: number;
     pins: ActionSplit;
   };
-
   derived: {
     matches: number;
-
     record: RecordStats;
-
     myPointsPerMatch: number;
     opponentPointsPerMatch: number;
-
     takedownsPerMatch: number;
     escapesPerMatch: number;
     reversalsPerMatch: number;
     nearfallEventsPerMatch: number;
-
     pinRate: number;
     pinRateText: string;
-
     pointBreakdown: PointBreakdown;
     pointBreakdownPct: Record<keyof PointBreakdown, number>;
-
     takedownPeriodSharePct: PeriodShare;
   };
-
   periods: Record<PeriodKey, PeriodStats>;
-
   lastUpdatedAt: number;
 };
 
@@ -128,6 +116,28 @@ function readResult(clip: any): 'win' | 'loss' | 'tie' | null {
   if (['t', 'tie', 'draw'].includes(s)) return 'tie';
 
   return null;
+}
+
+function readPinResult(clip: any): 'win' | 'loss' | null {
+  const homeIsAthlete = clip?.homeIsAthlete !== false;
+  const events: any[] = clip?.events ?? [];
+
+  const pin = events.find((e) => {
+    const kind = String(e?.key ?? e?.kind ?? '').toLowerCase();
+    const label = String(e?.label ?? '').toLowerCase();
+    const winBy = String(e?.meta?.winBy ?? '').toLowerCase();
+
+    return kind === 'pin' || label.includes('pin') || winBy === 'pin';
+  });
+
+  if (!pin) return null;
+
+  const actor = pin.actor;
+  if (actor !== 'home' && actor !== 'opponent') return null;
+
+  const pinByMyKid = homeIsAthlete ? actor === 'home' : actor === 'opponent';
+
+  return pinByMyKid ? 'win' : 'loss';
 }
 
 function actorBucket(actor: any, homeIsAthlete: boolean | undefined): Bucket {
@@ -259,15 +269,12 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
     scoring: {
       myKidPoints: 0,
       opponentPoints: 0,
-
       takedown: makeSplit(),
       escape: makeSplit(),
       reversal: makeSplit(),
-
       nearfall2: makeSplit(),
       nearfall3: makeSplit(),
       nearfall4: makeSplit(),
-
       stallingGiven: 0,
       cautionGiven: 0,
       penaltyGiven: 0,
@@ -275,25 +282,20 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
     },
     derived: {
       matches: clips.length,
-
       record: {
         wins: 0,
         losses: 0,
         ties: 0,
         winPctText: '0%',
       },
-
       myPointsPerMatch: 0,
       opponentPointsPerMatch: 0,
-
       takedownsPerMatch: 0,
       escapesPerMatch: 0,
       reversalsPerMatch: 0,
       nearfallEventsPerMatch: 0,
-
       pinRate: 0,
       pinRateText: '0%',
-
       pointBreakdown,
       pointBreakdownPct: {
         takedown: 0,
@@ -303,7 +305,6 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
         penalty: 0,
         other: 0,
       },
-
       takedownPeriodSharePct: makePeriodShare(),
     },
     periods: makePeriods(),
@@ -311,7 +312,8 @@ export function reduceWrestlingFolkstyle(clips: ClipSidecar[]): FolkstyleStats {
   };
 
   for (const clip of clips) {
-    const result = readResult(clip as any);
+    const result = readPinResult(clip as any) ?? readResult(clip as any);
+
     if (result === 'win') base.derived.record.wins += 1;
     if (result === 'loss') base.derived.record.losses += 1;
     if (result === 'tie') base.derived.record.ties += 1;
