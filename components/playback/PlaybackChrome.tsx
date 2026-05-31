@@ -260,6 +260,24 @@ export function EventBelt(props: {
     const inner = meta?.meta ?? {};
     const label = String(meta?.label ?? inner?.label ?? '').trim();
 
+    const explicitPeriodLabel = String(
+      meta?.periodLabel ??
+        inner?.periodLabel ??
+        meta?.label ??
+        inner?.label ??
+        (e as any)?.label ??
+        '',
+    ).trim();
+    
+    if (
+      explicitPeriodLabel === 'SV' ||
+      explicitPeriodLabel === 'TB1' ||
+      explicitPeriodLabel === 'TB2' ||
+      explicitPeriodLabel === 'UTB'
+    ) {
+      return explicitPeriodLabel;
+    }
+
     const rawPeriod =
       typeof meta.period === 'number'
         ? meta.period
@@ -340,7 +358,8 @@ export function EventBelt(props: {
         const token = realChoiceEvt ? readChoiceToken(realChoiceEvt) : null;
 
         if (pNum) {
-          periodText = `p${pNum}${token ? ` ${token}` : ''}`.toLowerCase();
+          const baseLabel = periodLabel || `P${pNum}`;
+          periodText = `${baseLabel}${token ? ` ${token}` : ''}`.toLowerCase();
           periodTextColor = realChoiceEvt ? colorFor(realChoiceEvt) : '#111';
         } else {
           const numLabel = (periodLabel && periodLabel.replace(/\D/g, '')) || periodLabel;
