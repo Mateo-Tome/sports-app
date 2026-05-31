@@ -470,7 +470,10 @@ export default function AthleteCard({
               variant="photo"
               onPress={() => {
                 closeMenu();
-                onSetPhoto(a.id);
+              
+                setTimeout(() => {
+                  onSetPhoto(a.id);
+                }, 350);
               }}
             />
 
