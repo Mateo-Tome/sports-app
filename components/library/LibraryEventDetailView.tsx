@@ -1,5 +1,7 @@
+import React from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
+import EventBasketballStatsCard from './EventBasketballStatsCard';
 import type { LibraryRow } from './LibraryVideoRow';
 
 type Props = {
@@ -137,6 +139,8 @@ export default function LibraryEventDetailView({
           </Text>
         </View>
       </View>
+
+      <EventBasketballStatsCard rows={rows} />
 
       <FlatList
         data={flatData}
