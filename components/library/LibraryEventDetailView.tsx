@@ -1,7 +1,7 @@
 import React from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
-import EventBasketballStatsCard from './eventStats/EventBasketballStatsCard';
+import EventStatsCard from './eventStats/EventStatsCard';
 import type { LibraryRow } from './LibraryVideoRow';
 
 type Props = {
@@ -145,7 +145,7 @@ export default function LibraryEventDetailView({
         keyExtractor={(item) => item.key}
         refreshing={refreshing}
         onRefresh={onRefresh}
-        ListHeaderComponent={<EventBasketballStatsCard rows={rows} />}
+        ListHeaderComponent={<EventStatsCard rows={rows} />}
         contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
         renderItem={({ item }) => {
           if (item.type === 'athlete') {
