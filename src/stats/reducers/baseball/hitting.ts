@@ -13,6 +13,7 @@ export type BaseballHittingStats = {
     homerun: number;
     out: number;
     strikeout: number;
+    sacBunt: number;
 
     rbi: {
       total: number;
@@ -71,6 +72,11 @@ function readMeta(e: any) {
   return { ...inner, ...meta };
 }
 
+function isSacBunt(meta: any) {
+  const type = String(meta?.type ?? meta?.label ?? '').trim().toLowerCase();
+  return meta?.isSacrifice === true || type === 'sac_bunt' || type === 'sac bunt';
+}
+
 export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStats {
   const base: BaseballHittingStats = {
     sportKey: 'baseball:hitting',
@@ -85,6 +91,7 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
       homerun: 0,
       out: 0,
       strikeout: 0,
+      sacBunt: 0,
 
       rbi: {
         total: 0,
@@ -116,7 +123,6 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
   for (const clip of clips) {
     const events: any[] = (clip as any).events ?? [];
     base.totals.events += events.length;
-
     base.lastUpdatedAt = Math.max(base.lastUpdatedAt, clamp0((clip as any).createdAt));
 
     for (const e of events) {
@@ -159,6 +165,10 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
         base.counts.homerun += 1;
       } else if (key === 'out') {
         base.counts.out += 1;
+
+        const sacBunt = isSacBunt(meta);
+        if (sacBunt) base.counts.sacBunt += 1;
+
         const t = String(meta?.type ?? meta?.label ?? '').trim();
         if (t) base.counts.outTypes[t] = (base.counts.outTypes[t] ?? 0) + 1;
       } else if (key === 'strikeout') {
@@ -170,8 +180,15 @@ export function reduceBaseballHitting(clips: ClipSidecar[]): BaseballHittingStat
   }
 
   const hitsTotal = base.counts.hit + base.counts.homerun;
-  const atBats = hitsTotal + base.counts.out + base.counts.strikeout;
-  const plateAppearances = atBats + base.counts.walk + base.counts.hitByPitch;
+  const normalOuts = Math.max(0, base.counts.out - base.counts.sacBunt);
+
+  const atBats = hitsTotal + normalOuts + base.counts.strikeout;
+
+  const plateAppearances =
+    atBats +
+    base.counts.walk +
+    base.counts.hitByPitch +
+    base.counts.sacBunt;
 
   const onBase = hitsTotal + base.counts.walk + base.counts.hitByPitch;
 

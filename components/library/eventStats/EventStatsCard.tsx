@@ -1,5 +1,6 @@
 import type { LibraryRow } from '../LibraryVideoRow';
 import EventBasketballStatsCard from './EventBasketballStatsCard';
+import EventDiamondStatsCard from './EventDiamondStatsCard';
 import EventVolleyballStatsCard from './EventVolleyballStatsCard';
 
 type Props = {
@@ -19,12 +20,21 @@ export default function EventStatsCard({ rows }: Props) {
     getSportKey(row).startsWith('volleyball')
   );
 
+  const hasDiamond = rows.some(row => {
+    const key = getSportKey(row);
+    return key.startsWith('baseball') || key.startsWith('softball');
+  });
+
   if (hasBasketball) {
     return <EventBasketballStatsCard rows={rows} />;
   }
 
   if (hasVolleyball) {
     return <EventVolleyballStatsCard rows={rows} />;
+  }
+
+  if (hasDiamond) {
+    return <EventDiamondStatsCard rows={rows} />;
   }
 
   return null;

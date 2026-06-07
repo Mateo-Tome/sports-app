@@ -307,13 +307,27 @@ export default function BaseballHittingPlaybackModule({
   const incrementOuts = (type: string) => {
     const next = Math.min(outs + 1, 3);
     setOuts(next);
-
+  
+    const cleanLabel = String(type ?? '').trim();
+    const lower = cleanLabel.toLowerCase();
+  
+    const isSacBunt =
+      lower === 'sac bunt' ||
+      lower === 'sacrifice bunt' ||
+      lower.includes('sac bunt') ||
+      lower.includes('sacrifice bunt');
+  
     askRbi({
       key: 'out',
       label: 'Out',
       color: OUT_COLOR,
-      meta: { type, outsAfter: next },
-      toastBase: type,
+      meta: {
+        type: isSacBunt ? 'sac_bunt' : cleanLabel,
+        label: cleanLabel,
+        isSacrifice: isSacBunt,
+        outsAfter: next,
+      },
+      toastBase: cleanLabel,
     });
   };
 

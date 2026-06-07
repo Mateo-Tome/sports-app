@@ -15,7 +15,6 @@ import {
   WALK_COLOR,
 } from './useBaseballHittingLogic';
 
-/** Tiny visual confirmation toast (no haptics) */
 export function FlashToast({
   text,
   tint,
@@ -278,6 +277,7 @@ export function HitOutChooser(props: {
           <OutChip label="Ground Out" />
           <OutChip label="Flyout" />
           <OutChip label="Fielder's Choice" />
+          <OutChip label="Sac Bunt" />
         </View>
 
         <TouchableOpacity
@@ -329,11 +329,6 @@ export function StrikeChooser(props: {
         justifyContent: 'center',
         marginHorizontal: 6,
         marginVertical: 4,
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3,
-        elevation: 2,
       }}
     >
       <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
@@ -350,9 +345,7 @@ export function StrikeChooser(props: {
       screenW={props.screenW}
     >
       <View style={{ alignItems: 'center' }}>
-        <OverlayTitleText
-          style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 6, textAlign: 'center' }}
-        >
+        <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 6, textAlign: 'center' }}>
           Strike Type
         </OverlayTitleText>
 
@@ -361,19 +354,8 @@ export function StrikeChooser(props: {
           <StrikeChip label="Looking" kind="looking" />
         </View>
 
-        <TouchableOpacity
-          onPress={props.onClose}
-          style={{
-            marginTop: 8,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: 999,
-            backgroundColor: 'rgba(255,255,255,0.1)',
-          }}
-        >
-          <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
-            Cancel
-          </OverlayCompactText>
+        <TouchableOpacity onPress={props.onClose} style={{ marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+          <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>Cancel</OverlayCompactText>
         </TouchableOpacity>
       </View>
     </PopupFrame>
@@ -404,11 +386,6 @@ export function StrikeoutChooser(props: {
         justifyContent: 'center',
         marginHorizontal: 6,
         marginVertical: 4,
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3,
-        elevation: 2,
       }}
     >
       <OverlayCompactText style={{ color: 'white', fontWeight: '900' }}>
@@ -425,9 +402,7 @@ export function StrikeoutChooser(props: {
       screenW={props.screenW}
     >
       <View style={{ alignItems: 'center' }}>
-        <OverlayTitleText
-          style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 6, textAlign: 'center' }}
-        >
+        <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 6, textAlign: 'center' }}>
           Strikeout Type
         </OverlayTitleText>
 
@@ -436,19 +411,8 @@ export function StrikeoutChooser(props: {
           <KChip label="K Looking" kind="looking" />
         </View>
 
-        <TouchableOpacity
-          onPress={props.onClose}
-          style={{
-            marginTop: 8,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: 999,
-            backgroundColor: 'rgba(255,255,255,0.1)',
-          }}
-        >
-          <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
-            Cancel
-          </OverlayCompactText>
+        <TouchableOpacity onPress={props.onClose} style={{ marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+          <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>Cancel</OverlayCompactText>
         </TouchableOpacity>
       </View>
     </PopupFrame>
@@ -475,42 +439,17 @@ export function HomerunConfirm(props: {
       screenW={props.screenW}
     >
       <View style={{ alignItems: 'center' }}>
-        <OverlayTitleText
-          style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 10, textAlign: 'center' }}
-        >
+        <OverlayTitleText style={{ color: 'white', fontWeight: '900', fontSize: 14, marginBottom: 10, textAlign: 'center' }}>
           Confirm Home Run?
         </OverlayTitleText>
 
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
-          <TouchableOpacity
-            onPress={props.onCancel}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 999,
-              backgroundColor: 'rgba(255,255,255,0.12)',
-              borderWidth: 1,
-              borderColor: FRAME_COLOR,
-              marginRight: 8,
-            }}
-          >
-            <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>
-              Cancel
-            </OverlayCompactText>
+          <TouchableOpacity onPress={props.onCancel} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: FRAME_COLOR, marginRight: 8 }}>
+            <OverlayCompactText style={{ color: 'white', fontWeight: '800' }}>Cancel</OverlayCompactText>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={props.onConfirm}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 999,
-              backgroundColor: HR_COLOR,
-            }}
-          >
-            <OverlayCompactText style={{ color: '#111', fontWeight: '900' }}>
-              Confirm HR
-            </OverlayCompactText>
+          <TouchableOpacity onPress={props.onConfirm} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: HR_COLOR }}>
+            <OverlayCompactText style={{ color: '#111', fontWeight: '900' }}>Confirm HR</OverlayCompactText>
           </TouchableOpacity>
         </View>
       </View>
@@ -520,31 +459,13 @@ export function HomerunConfirm(props: {
 
 export function CountBar(props: { insetsTop: number; balls: number; strikes: number }) {
   return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', top: props.insetsTop + 8, left: 0, right: 0, alignItems: 'center' }}
-    >
-      <View
-        style={{
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 999,
-          backgroundColor: 'rgba(0,0,0,0.65)',
-          borderWidth: 1,
-          borderColor: FRAME_COLOR,
-        }}
-      >
+    <View pointerEvents="none" style={{ position: 'absolute', top: props.insetsTop + 8, left: 0, right: 0, alignItems: 'center' }}>
+      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.65)', borderWidth: 1, borderColor: FRAME_COLOR }}>
         <OverlayCompactText style={{ fontSize: 11, color: 'white', fontWeight: '900' }}>
-          <OverlayCompactText style={{ color: BALL_COLOR, fontWeight: '800', fontSize: 11 }}>
-            Balls:{' '}
-          </OverlayCompactText>
+          <OverlayCompactText style={{ color: BALL_COLOR, fontWeight: '800', fontSize: 11 }}>Balls: </OverlayCompactText>
           {props.balls}
-          <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 11 }}>
-            {'   '}
-          </OverlayCompactText>
-          <OverlayCompactText style={{ color: STRIKE_COLOR, fontWeight: '800', fontSize: 11 }}>
-            Strikes:{' '}
-          </OverlayCompactText>
+          <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 11 }}>{'   '}</OverlayCompactText>
+          <OverlayCompactText style={{ color: STRIKE_COLOR, fontWeight: '800', fontSize: 11 }}>Strikes: </OverlayCompactText>
           {props.strikes}
         </OverlayCompactText>
       </View>
@@ -565,10 +486,7 @@ export function LeftStack(props: {
 }) {
   if (!props.showPalette) return null;
   return (
-    <View
-      pointerEvents="box-none"
-      style={{ position: 'absolute', left: props.EDGE_L, top: props.TOP, bottom: props.BOTTOM, justifyContent: 'center' }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: props.EDGE_L, top: props.TOP, bottom: props.BOTTOM, justifyContent: 'center' }}>
       <View style={{ gap: props.GAP }}>
         <Circle label="Ball" bg={BALL_COLOR} onPress={props.onBall} BTN_SIZE={props.BTN_SIZE} />
         <Circle label="Strike" bg={STRIKE_COLOR} onPress={props.onStrike} BTN_SIZE={props.BTN_SIZE} />
@@ -592,17 +510,7 @@ export function RightStack(props: {
 }) {
   if (!props.showPalette) return null;
   return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        right: props.EDGE_R,
-        top: props.TOP,
-        bottom: props.BOTTOM,
-        justifyContent: 'center',
-        alignItems: 'flex-end',
-      }}
-    >
+    <View pointerEvents="box-none" style={{ position: 'absolute', right: props.EDGE_R, top: props.TOP, bottom: props.BOTTOM, justifyContent: 'center', alignItems: 'flex-end' }}>
       <View style={{ gap: props.GAP }}>
         <Circle label="Result" bg={HIT_COLOR} onPress={props.onOpenResult} BTN_SIZE={props.BTN_SIZE} />
         <Circle label="K" bg={K_COLOR} onPress={props.onOpenK} BTN_SIZE={props.BTN_SIZE} />

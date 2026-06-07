@@ -357,18 +357,32 @@ export default function BaseballHittingOverlay({ isRecording, onEvent }: Overlay
 
   const incrementOuts = (label: string) => {
     if (!isRecording) return;
-
+  
     setOuts((prev) => {
       const next = Math.min(prev + 1, 3);
-
+  
+      const cleanLabel = String(label ?? '').trim();
+      const lower = cleanLabel.toLowerCase();
+  
+      const isSacBunt =
+        lower === 'sac bunt' ||
+        lower === 'sacrifice bunt' ||
+        lower.includes('sac bunt') ||
+        lower.includes('sacrifice bunt');
+  
       askRbi({
         key: 'out',
         label: 'Out',
         color: OUT_COLOR,
-        meta: { type: label, outsAfter: next },
-        toastBase: label,
+        meta: {
+          type: isSacBunt ? 'sac_bunt' : cleanLabel,
+          label: cleanLabel,
+          isSacrifice: isSacBunt,
+          outsAfter: next,
+        },
+        toastBase: cleanLabel,
       });
-
+  
       return next;
     });
   };
