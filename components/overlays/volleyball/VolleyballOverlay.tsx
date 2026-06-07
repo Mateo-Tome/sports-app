@@ -65,18 +65,31 @@ function CircleButton({
         width: 58,
         height: 58,
         borderRadius: 29,
-        backgroundColor: lit ? ringColor : 'rgba(0,0,0,0.28)',
+      
+        // cleaner look
+        backgroundColor: lit
+          ? 'rgba(255,255,255,0.10)'
+          : 'transparent',
+      
         borderWidth: 2,
         borderColor: ringColor,
+      
         alignItems: 'center',
         justifyContent: 'center',
+      
         opacity: disabled ? 0.35 : 1,
-        transform: [{ scale: lit ? 1.03 : 1 }],
+      
+        transform: [{ scale: lit ? 1.02 : 1 }],
+      
+        // much lighter shadow
         shadowColor: '#000',
-        shadowOpacity: lit ? 0.35 : 0.25,
+        shadowOpacity: lit ? 0.2 : 0,
         shadowOffset: { width: 0, height: 2 },
-        shadowRadius: lit ? 6 : 4,
-        elevation: lit ? 3 : 2,
+        shadowRadius: lit ? 4 : 0,
+        elevation: lit ? 2 : 0,
+      
+        overflow: 'hidden',
+      
         paddingHorizontal: 4,
       }}
     >
@@ -350,7 +363,7 @@ export default function VolleyballOverlay({
           pointerEvents="none"
           style={{
             position: 'absolute',
-            top: insets.top + 44,
+            top: insets.top + 65,
             left: insets.left + 12,
             right: insets.right + 12,
             alignItems: 'center',
