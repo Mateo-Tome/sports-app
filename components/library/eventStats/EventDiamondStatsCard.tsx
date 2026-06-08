@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
-import { readSidecarForUpload } from '@/lib/library/sidecars';
 import {
     reduceBaseballHitting,
     type BaseballHittingStats,
@@ -12,8 +11,14 @@ import {
 } from '@/src/stats/reducers/baseball/pitching';
 import type { LibraryRow } from '../LibraryVideoRow';
 
+type EventSidecarEntry = {
+  uri: string;
+  sidecar: any;
+};
+
 type Props = {
   rows: LibraryRow[];
+  eventSidecars?: EventSidecarEntry[];
 };
 
 type Tab = 'hitting' | 'pitching';
@@ -37,7 +42,7 @@ function pctText(num: number, den: number) {
   return `${Math.round((num / den) * 100)}%`;
 }
 
-function StatBox({ label, value }: { label: string; value: string | number }) {
+function StatBox({ label, value }: { label: string | number; value: string | number }) {
   return (
     <View
       style={{
@@ -96,9 +101,10 @@ function TabButton({
   );
 }
 
-export default function EventDiamondStatsCard({ rows }: Props) {
-  const [hittingStats, setHittingStats] = useState<BaseballHittingStats | null>(null);
-  const [pitchingStats, setPitchingStats] = useState<BaseballPitchingStats | null>(null);
+export default function EventDiamondStatsCard({
+  rows,
+  eventSidecars = [],
+}: Props) {
   const [tab, setTab] = useState<Tab>('hitting');
 
   const counts = useMemo(() => {
@@ -108,66 +114,47 @@ export default function EventDiamondStatsCard({ rows }: Props) {
     };
   }, [rows]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const { hittingStats, pitchingStats } = useMemo<{
+    hittingStats: BaseballHittingStats | null;
+    pitchingStats: BaseballPitchingStats | null;
+  }>(() => {
+    const hittingUris = new Set(rows.filter(isHitting).map((row) => row.uri));
+    const pitchingUris = new Set(rows.filter(isPitching).map((row) => row.uri));
 
-    async function load() {
-      const hittingRows = rows.filter(isHitting);
-      const pitchingRows = rows.filter(isPitching);
+    const hittingSidecars = eventSidecars
+      .filter((entry) => hittingUris.has(entry.uri))
+      .map((entry) => entry.sidecar)
+      .filter(Boolean);
 
-      const hittingSidecars = (
-        await Promise.all(
-          hittingRows.map(async (row) => {
-            try {
-              return await readSidecarForUpload(row.uri);
-            } catch {
-              return null;
-            }
-          }),
-        )
-      ).filter(Boolean) as any[];
+    const pitchingSidecars = eventSidecars
+      .filter((entry) => pitchingUris.has(entry.uri))
+      .map((entry) => entry.sidecar)
+      .filter(Boolean);
 
-      const pitchingSidecars = (
-        await Promise.all(
-          pitchingRows.map(async (row) => {
-            try {
-              return await readSidecarForUpload(row.uri);
-            } catch {
-              return null;
-            }
-          }),
-        )
-      ).filter(Boolean) as any[];
-
-      if (cancelled) return;
-
-      setHittingStats(
-        hittingSidecars.length ? reduceBaseballHitting(hittingSidecars) : null,
-      );
-
-      setPitchingStats(
-        pitchingSidecars.length ? reduceBaseballPitching(pitchingSidecars) : null,
-      );
-
-      if (!hittingSidecars.length && pitchingSidecars.length) {
-        setTab('pitching');
-      } else {
-        setTab('hitting');
-      }
-    }
-
-    load();
-
-    return () => {
-      cancelled = true;
+    return {
+      hittingStats: hittingSidecars.length
+        ? reduceBaseballHitting(hittingSidecars as any)
+        : null,
+      pitchingStats: pitchingSidecars.length
+        ? reduceBaseballPitching(pitchingSidecars as any)
+        : null,
     };
-  }, [rows]);
+  }, [rows, eventSidecars]);
 
   if (!hittingStats && !pitchingStats) return null;
 
+  const activeTab: Tab =
+    tab === 'hitting' && hittingStats
+      ? 'hitting'
+      : tab === 'pitching' && pitchingStats
+        ? 'pitching'
+        : pitchingStats
+          ? 'pitching'
+          : 'hitting';
+
   const showToggle = !!hittingStats && !!pitchingStats;
-  const showingHitting = tab === 'hitting' && !!hittingStats;
-  const showingPitching = tab === 'pitching' && !!pitchingStats;
+  const showingHitting = activeTab === 'hitting' && !!hittingStats;
+  const showingPitching = activeTab === 'pitching' && !!pitchingStats;
 
   const hittingKRate = hittingStats
     ? pctText(hittingStats.counts.strikeout, hittingStats.derived.plateAppearances)
@@ -213,8 +200,8 @@ export default function EventDiamondStatsCard({ rows }: Props) {
 
       {showToggle ? (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
-          <TabButton label="Hitting" active={tab === 'hitting'} onPress={() => setTab('hitting')} />
-          <TabButton label="Pitching" active={tab === 'pitching'} onPress={() => setTab('pitching')} />
+          <TabButton label="Hitting" active={activeTab === 'hitting'} onPress={() => setTab('hitting')} />
+          <TabButton label="Pitching" active={activeTab === 'pitching'} onPress={() => setTab('pitching')} />
         </View>
       ) : null}
 
@@ -234,9 +221,7 @@ export default function EventDiamondStatsCard({ rows }: Props) {
             <StatBox label="Walk %" value={hittingWalkRate} />
           </View>
 
-          <DetailLine>
-            XBH = 2B + 3B + HR
-          </DetailLine>
+          <DetailLine>XBH = 2B + 3B + HR</DetailLine>
 
           <DetailLine>
             1B: {hittingStats.counts.hitTypes.single} • 2B: {hittingStats.counts.hitTypes.double} • 3B: {hittingStats.counts.hitTypes.triple}

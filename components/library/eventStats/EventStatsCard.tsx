@@ -36,11 +36,11 @@ export default function EventStatsCard({ rows, eventSidecars = [] }: Props) {
   }
 
   if (hasVolleyball) {
-    return <EventVolleyballStatsCard rows={rows} />;
+    return <EventVolleyballStatsCard rows={rows} eventSidecars={eventSidecars} />;
   }
 
   if (hasDiamond) {
-    return <EventDiamondStatsCard rows={rows} />;
+    return <EventDiamondStatsCard rows={rows} eventSidecars={eventSidecars} />;
   }
 
   return null;

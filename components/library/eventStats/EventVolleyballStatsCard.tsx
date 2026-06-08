@@ -1,12 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
-import { readSidecarForUpload } from '@/lib/library/sidecars';
-import { reduceVolleyballDefault, type VolleyballDefaultStats } from '@/src/stats/reducers/volleyball/default';
+import {
+  reduceVolleyballDefault,
+  type VolleyballDefaultStats,
+} from '@/src/stats/reducers/volleyball/default';
 import type { LibraryRow } from '../LibraryVideoRow';
+
+type EventSidecarEntry = {
+  uri: string;
+  sidecar: any;
+};
 
 type Props = {
   rows: LibraryRow[];
+  eventSidecars?: EventSidecarEntry[];
 };
 
 function isVolleyball(row: LibraryRow) {
@@ -38,43 +46,22 @@ function StatBox({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export default function EventVolleyballStatsCard({ rows }: Props) {
-  const [stats, setStats] = useState<VolleyballDefaultStats | null>(null);
+export default function EventVolleyballStatsCard({
+  rows,
+  eventSidecars = [],
+}: Props) {
+  const stats = useMemo<VolleyballDefaultStats | null>(() => {
+    const volleyballUris = new Set(rows.filter(isVolleyball).map((row) => row.uri));
 
-  useEffect(() => {
-    let cancelled = false;
+    const sidecars = eventSidecars
+      .filter((entry) => volleyballUris.has(entry.uri))
+      .map((entry) => entry.sidecar)
+      .filter(Boolean);
 
-    async function load() {
-      const volleyballRows = rows.filter(isVolleyball);
+    if (!sidecars.length) return null;
 
-      const sidecars = (
-        await Promise.all(
-          volleyballRows.map(async (row) => {
-            try {
-              return await readSidecarForUpload(row.uri);
-            } catch {
-              return null;
-            }
-          }),
-        )
-      ).filter(Boolean) as any[];
-
-      if (cancelled) return;
-
-      if (!sidecars.length) {
-        setStats(null);
-        return;
-      }
-
-      setStats(reduceVolleyballDefault(sidecars));
-    }
-
-    load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [rows]);
+    return reduceVolleyballDefault(sidecars as any);
+  }, [rows, eventSidecars]);
 
   if (!stats) return null;
 
