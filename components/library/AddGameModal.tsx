@@ -4,6 +4,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -14,6 +15,9 @@ export type RecentGameOption = {
   gameId: string;
   gameTitle: string;
   clipCount?: number;
+  latestAt?: number | null;
+  updatedAt?: number | null;
+  createdAt?: number | null;
 };
 
 type Props = {
@@ -30,6 +34,10 @@ function clean(v?: string | null) {
   return s.length ? s : '';
 }
 
+function timeForGame(g: RecentGameOption) {
+  return Number(g.latestAt ?? g.updatedAt ?? g.createdAt ?? 0) || 0;
+}
+
 export default function AddGameModal({
   visible,
   recentGames,
@@ -39,30 +47,40 @@ export default function AddGameModal({
   onRemoveFromEvent,
 }: Props) {
   const [newGameTitle, setNewGameTitle] = useState('');
+  const [showAllEvents, setShowAllEvents] = useState(false);
 
   useEffect(() => {
-    if (visible) setNewGameTitle('');
+    if (visible) {
+      setNewGameTitle('');
+      setShowAllEvents(false);
+    }
   }, [visible]);
 
-  const cleanRecentGames = useMemo(() => {
+  const allRecentGames = useMemo(() => {
     const seen = new Set<string>();
 
-    return recentGames
+    return [...recentGames]
       .filter((g) => clean(g.gameId) && clean(g.gameTitle))
+      .sort((a, b) => timeForGame(b) - timeForGame(a))
       .filter((g) => {
         const key = clean(g.gameId);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      })
-      .slice(0, 10);
+      });
   }, [recentGames]);
+
+  const cleanRecentGames = useMemo(() => {
+    return showAllEvents ? allRecentGames : allRecentGames.slice(0, 5);
+  }, [allRecentGames, showAllEvents]);
 
   const handleCreate = () => {
     const title = clean(newGameTitle);
     if (!title) return;
     onSubmit(title, null);
   };
+
+  const hasOlderEvents = allRecentGames.length > 5;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -89,6 +107,7 @@ export default function AddGameModal({
               paddingBottom: Platform.OS === 'ios' ? 26 : 18,
               borderWidth: 1,
               borderColor: 'rgba(255,255,255,0.12)',
+              maxHeight: '88%',
             }}
           >
             <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
@@ -121,35 +140,65 @@ export default function AddGameModal({
             )}
 
             {cleanRecentGames.length > 0 ? (
-              <View style={{ marginTop: 18, gap: 10 }}>
+              <View style={{ marginTop: 18 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800' }}>
                   Recent Events
                 </Text>
 
-                {cleanRecentGames.map((game) => (
+                <ScrollView
+                  style={{
+                    marginTop: 10,
+                    maxHeight: showAllEvents ? 300 : 260,
+                  }}
+                  contentContainerStyle={{ gap: 10 }}
+                  showsVerticalScrollIndicator={showAllEvents}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {cleanRecentGames.map((game) => (
+                    <TouchableOpacity
+                      key={game.gameId}
+                      onPress={() => onSubmit(game.gameTitle, game.gameId)}
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 14,
+                        borderRadius: 16,
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                        borderWidth: 1,
+                        borderColor: 'rgba(255,255,255,0.16)',
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '900' }} numberOfLines={1}>
+                        {game.gameTitle}
+                      </Text>
+
+                      {typeof game.clipCount === 'number' ? (
+                        <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>
+                          {game.clipCount} clip{game.clipCount === 1 ? '' : 's'}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {hasOlderEvents ? (
                   <TouchableOpacity
-                    key={game.gameId}
-                    onPress={() => onSubmit(game.gameTitle, game.gameId)}
+                    onPress={() => setShowAllEvents((v) => !v)}
                     style={{
-                      paddingVertical: 12,
+                      alignSelf: 'center',
+                      marginTop: 10,
                       paddingHorizontal: 14,
-                      borderRadius: 16,
-                      backgroundColor: 'rgba(255,255,255,0.08)',
+                      paddingVertical: 8,
+                      borderRadius: 999,
+                      backgroundColor: 'rgba(255,255,255,0.1)',
                       borderWidth: 1,
-                      borderColor: 'rgba(255,255,255,0.16)',
+                      borderColor: 'rgba(255,255,255,0.14)',
                     }}
                   >
                     <Text style={{ color: 'white', fontWeight: '900' }}>
-                      {game.gameTitle}
+                      {showAllEvents ? 'Show Less' : 'Show Older Events'}
                     </Text>
-
-                    {typeof game.clipCount === 'number' ? (
-                      <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>
-                        {game.clipCount} clip{game.clipCount === 1 ? '' : 's'}
-                      </Text>
-                    ) : null}
                   </TouchableOpacity>
-                ))}
+                ) : null}
               </View>
             ) : null}
 
