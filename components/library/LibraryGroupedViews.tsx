@@ -10,7 +10,9 @@ import {
   View,
   ViewToken,
 } from 'react-native';
+
 import { buildEventGroups } from '../../lib/library/eventGroups';
+import { readSidecarForUpload } from '../../lib/library/sidecars';
 import LibraryEventDetailView from './LibraryEventDetailView';
 import LibraryEventsView from './LibraryEventsView';
 
@@ -19,6 +21,11 @@ import type { LibraryRow } from './LibraryVideoRow';
 
 type Row = LibraryRow;
 type ViewKey = 'all' | 'athletes' | 'sports' | 'events';
+
+export type EventSidecarEntry = {
+  uri: string;
+  sidecar: any;
+};
 
 interface LibraryGroupedViewsProps {
   view: ViewKey;
@@ -79,6 +86,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
   const canLoadMore = !!onEndReached && !!hasMore && !loadingMore;
 
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
+  const [eventSidecars, setEventSidecars] = React.useState<EventSidecarEntry[]>([]);
 
   const eventGroups = React.useMemo(() => {
     return buildEventGroups(allRows);
@@ -88,6 +96,37 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
     if (!selectedEventId) return null;
     return eventGroups.find((e) => e.eventId === selectedEventId) ?? null;
   }, [selectedEventId, eventGroups]);
+
+  async function openEvent(eventId: string) {
+    const event = eventGroups.find((e) => e.eventId === eventId);
+
+    if (!event) {
+      setEventSidecars([]);
+      setSelectedEventId(eventId);
+      return;
+    }
+
+    const loaded = (
+      await Promise.all(
+        event.rows.map(async (row) => {
+          try {
+            const sidecar = await readSidecarForUpload(row.uri);
+            return sidecar ? { uri: row.uri, sidecar } : null;
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean) as EventSidecarEntry[];
+
+    setEventSidecars(loaded);
+    setSelectedEventId(eventId);
+  }
+
+  function closeEvent() {
+    setSelectedEventId(null);
+    setEventSidecars([]);
+  }
 
   const renderLoadMoreFooter = () => {
     if (!hasMore) return null;
@@ -160,7 +199,7 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
             setView(k);
             setSelectedAthlete(null);
             setSelectedSport(null);
-            setSelectedEventId(null);
+            closeEvent();
           }}
           style={{
             paddingVertical: 8,
@@ -578,14 +617,13 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
 
       {view === 'sports' && selectedSport != null && renderSportsVideos()}
 
-
       {view === 'events' && selectedEvent == null && (
         <LibraryEventsView
           rows={allRows}
           tabBarHeight={tabBarHeight}
           refreshing={refreshing}
           onRefresh={onRefresh}
-          onPressEvent={setSelectedEventId}
+          onPressEvent={openEvent}
         />
       )}
 
@@ -593,10 +631,11 @@ const LibraryGroupedViews: React.FC<LibraryGroupedViewsProps> = ({
         <LibraryEventDetailView
           eventTitle={selectedEvent.eventTitle}
           rows={selectedEvent.rows}
+          eventSidecars={eventSidecars}
           tabBarHeight={tabBarHeight}
           refreshing={refreshing}
           onRefresh={onRefresh}
-          onBack={() => setSelectedEventId(null)}
+          onBack={closeEvent}
           renderVideoRow={renderVideoRow}
         />
       )}

@@ -7,36 +7,45 @@ type Props = {
   onPress: () => void;
 };
 
-function formatSports(labels: string[]) {
-  if (!labels.length) return 'Unknown sport';
-  if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ' +' + (labels.length - 2) : ''}`;
-}
-
 export default function LibraryEventCard({ event, onPress }: Props) {
   return (
     <Pressable
       onPress={onPress}
-      style={{
+      style={({ pressed }) => ({
         marginHorizontal: 16,
-        marginVertical: 8,
-        padding: 14,
-        borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        marginVertical: 7,
+        paddingHorizontal: 15,
+        paddingVertical: 14,
+        borderRadius: 16,
+        backgroundColor: pressed
+          ? 'rgba(255,255,255,0.12)'
+          : 'rgba(255,255,255,0.075)',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.18)',
-      }}
+        borderColor: 'rgba(255,255,255,0.16)',
+      })}
     >
-      <Text style={{ color: 'white', fontSize: 17, fontWeight: '900' }} numberOfLines={1}>
+      <Text
+        style={{
+          color: 'white',
+          fontSize: 17,
+          fontWeight: '900',
+          letterSpacing: 0.2,
+        }}
+        numberOfLines={1}
+      >
         {event.eventTitle}
       </Text>
 
-      <Text style={{ color: 'rgba(255,255,255,0.75)', marginTop: 8, fontWeight: '700' }}>
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.68)',
+          marginTop: 7,
+          fontSize: 13,
+          fontWeight: '700',
+        }}
+        numberOfLines={1}
+      >
         {event.clipCount} clips • {event.athleteCount} athletes
-      </Text>
-
-      <Text style={{ color: 'rgba(255,255,255,0.55)', marginTop: 6 }} numberOfLines={1}>
-        {formatSports(event.sportLabels)}
       </Text>
     </Pressable>
   );

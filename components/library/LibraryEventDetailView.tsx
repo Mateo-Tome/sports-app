@@ -4,9 +4,15 @@ import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 import EventStatsCard from './eventStats/EventStatsCard';
 import type { LibraryRow } from './LibraryVideoRow';
 
+type EventSidecarEntry = {
+  uri: string;
+  sidecar: any;
+};
+
 type Props = {
   eventTitle: string;
   rows: LibraryRow[];
+  eventSidecars?: EventSidecarEntry[];
   tabBarHeight: number;
   refreshing: boolean;
   onRefresh: () => void;
@@ -65,6 +71,7 @@ function groupRows(rows: LibraryRow[]) {
 export default function LibraryEventDetailView({
   eventTitle,
   rows,
+  eventSidecars = [],
   tabBarHeight,
   refreshing,
   onRefresh,
@@ -145,7 +152,9 @@ export default function LibraryEventDetailView({
         keyExtractor={(item) => item.key}
         refreshing={refreshing}
         onRefresh={onRefresh}
-        ListHeaderComponent={<EventStatsCard rows={rows} />}
+        ListHeaderComponent={
+          <EventStatsCard rows={rows} eventSidecars={eventSidecars} />
+        }
         contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
         renderItem={({ item }) => {
           if (item.type === 'athlete') {

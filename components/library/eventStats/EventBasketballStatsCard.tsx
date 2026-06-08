@@ -1,17 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
-import { readSidecarForUpload } from '../../../lib/library/sidecars';
 import { reduceBasketballDefault } from '../../../src/stats/reducers/basketball/reduceBasketball';
 import type { LibraryRow } from '../LibraryVideoRow';
 
+type EventSidecarEntry = {
+  uri: string;
+  sidecar: any;
+};
+
 type Props = {
   rows: LibraryRow[];
+  eventSidecars?: EventSidecarEntry[];
 };
 
 function pct(made: number, attempts: number) {
   if (!attempts) return '0%';
   return `${Math.round((made / attempts) * 100)}%`;
+}
+
+function isBasketball(row: LibraryRow) {
+  return String((row as any).sportKey ?? row.sport ?? '')
+    .toLowerCase()
+    .startsWith('basketball');
 }
 
 function StatBox({
@@ -90,38 +101,24 @@ function ShootingRow({
   );
 }
 
-export default function EventBasketballStatsCard({ rows }: Props) {
-  const [stats, setStats] = useState<any | null>(null);
+export default function EventBasketballStatsCard({
+  rows,
+  eventSidecars = [],
+}: Props) {
+  const stats = useMemo(() => {
+    const basketballUris = new Set(
+      rows.filter(isBasketball).map((row) => row.uri),
+    );
 
-  useEffect(() => {
-    let cancelled = false;
+    const basketballSidecars = eventSidecars
+      .filter((entry) => basketballUris.has(entry.uri))
+      .map((entry) => entry.sidecar)
+      .filter(Boolean);
 
-    async function run() {
-      const basketballRows = rows.filter((row) =>
-        String(row.sport ?? '').toLowerCase().startsWith('basketball')
-      );
+    if (!basketballSidecars.length) return null;
 
-      const sidecars = [];
-
-      for (const row of basketballRows) {
-        const sidecar = await readSidecarForUpload(row.uri);
-        if (sidecar) sidecars.push(sidecar);
-      }
-
-      const nextStats = reduceBasketballDefault(sidecars as any);
-
-      if (!cancelled) setStats(nextStats);
-    }
-
-    run().catch((e) => {
-      console.log('[EventBasketballStatsCard] failed:', e);
-      if (!cancelled) setStats(null);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [rows]);
+    return reduceBasketballDefault(basketballSidecars as any);
+  }, [rows, eventSidecars]);
 
   if (!stats || stats.totals.clips === 0) return null;
 
