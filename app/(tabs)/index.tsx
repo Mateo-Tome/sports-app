@@ -608,58 +608,30 @@ export default function HomeAthletes() {
   };
 
   const deleteAthleteShell = async (id: string) => {
-    const athlete = athletes.find((a) => a.id === id);
-    const name = String(athlete?.name ?? 'this athlete').trim() || 'this athlete';
-
-    Alert.alert(
-      'Delete athlete?',
-      `This will permanently delete ${name} from your athlete list on this device.\n\nOld clips will NOT be deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Continue',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Are you sure?',
-              `This cannot be undone once synced.\n\n${name} will be removed from your athlete list on all devices after Sync.\n\nOld clips will still stay in your Library.`,
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Delete Athlete',
-                  style: 'destructive',
-                  onPress: async () => {
-                    const effectiveUid = uid ?? (await getActiveUid());
-
-                    await rememberDeletedAthlete(effectiveUid, id);
-
-                    const next = athletes.filter((a) => a.id !== id);
-                    await saveAthletes(next);
-
-                    const curNameKey = currentAthleteKey(effectiveUid);
-                    const curIdKey = currentAthleteIdKey(effectiveUid);
-
-                    const currentName = await AsyncStorage.getItem(curNameKey);
-                    const currentId = await AsyncStorage.getItem(curIdKey);
-
-                    if (currentId && !next.find((a) => a.id === currentId)) {
-                      await AsyncStorage.removeItem(curIdKey);
-                      await AsyncStorage.removeItem(curNameKey);
-                      return;
-                    }
-
-                    if (currentName && !next.find((a) => a.name === currentName)) {
-                      await AsyncStorage.removeItem(curNameKey);
-                    }
-                  },
-                },
-              ],
-            );
-          },
-        },
-      ],
-    );
+    const effectiveUid = uid ?? (await getActiveUid());
+  
+    await rememberDeletedAthlete(effectiveUid, id);
+  
+    const next = athletes.filter((a) => a.id !== id);
+    await saveAthletes(next);
+  
+    const curNameKey = currentAthleteKey(effectiveUid);
+    const curIdKey = currentAthleteIdKey(effectiveUid);
+  
+    const currentName = await AsyncStorage.getItem(curNameKey);
+    const currentId = await AsyncStorage.getItem(curIdKey);
+  
+    if (currentId && !next.find((a) => a.id === currentId)) {
+      await AsyncStorage.removeItem(curIdKey);
+      await AsyncStorage.removeItem(curNameKey);
+      return;
+    }
+  
+    if (currentName && !next.find((a) => a.name === currentName)) {
+      await AsyncStorage.removeItem(curNameKey);
+    }
   };
+
 
   const recordNoAthlete = async () => {
     const effectiveUid = uid ?? (await getActiveUid());
