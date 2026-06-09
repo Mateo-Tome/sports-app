@@ -9,9 +9,32 @@ import type { Athlete } from '../../lib/athleteTypes';
 import { getCloudAthletes, setCloudAthletes } from './cloudAthletes';
 
 const ATHLETES_KEY_PREFIX = 'athletes:list';
+const DELETED_ATHLETES_KEY_PREFIX = 'athletes:deleted';
 
 function athletesKey(uid: string) {
   return `${ATHLETES_KEY_PREFIX}:${uid}`;
+}
+
+function deletedAthletesKey(uid: string) {
+  return `${DELETED_ATHLETES_KEY_PREFIX}:${uid}`;
+}
+
+async function readDeletedAthleteIds(uid: string): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(deletedAthletesKey(uid));
+    const list = raw ? JSON.parse(raw) : [];
+
+    const ids = new Set<string>();
+
+    for (const item of Array.isArray(list) ? list : []) {
+      const id = String(item?.id ?? '').trim();
+      if (id) ids.add(id);
+    }
+
+    return ids;
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function toStringOrNull(v: any): string | null {
@@ -30,19 +53,22 @@ type CloudAthlete = {
   id: string;
   name: string;
   updatedAt?: number | null;
-  photoUrl?: string | null; // legacy
-  photoKey?: string | null; // stable
+  photoUrl?: string | null;
+  photoKey?: string | null;
   photoUpdatedAt?: number | null;
 };
 
 function normalizeLocal(list: Athlete[]): Athlete[] {
   const out: Athlete[] = [];
   const seen = new Set<string>();
+
   for (const a of Array.isArray(list) ? list : []) {
     const id = String((a as any)?.id ?? '').trim();
     const name = String((a as any)?.name ?? '').trim();
+
     if (!id || !name) continue;
     if (seen.has(id)) continue;
+
     seen.add(id);
 
     out.push({
@@ -57,17 +83,21 @@ function normalizeLocal(list: Athlete[]): Athlete[] {
       photoNeedsUpload: (a as any)?.photoNeedsUpload === true,
     } as any);
   }
+
   return out;
 }
 
 function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
   const out: CloudAthlete[] = [];
   const seen = new Set<string>();
+
   for (const a of Array.isArray(list) ? list : []) {
     const id = String((a as any)?.id ?? '').trim();
     const name = String((a as any)?.name ?? '').trim();
+
     if (!id || !name) continue;
     if (seen.has(id)) continue;
+
     seen.add(id);
 
     out.push({
@@ -79,7 +109,15 @@ function normalizeCloud(list: CloudAthlete[]): CloudAthlete[] {
       photoUpdatedAt: toNumberOrNull((a as any)?.photoUpdatedAt),
     });
   }
+
   return out;
+}
+
+function withoutDeleted<T extends { id?: any }>(list: T[], deletedIds: Set<string>): T[] {
+  return (Array.isArray(list) ? list : []).filter((a) => {
+    const id = String(a?.id ?? '').trim();
+    return id && !deletedIds.has(id);
+  });
 }
 
 function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
@@ -87,40 +125,35 @@ function mergeAthletes(local: Athlete[], cloud: CloudAthlete[]): Athlete[] {
   const C = normalizeCloud(cloud);
 
   const byId = new Map<string, Athlete>();
-  for (const a of L) byId.set(a.id, a);
+
+  for (const a of L) {
+    byId.set(a.id, a);
+  }
 
   for (const c of C) {
     const l = byId.get(c.id);
 
     const localUpdated =
-  typeof (l as any)?.updatedAt === 'number'
-    ? (l as any).updatedAt
-    : 0;
+      typeof (l as any)?.updatedAt === 'number' ? (l as any).updatedAt : 0;
 
-const cloudUpdated =
-  typeof (c as any)?.updatedAt === 'number'
-    ? (c as any).updatedAt
-    : 0;
+    const cloudUpdated =
+      typeof (c as any)?.updatedAt === 'number' ? (c as any).updatedAt : 0;
 
-const useCloudName = cloudUpdated > localUpdated;
+    const useCloudName = cloudUpdated > localUpdated;
 
-byId.set(c.id, {
-  id: c.id,
-  name: useCloudName
-    ? c.name?.trim() || (l as any)?.name?.trim() || 'Unnamed Athlete'
-    : (l as any)?.name?.trim() || c.name?.trim() || 'Unnamed Athlete',
-  updatedAt: Math.max(localUpdated, cloudUpdated),
+    byId.set(c.id, {
+      id: c.id,
+      name: useCloudName
+        ? c.name?.trim() || (l as any)?.name?.trim() || 'Unnamed Athlete'
+        : (l as any)?.name?.trim() || c.name?.trim() || 'Unnamed Athlete',
+      updatedAt: Math.max(localUpdated, cloudUpdated),
 
-      // cloud truth
       photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
       photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
       photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
 
-      // device-only stays device-only
       photoLocalUri: (l as any)?.photoLocalUri ?? null,
       photoUri: (l as any)?.photoUri ?? null,
-
-      // keep local queue flag
       photoNeedsUpload: (l as any)?.photoNeedsUpload === true,
     } as any);
   }
@@ -135,6 +168,7 @@ byId.set(c.id, {
       used.add(v.id);
     }
   }
+
   for (const l of L) {
     const v = byId.get(l.id);
     if (v && !used.has(v.id)) {
@@ -161,61 +195,74 @@ function toCloudPayload(list: Athlete[]): CloudAthlete[] {
     id: String(a?.id ?? '').trim(),
     name: String(a?.name ?? '').trim(),
     updatedAt:
-    typeof a?.updatedAt === 'number' &&
-    Number.isFinite(a.updatedAt) &&
-    a.updatedAt > 0
-    ? a.updatedAt
-    : Date.now(),
+      typeof a?.updatedAt === 'number' &&
+      Number.isFinite(a.updatedAt) &&
+      a.updatedAt > 0
+        ? a.updatedAt
+        : Date.now(),
     photoKey: toStringOrNull(a?.photoKey),
     photoUpdatedAt: toNumberOrNull(a?.photoUpdatedAt),
-    // keep legacy for now (optional)
     photoUrl: toStringOrNull(a?.photoUrl),
   }));
 }
 
-export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => void; showAlerts?: boolean }) {
+export default function useAthleteSync(params: {
+  setLocal: (list: Athlete[]) => void;
+  showAlerts?: boolean;
+}) {
   const { setLocal, showAlerts = true } = params;
   const [syncing, setSyncing] = useState(false);
 
   const syncNow = useCallback(async () => {
     if (syncing) return;
+
     setSyncing(true);
 
     try {
       const user = await ensureAnonymous();
       const uid = user.uid;
 
-      const localList = await readLocalFromStorage(uid);
-      const cloudList = await getCloudAthletes(uid);
+      const deletedIds = await readDeletedAthleteIds(uid);
+
+      const localRaw = await readLocalFromStorage(uid);
+      const cloudRaw = await getCloudAthletes(uid);
+
+      const localList = withoutDeleted(localRaw, deletedIds);
+      const cloudList = withoutDeleted(cloudRaw as any, deletedIds);
 
       let merged = mergeAthletes(localList, cloudList as any);
 
-      // ✅ Upload photos ONLY if queued
       let uploadedCount = 0;
       let failedCount = 0;
 
       const nextMerged: Athlete[] = [];
+
       for (const a of merged) {
+        if (deletedIds.has(a.id)) continue;
+
         const needs = (a as any)?.photoNeedsUpload === true;
         const localUri = toStringOrNull((a as any)?.photoLocalUri);
 
         if (needs && localUri) {
           try {
-            const up = await uploadAthleteProfilePhotoToB2({ athleteId: a.id, localFileUri: localUri });
+            const up = await uploadAthleteProfilePhotoToB2({
+              athleteId: a.id,
+              localFileUri: localUri,
+            });
+
             uploadedCount++;
 
             nextMerged.push({
               ...(a as any),
               photoKey: up.photoKey,
               photoUpdatedAt: Date.now(),
-              // optional keep for now; but don’t rely on it
               photoUrl: up.photoUrl ?? (a as any)?.photoUrl ?? null,
               photoNeedsUpload: false,
             } as any);
+
             continue;
-          } catch (e) {
+          } catch {
             failedCount++;
-            // keep it queued for next Sync attempt
             nextMerged.push(a);
             continue;
           }
@@ -224,12 +271,10 @@ export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => 
         nextMerged.push(a);
       }
 
-      merged = nextMerged;
+      merged = withoutDeleted(nextMerged, deletedIds);
 
-      // ✅ Push ONLY cloud-safe fields (now includes photoKey)
       await setCloudAthletes(uid, toCloudPayload(merged) as any);
 
-      // ✅ Save merged locally (preserves photoLocalUri)
       await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(merged));
       setLocal(merged);
 
@@ -237,10 +282,13 @@ export default function useAthleteSync(params: { setLocal: (list: Athlete[]) => 
         if (failedCount > 0) {
           Alert.alert(
             'Synced (some pending)',
-            `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).\n${failedCount} photo(s) still pending (likely no network).`
+            `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).\n${failedCount} photo(s) still pending.`
           );
         } else if (uploadedCount > 0) {
-          Alert.alert('Synced', `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).`);
+          Alert.alert(
+            'Synced',
+            `Synced ${merged.length} athlete(s).\nUploaded ${uploadedCount} photo(s).`
+          );
         } else {
           Alert.alert('Synced', `Synced ${merged.length} athlete(s).`);
         }

@@ -35,6 +35,46 @@ import { persistAthleteProfilePhoto } from '../../src/lib/athletePhotos';
 const CURRENT_ATHLETE_KEY_PREFIX = 'currentAthleteName';
 const CURRENT_ATHLETE_ID_KEY_PREFIX = 'currentAthleteId';
 const ATHLETES_KEY_PREFIX = 'athletes:list';
+const DELETED_ATHLETES_KEY_PREFIX = 'athletes:deleted';
+
+function deletedAthletesKey(uid: string) {
+  return `${DELETED_ATHLETES_KEY_PREFIX}:${uid}`;
+}
+
+async function rememberDeletedAthlete(uid: string, athleteId: string) {
+  const key = deletedAthletesKey(uid);
+
+  const raw = await AsyncStorage.getItem(key);
+  const list = raw ? JSON.parse(raw) : [];
+
+  const existing = Array.isArray(list) ? list : [];
+  const now = Date.now();
+
+  const next = [
+    ...existing.filter((x: any) => String(x?.id ?? '') !== athleteId),
+    { id: athleteId, deletedAt: now },
+  ];
+
+  await AsyncStorage.setItem(key, JSON.stringify(next));
+}
+
+async function readDeletedAthleteIds(uid: string): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(deletedAthletesKey(uid));
+    const list = raw ? JSON.parse(raw) : [];
+
+    const ids = new Set<string>();
+
+    for (const item of Array.isArray(list) ? list : []) {
+      const id = String(item?.id ?? '').trim();
+      if (id) ids.add(id);
+    }
+
+    return ids;
+  } catch {
+    return new Set<string>();
+  }
+}
 
 function toStringOrNull(v: any): string | null {
   if (typeof v !== 'string') return null;
@@ -337,31 +377,31 @@ export default function HomeAthletes() {
           typeof (l as any)?.updatedAt === 'number'
             ? (l as any).updatedAt
             : 0;
-        
+
         const cloudUpdated =
           typeof (c as any)?.updatedAt === 'number'
             ? (c as any).updatedAt
             : 0;
-        
+
         const useCloudName = cloudUpdated > localUpdated;
-        
+
         byId.set(c.id, {
           id: c.id,
-        
+
           name: useCloudName
             ? (
-                c.name?.trim()
-                || (l as any)?.name?.trim()
-                || 'Unnamed Athlete'
-              )
+              c.name?.trim()
+              || (l as any)?.name?.trim()
+              || 'Unnamed Athlete'
+            )
             : (
-                (l as any)?.name?.trim()
-                || c.name?.trim()
-                || 'Unnamed Athlete'
-              ),
-        
+              (l as any)?.name?.trim()
+              || c.name?.trim()
+              || 'Unnamed Athlete'
+            ),
+
           updatedAt: Math.max(localUpdated, cloudUpdated),
-        
+
           photoUrl: c.photoUrl ?? (l as any)?.photoUrl ?? null,
           photoKey: c.photoKey ?? (l as any)?.photoKey ?? null,
           photoUpdatedAt: c.photoUpdatedAt ?? (l as any)?.photoUpdatedAt ?? null,
@@ -400,7 +440,10 @@ export default function HomeAthletes() {
 
         const key = athletesKey(u.uid);
 
-        const cloud = await getCloudAthletes(u.uid);
+        const deletedIds = await readDeletedAthleteIds(u.uid);
+
+        const cloudRaw = await getCloudAthletes(u.uid);
+        const cloud = cloudRaw.filter((a: any) => !deletedIds.has(String(a?.id ?? '').trim()));
 
         const rawLocal = await AsyncStorage.getItem(key);
         const local = rawLocal ? (JSON.parse(rawLocal) as Athlete[]) : [];
@@ -427,19 +470,19 @@ export default function HomeAthletes() {
   const saveAthletes = async (list: Athlete[]) => {
     const effectiveUid = uid ?? (await getActiveUid());
     const key = athletesKey(effectiveUid);
-  
+
     const now = Date.now();
-  
+
     const normalized = list.map((a: any) => ({
       ...a,
       updatedAt:
         typeof a?.updatedAt === 'number' &&
-        Number.isFinite(a.updatedAt) &&
-        a.updatedAt > 0
+          Number.isFinite(a.updatedAt) &&
+          a.updatedAt > 0
           ? a.updatedAt
           : now,
     }));
-  
+
     setAthletes(normalized as any);
     await AsyncStorage.setItem(key, JSON.stringify(normalized));
   };
@@ -525,11 +568,11 @@ export default function HomeAthletes() {
       const next = athletes.map((a) =>
         a.id === id
           ? ({
-              ...a,
-              photoLocalUri: localUri,
-              photoUpdatedAt: Date.now(),
-              photoNeedsUpload: true,
-            } as any)
+            ...a,
+            photoLocalUri: localUri,
+            photoUpdatedAt: Date.now(),
+            photoNeedsUpload: true,
+          } as any)
           : a
       );
 
@@ -553,10 +596,10 @@ export default function HomeAthletes() {
     const next = athletes.map((a) =>
       a.id === id
         ? ({
-            ...a,
-            name,
-            updatedAt: Date.now(),
-          } as any)
+          ...a,
+          name,
+          updatedAt: Date.now(),
+        } as any)
         : a
     );
 
@@ -565,25 +608,57 @@ export default function HomeAthletes() {
   };
 
   const deleteAthleteShell = async (id: string) => {
-    const next = athletes.filter((a) => a.id !== id);
-    await saveAthletes(next);
+    const athlete = athletes.find((a) => a.id === id);
+    const name = String(athlete?.name ?? 'this athlete').trim() || 'this athlete';
 
-    const effectiveUid = uid ?? (await getActiveUid());
-    const curNameKey = currentAthleteKey(effectiveUid);
-    const curIdKey = currentAthleteIdKey(effectiveUid);
+    Alert.alert(
+      'Delete athlete?',
+      `This will permanently delete ${name} from your athlete list on this device.\n\nOld clips will NOT be deleted.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you sure?',
+              `This cannot be undone once synced.\n\n${name} will be removed from your athlete list on all devices after Sync.\n\nOld clips will still stay in your Library.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Athlete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const effectiveUid = uid ?? (await getActiveUid());
 
-    const currentName = await AsyncStorage.getItem(curNameKey);
-    const currentId = await AsyncStorage.getItem(curIdKey);
+                    await rememberDeletedAthlete(effectiveUid, id);
 
-    if (currentId && !next.find((a) => a.id === currentId)) {
-      await AsyncStorage.removeItem(curIdKey);
-      await AsyncStorage.removeItem(curNameKey);
-      return;
-    }
+                    const next = athletes.filter((a) => a.id !== id);
+                    await saveAthletes(next);
 
-    if (currentName && !next.find((a) => a.name === currentName)) {
-      await AsyncStorage.removeItem(curNameKey);
-    }
+                    const curNameKey = currentAthleteKey(effectiveUid);
+                    const curIdKey = currentAthleteIdKey(effectiveUid);
+
+                    const currentName = await AsyncStorage.getItem(curNameKey);
+                    const currentId = await AsyncStorage.getItem(curIdKey);
+
+                    if (currentId && !next.find((a) => a.id === currentId)) {
+                      await AsyncStorage.removeItem(curIdKey);
+                      await AsyncStorage.removeItem(curNameKey);
+                      return;
+                    }
+
+                    if (currentName && !next.find((a) => a.name === currentName)) {
+                      await AsyncStorage.removeItem(curNameKey);
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
   };
 
   const recordNoAthlete = async () => {
@@ -606,10 +681,10 @@ export default function HomeAthletes() {
     const found =
       typeof value === 'string'
         ? athletes.find(
-            (a) =>
-              String(a.name || '').trim().toLowerCase() ===
-              String(value || '').trim().toLowerCase()
-          )
+          (a) =>
+            String(a.name || '').trim().toLowerCase() ===
+            String(value || '').trim().toLowerCase()
+        )
         : value;
 
     const athleteId = String((found as any)?.id ?? '').trim();
@@ -639,7 +714,7 @@ export default function HomeAthletes() {
   const openStatsForAthlete = (athlete: Athlete) => {
     const cleanName = String(athlete?.name ?? '').trim() || 'Unassigned';
     const athleteId = String(athlete?.id ?? '').trim();
-  
+
     router.push({
       pathname: '/athletes/[athlete]/stats',
       params: {
