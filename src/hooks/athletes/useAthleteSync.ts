@@ -6,7 +6,13 @@ import { Alert } from 'react-native';
 import { ensureAnonymous } from '../../../lib/firebase';
 import { uploadAthleteProfilePhotoToB2 } from '../../lib/athletePhotoUpload';
 import type { Athlete } from '../../lib/athleteTypes';
-import { getCloudAthletes, setCloudAthletes } from './cloudAthletes';
+import {
+  getCloudAthletes,
+  getCloudDeletedAthletes,
+  setCloudAthletes,
+  setCloudDeletedAthletes,
+  type DeletedCloudAthlete,
+} from './cloudAthletes';
 
 const ATHLETES_KEY_PREFIX = 'athletes:list';
 const DELETED_ATHLETES_KEY_PREFIX = 'athletes:deleted';
@@ -17,24 +23,6 @@ function athletesKey(uid: string) {
 
 function deletedAthletesKey(uid: string) {
   return `${DELETED_ATHLETES_KEY_PREFIX}:${uid}`;
-}
-
-async function readDeletedAthleteIds(uid: string): Promise<Set<string>> {
-  try {
-    const raw = await AsyncStorage.getItem(deletedAthletesKey(uid));
-    const list = raw ? JSON.parse(raw) : [];
-
-    const ids = new Set<string>();
-
-    for (const item of Array.isArray(list) ? list : []) {
-      const id = String(item?.id ?? '').trim();
-      if (id) ids.add(id);
-    }
-
-    return ids;
-  } catch {
-    return new Set<string>();
-  }
 }
 
 function toStringOrNull(v: any): string | null {
@@ -57,6 +45,66 @@ type CloudAthlete = {
   photoKey?: string | null;
   photoUpdatedAt?: number | null;
 };
+
+async function readLocalDeletedAthletes(uid: string): Promise<DeletedCloudAthlete[]> {
+  try {
+    const raw = await AsyncStorage.getItem(deletedAthletesKey(uid));
+    const list = raw ? JSON.parse(raw) : [];
+
+    if (!Array.isArray(list)) return [];
+
+    return list
+      .map((x: any) => ({
+        id: String(x?.id ?? '').trim(),
+        deletedAt: toNumberOrNull(x?.deletedAt) ?? Date.now(),
+      }))
+      .filter((x) => x.id);
+  } catch {
+    return [];
+  }
+}
+
+async function writeLocalDeletedAthletes(
+  uid: string,
+  deletedAthletes: DeletedCloudAthlete[],
+) {
+  await AsyncStorage.setItem(
+    deletedAthletesKey(uid),
+    JSON.stringify(mergeDeletedAthletes(deletedAthletes, [])),
+  );
+}
+
+function mergeDeletedAthletes(
+  a: DeletedCloudAthlete[],
+  b: DeletedCloudAthlete[],
+): DeletedCloudAthlete[] {
+  const byId = new Map<string, DeletedCloudAthlete>();
+
+  for (const item of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+    const id = String(item?.id ?? '').trim();
+    if (!id) continue;
+
+    const deletedAt = toNumberOrNull(item?.deletedAt) ?? Date.now();
+    const existing = byId.get(id);
+
+    if (!existing || deletedAt > existing.deletedAt) {
+      byId.set(id, { id, deletedAt });
+    }
+  }
+
+  return [...byId.values()];
+}
+
+function deletedIdSet(list: DeletedCloudAthlete[]): Set<string> {
+  const ids = new Set<string>();
+
+  for (const item of Array.isArray(list) ? list : []) {
+    const id = String(item?.id ?? '').trim();
+    if (id) ids.add(id);
+  }
+
+  return ids;
+}
 
 function normalizeLocal(list: Athlete[]): Athlete[] {
   const out: Athlete[] = [];
@@ -222,7 +270,10 @@ export default function useAthleteSync(params: {
       const user = await ensureAnonymous();
       const uid = user.uid;
 
-      const deletedIds = await readDeletedAthleteIds(uid);
+      const localDeleted = await readLocalDeletedAthletes(uid);
+      const cloudDeleted = await getCloudDeletedAthletes(uid);
+      const mergedDeleted = mergeDeletedAthletes(localDeleted, cloudDeleted);
+      const deletedIds = deletedIdSet(mergedDeleted);
 
       const localRaw = await readLocalFromStorage(uid);
       const cloudRaw = await getCloudAthletes(uid);
@@ -273,8 +324,10 @@ export default function useAthleteSync(params: {
 
       merged = withoutDeleted(nextMerged, deletedIds);
 
+      await setCloudDeletedAthletes(uid, mergedDeleted);
       await setCloudAthletes(uid, toCloudPayload(merged) as any);
 
+      await writeLocalDeletedAthletes(uid, mergedDeleted);
       await AsyncStorage.setItem(athletesKey(uid), JSON.stringify(merged));
       setLocal(merged);
 

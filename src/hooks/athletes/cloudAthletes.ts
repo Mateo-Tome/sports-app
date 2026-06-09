@@ -1,21 +1,18 @@
-
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../../lib/firebase';
-
 
 export type CloudAthlete = {
   id: string;
   name: string;
-
-  // ✅ rename/version sync
   updatedAt?: number | null;
-
-  // ✅ stable forever
   photoKey?: string | null;
   photoUpdatedAt?: number | null;
-
-  // legacy (read-only, may be tokened/expire)
   photoUrl?: string | null;
+};
+
+export type DeletedCloudAthlete = {
+  id: string;
+  deletedAt: number;
 };
 
 function toStringOrNull(v: any): string | null {
@@ -31,41 +28,61 @@ function toNumberOrNull(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function sanitize(list: any): CloudAthlete[] {
+function sanitizeAthletes(list: any): CloudAthlete[] {
   if (!Array.isArray(list)) return [];
 
   return list
     .map((a) => ({
       id: String(a?.id ?? '').trim(),
       name: String(a?.name ?? '').trim(),
-
-      // ✅ rename/version sync
       updatedAt: toNumberOrNull(a?.updatedAt),
-
-      // legacy (read only)
       photoUrl: toStringOrNull(a?.photoUrl),
-
-      // stable
       photoKey: toStringOrNull(a?.photoKey),
       photoUpdatedAt: toNumberOrNull(a?.photoUpdatedAt),
     }))
     .filter((a) => a.id && a.name);
 }
 
+function sanitizeDeletedAthletes(list: any): DeletedCloudAthlete[] {
+  if (!Array.isArray(list)) return [];
+
+  const byId = new Map<string, DeletedCloudAthlete>();
+
+  for (const item of list) {
+    const id = String(item?.id ?? '').trim();
+    if (!id) continue;
+
+    const deletedAt = toNumberOrNull(item?.deletedAt) ?? Date.now();
+    const existing = byId.get(id);
+
+    if (!existing || deletedAt > existing.deletedAt) {
+      byId.set(id, { id, deletedAt });
+    }
+  }
+
+  return [...byId.values()];
+}
+
 export function getCurrentUid(): string | null {
   return auth.currentUser?.uid ?? null;
 }
 
-export async function getCloudAthletes(
-  uid: string,
-): Promise<CloudAthlete[]> {
+export async function getCloudAthletes(uid: string): Promise<CloudAthlete[]> {
   const ref = doc(db, 'users', uid);
-
   const snap = await getDoc(ref);
-
   const data = snap.exists() ? snap.data() : {};
 
-  return sanitize((data as any)?.athletes);
+  return sanitizeAthletes((data as any)?.athletes);
+}
+
+export async function getCloudDeletedAthletes(
+  uid: string,
+): Promise<DeletedCloudAthlete[]> {
+  const ref = doc(db, 'users', uid);
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : {};
+
+  return sanitizeDeletedAthletes((data as any)?.deletedAthletes);
 }
 
 export async function setCloudAthletes(
@@ -74,24 +91,27 @@ export async function setCloudAthletes(
 ): Promise<void> {
   const ref = doc(db, 'users', uid);
 
-  // ✅ sanitize, then STRIP legacy fields before writing
-  const cloudSafe = sanitize(athletes).map((a) => ({
+  const cloudSafe = sanitizeAthletes(athletes).map((a) => ({
     id: a.id,
     name: a.name,
-
-    // ✅ rename/version sync
     updatedAt: a.updatedAt ?? null,
-
-    // stable photo identity
     photoKey: a.photoKey ?? null,
     photoUpdatedAt: a.photoUpdatedAt ?? null,
-
-    // 🚫 do NOT write photoUrl
   }));
 
-  await setDoc(
-    ref,
-    { athletes: cloudSafe },
-    { merge: true },
-  );
+  await setDoc(ref, { athletes: cloudSafe }, { merge: true });
+}
+
+export async function setCloudDeletedAthletes(
+  uid: string,
+  deletedAthletes: DeletedCloudAthlete[],
+): Promise<void> {
+  const ref = doc(db, 'users', uid);
+
+  const cloudSafe = sanitizeDeletedAthletes(deletedAthletes).map((d) => ({
+    id: d.id,
+    deletedAt: d.deletedAt,
+  }));
+
+  await setDoc(ref, { deletedAthletes: cloudSafe }, { merge: true });
 }
