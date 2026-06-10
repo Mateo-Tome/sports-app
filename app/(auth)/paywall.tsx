@@ -14,13 +14,10 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// ✅ RevenueCat kill-switch (OFF unless you explicitly enable it)
-// Set EXPO_PUBLIC_ENABLE_REVENUECAT=1 when you’re ready later.
 const RC_ENABLED = process.env.EXPO_PUBLIC_ENABLE_REVENUECAT === '1';
 
-// TODO: paste real URLs (must be reachable on the web)
-const TERMS_URL = 'https://example.com/terms';
-const PRIVACY_URL = 'https://example.com/privacy';
+const TERMS_URL = 'https://quickclipapp.com/terms';
+const PRIVACY_URL = 'https://quickclipapp.com/privacy';
 
 const FEATURES: Array<{
   title: string;
@@ -28,30 +25,43 @@ const FEATURES: Array<{
   pro: boolean;
   basic: boolean;
 }> = [
-  { title: 'All sports unlocked', description: 'Wrestling, Baseball, Basketball, Volleyball, BJJ', pro: true, basic: false },
-  { title: 'Cloud storage', description: 'Store more clips and highlights', pro: true, basic: false },
-  { title: 'Multi-device sync', description: 'Up to 5 devices', pro: true, basic: false },
-  { title: 'Priority uploads', description: 'Faster processing', pro: true, basic: false },
-  { title: 'Advanced stats', description: 'Full analytics dashboard', pro: true, basic: false },
-  { title: 'Basic editing tools', pro: true, basic: true },
+  {
+    title: 'All sports',
+    description: 'Wrestling, Baseball, Softball, Basketball, Swimming, Volleyball, BJJ',
+    pro: true,
+    basic: true,
+  },
+  {
+    title: 'Cloud uploads',
+    description: 'Free: 2 active uploads • Pro: 250 GB cloud storage',
+    pro: true,
+    basic: true,
+  },
+  {
+    title: 'Share links',
+    description: 'Share uploaded clips with family, coaches, and athletes',
+    pro: true,
+    basic: false,
+  },
+  {
+    title: 'Cross-device sync',
+    description: 'Keep clips, athletes, events, and stats synced',
+    pro: true,
+    basic: false,
+  },
+  {
+    title: 'Devices',
+    description: 'Free: 1 active device • Pro: up to 8 devices',
+    pro: true,
+    basic: true,
+  },
+  {
+    title: 'Events and stats',
+    description: 'Organize clips by athlete, sport, and event',
+    pro: true,
+    basic: true,
+  },
 ];
-
-function niceSport(k: string | null) {
-  switch (k) {
-    case 'wrestling':
-      return 'Wrestling';
-    case 'baseball':
-      return 'Baseball';
-    case 'basketball':
-      return 'Basketball';
-    case 'volleyball':
-      return 'Volleyball';
-    case 'bjj':
-      return 'BJJ';
-    default:
-      return null;
-  }
-}
 
 function IconCheck({ isPro = false }: { isPro?: boolean }) {
   return (
@@ -67,7 +77,14 @@ function IconCheck({ isPro = false }: { isPro?: boolean }) {
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: isPro ? '#f5c24d' : '#22c55e', fontWeight: '900', fontSize: 13, lineHeight: 13 }}>
+      <Text
+        style={{
+          color: isPro ? '#f5c24d' : '#22c55e',
+          fontWeight: '900',
+          fontSize: 13,
+          lineHeight: 13,
+        }}
+      >
         ✓
       </Text>
     </View>
@@ -88,7 +105,14 @@ function IconX() {
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '900', fontSize: 13, lineHeight: 13 }}>
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.35)',
+          fontWeight: '900',
+          fontSize: 13,
+          lineHeight: 13,
+        }}
+      >
         ✕
       </Text>
     </View>
@@ -103,14 +127,16 @@ export default function PaywallScreen() {
     uid: null,
     isSignedIn: false,
     isAnonymous: false,
-    allowedSport: null,
     isTester: false,
     isPro: false,
+    plan: 'free',
+    maxCloudVideos: 2,
+    maxCloudStorageBytes: null,
+    maxDevices: 1,
   });
 
-  // ✅ keep UI stable even when RevenueCat is disabled
   const [pkgLoading, setPkgLoading] = useState(false);
-  const [priceText, setPriceText] = useState<string>('$10.99'); // just a placeholder for now
+  const [priceText, setPriceText] = useState<string>('$10.99');
   const [buying, setBuying] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -120,31 +146,29 @@ export default function PaywallScreen() {
     return unsub;
   }, []);
 
-  // ✅ Only fetch offerings/price if RC is enabled
   useEffect(() => {
     if (!RC_ENABLED) {
       setPkgLoading(false);
       setErr(null);
-      // keep placeholder priceText
       return;
     }
 
     let alive = true;
+
     (async () => {
       setPkgLoading(true);
       setErr(null);
+
       try {
-        // Lazy import so TestFlight build never even touches RC code paths unless enabled
         const { getMonthlyPackage } = await import('@/lib/purchases');
         const p = await getMonthlyPackage();
         if (!alive) return;
         setPriceText(p?.product?.priceString ?? '$10.99');
       } catch (e: any) {
         if (!alive) return;
-        // Don’t show scary errors in UI; keep it quiet unless you're actively testing RC.
         setPriceText('$10.99');
         setErr(null);
-        console.log('[Paywall] RevenueCat price fetch skipped/failed (non-fatal):', e?.message ?? e);
+        console.log('[Paywall] RevenueCat price fetch skipped/failed:', e?.message ?? e);
       } finally {
         if (alive) setPkgLoading(false);
       }
@@ -156,16 +180,16 @@ export default function PaywallScreen() {
   }, []);
 
   const subtitle = useMemo(() => {
-    if (!access.isSignedIn) return 'Sign in to unlock all features and sync across devices';
-    if (access.isAnonymous) return 'Your guest session will be preserved after upgrading';
-    return 'Unlock everything and sync across all your devices';
-  }, [access.isSignedIn, access.isAnonymous]);
+    if (!access.isSignedIn) {
+      return 'Sign in to unlock cloud storage, share links, and sync across devices.';
+    }
 
-  const lockedLine = useMemo(() => {
-    if (!access.allowedSport || access.isPro) return null;
-    const s = niceSport(access.allowedSport) ?? 'your selected sport';
-    return `Currently limited to: ${s}`;
-  }, [access.allowedSport, access.isPro]);
+    if (access.isAnonymous) {
+      return 'Your guest session can be preserved after creating an account.';
+    }
+
+    return 'Upgrade for more cloud storage, share links, sync, and more devices.';
+  }, [access.isSignedIn, access.isAnonymous]);
 
   if (access.loading) {
     return (
@@ -175,37 +199,10 @@ export default function PaywallScreen() {
     );
   }
 
-  // ✅ Pro state: show a clean “already pro” screen instead of redirecting away
   if (access.isPro) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
         <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
-        <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
-          <View
-            style={{
-              position: 'absolute',
-              top: -100,
-              left: '10%',
-              width: 300,
-              height: 300,
-              borderRadius: 150,
-              backgroundColor: '#ef4444',
-              opacity: 0.15,
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: -120,
-              right: '5%',
-              width: 350,
-              height: 350,
-              borderRadius: 175,
-              backgroundColor: '#f5c24d',
-              opacity: 0.12,
-            }}
-          />
-        </View>
 
         <View
           style={{
@@ -217,7 +214,7 @@ export default function PaywallScreen() {
             justifyContent: 'space-between',
           }}
         >
-          <Pressable onPress={() => router.back()} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
             <View
               style={{
                 width: 32,
@@ -257,54 +254,13 @@ export default function PaywallScreen() {
               <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '900' }}>PRO ACTIVE</Text>
             </View>
 
-            <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
+            <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16 }}>
               You’re already Pro
             </Text>
 
             <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 16, marginTop: 10, lineHeight: 24 }}>
-              Thanks for supporting QuickClip. All Pro features are unlocked on this account.
+              Thanks for supporting QuickClip. Pro features are active on this account.
             </Text>
-
-            <View
-              style={{
-                marginTop: 16,
-                borderRadius: 20,
-                overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.12)',
-                backgroundColor: 'rgba(255,255,255,0.04)',
-              }}
-            >
-              <View style={{ paddingVertical: 4 }}>
-                {FEATURES.filter((f) => f.pro).map((feature, idx) => (
-                  <View
-                    key={feature.title}
-                    style={{
-                      paddingVertical: 16,
-                      paddingHorizontal: 18,
-                      borderTopWidth: idx === 0 ? 0 : 1,
-                      borderTopColor: 'rgba(255,255,255,0.06)',
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                    }}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: 'white', fontWeight: '800', fontSize: 15, marginBottom: 4 }}>
-                        {feature.title}
-                      </Text>
-                      {!!feature.description && (
-                        <Text style={{ color: 'rgba(255,255,255,0.50)', fontWeight: '600', fontSize: 12, lineHeight: 16 }}>
-                          {feature.description}
-                        </Text>
-                      )}
-                    </View>
-                    <IconCheck />
-                  </View>
-                ))}
-              </View>
-            </View>
 
             <TouchableOpacity
               onPress={() => router.back()}
@@ -319,12 +275,10 @@ export default function PaywallScreen() {
                 borderColor: 'rgba(255,255,255,0.14)',
               }}
             >
-              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16 }}>
                 Close
               </Text>
             </TouchableOpacity>
-
-            <View style={{ height: 20 }} />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -340,6 +294,7 @@ export default function PaywallScreen() {
     }
 
     setBuying(true);
+
     try {
       const { purchaseMonthly } = await import('@/lib/purchases');
       await purchaseMonthly();
@@ -360,6 +315,7 @@ export default function PaywallScreen() {
     }
 
     setRestoring(true);
+
     try {
       const { restorePurchases } = await import('@/lib/purchases');
       await restorePurchases();
@@ -371,38 +327,12 @@ export default function PaywallScreen() {
   };
 
   const purchasesDisabledNote = !RC_ENABLED
-    ? 'Purchases are disabled in this test build. (RevenueCat on hold)'
+    ? 'Purchases are disabled in this test build. RevenueCat is on hold.'
     : null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#050507' }} edges={['top', 'left', 'right']}>
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: '#050507' }} />
-      <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.35 }}>
-        <View
-          style={{
-            position: 'absolute',
-            top: -100,
-            left: '10%',
-            width: 300,
-            height: 300,
-            borderRadius: 150,
-            backgroundColor: '#ef4444',
-            opacity: 0.15,
-          }}
-        />
-        <View
-          style={{
-            position: 'absolute',
-            bottom: -120,
-            right: '5%',
-            width: 350,
-            height: 350,
-            borderRadius: 175,
-            backgroundColor: '#f5c24d',
-            opacity: 0.12,
-          }}
-        />
-      </View>
 
       <View
         style={{
@@ -414,7 +344,7 @@ export default function PaywallScreen() {
           justifyContent: 'space-between',
         }}
       >
-        <Pressable onPress={() => router.back()} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
           <View
             style={{
               width: 32,
@@ -454,31 +384,13 @@ export default function PaywallScreen() {
             <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '900' }}>UPGRADE TO PRO</Text>
           </View>
 
-          <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16, letterSpacing: -0.5 }}>
-            Unlock Everything
+          <Text style={{ color: 'white', fontSize: 36, fontWeight: '900', marginTop: 16 }}>
+            More cloud. More sync.
           </Text>
 
           <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 16, marginTop: 10, lineHeight: 24 }}>
             {subtitle}
           </Text>
-
-          {!!lockedLine && (
-            <View
-              style={{
-                marginTop: 14,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                backgroundColor: 'rgba(245,194,77,0.10)',
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: 'rgba(245,194,77,0.25)',
-              }}
-            >
-              <Text style={{ color: 'rgba(245,194,77,0.95)', fontSize: 13, fontWeight: '800' }}>
-                ⚠️ {lockedLine}
-              </Text>
-            </View>
-          )}
 
           {!!purchasesDisabledNote && (
             <View
@@ -520,31 +432,20 @@ export default function PaywallScreen() {
                 borderRightColor: 'rgba(255,255,255,0.10)',
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>Pro</Text>
-                <View
-                  style={{
-                    marginLeft: 8,
-                    backgroundColor: '#f5c24d',
-                    paddingHorizontal: 8,
-                    paddingVertical: 2,
-                    borderRadius: 6,
-                  }}
-                >
-                  <Text style={{ color: '#000', fontWeight: '900', fontSize: 10 }}>BEST</Text>
-                </View>
-              </View>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, textAlign: 'center' }}>
+                Pro
+              </Text>
               <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
-                Full access
+                250 GB cloud
               </Text>
             </View>
 
             <View style={{ flex: 1, paddingVertical: 18, paddingHorizontal: 16 }}>
               <Text style={{ color: 'rgba(255,255,255,0.65)', fontWeight: '900', fontSize: 18, textAlign: 'center' }}>
-                Basic
+                Free
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.40)', fontWeight: '700', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
-                Limited features
+                2 cloud uploads
               </Text>
             </View>
           </View>
@@ -565,7 +466,8 @@ export default function PaywallScreen() {
                     <Text style={{ color: 'white', fontWeight: '800', fontSize: 15, marginBottom: 4 }}>
                       {feature.title}
                     </Text>
-                    {feature.description && (
+
+                    {!!feature.description && (
                       <Text style={{ color: 'rgba(255,255,255,0.50)', fontWeight: '600', fontSize: 12, lineHeight: 16 }}>
                         {feature.description}
                       </Text>
@@ -597,6 +499,7 @@ export default function PaywallScreen() {
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 48, lineHeight: 48 }}>
                 {priceText}
               </Text>
+
               <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 18, marginLeft: 4, marginBottom: 8 }}>
                 /month
               </Text>
@@ -604,10 +507,10 @@ export default function PaywallScreen() {
 
             <View style={{ alignItems: 'center', marginTop: 12 }}>
               <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '700', fontSize: 14, textAlign: 'center' }}>
-                Cancel anytime • No commitments
+                250 GB cloud storage • 8 devices • share links
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.50)', fontWeight: '600', fontSize: 12, marginTop: 6, textAlign: 'center' }}>
-                Yearly plan coming soon
+                Cancel anytime
               </Text>
             </View>
 
@@ -641,11 +544,6 @@ export default function PaywallScreen() {
                   : '#ef4444',
             borderWidth: 1,
             borderColor: 'rgba(255,255,255,0.15)',
-            shadowColor: '#ef4444',
-            shadowOpacity: buying || pkgLoading || !RC_ENABLED ? 0 : 0.5,
-            shadowRadius: 20,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: buying || pkgLoading || !RC_ENABLED ? 0 : 10,
             marginBottom: 14,
             opacity: !RC_ENABLED ? 0.75 : 1,
           }}
@@ -654,11 +552,12 @@ export default function PaywallScreen() {
             <ActivityIndicator color="#fff" />
           ) : (
             <>
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18, letterSpacing: 0.3 }}>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>
                 {RC_ENABLED ? `Start Pro — ${priceText}/month` : 'Start Pro — Coming soon'}
               </Text>
+
               <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13, marginTop: 6 }}>
-                {RC_ENABLED ? 'Instant unlock • Sync everywhere' : 'Purchases disabled for this test build'}
+                {RC_ENABLED ? 'Cloud storage • Sync • Share links' : 'Purchases disabled for this test build'}
               </Text>
             </>
           )}
@@ -690,7 +589,9 @@ export default function PaywallScreen() {
                 Terms of Service
               </Text>
             </TouchableOpacity>
+
             <Text style={{ color: 'rgba(255,255,255,0.30)' }}>•</Text>
+
             <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700' }}>
                 Privacy Policy

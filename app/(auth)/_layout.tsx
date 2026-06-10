@@ -5,7 +5,7 @@ export default function AuthLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="sign-in" />
-      <Stack.Screen name="choose-sport" />
+      <Stack.Screen name="paywall" />
     </Stack>
   );
 }

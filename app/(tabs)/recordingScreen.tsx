@@ -43,44 +43,6 @@ const paramToStr = (v: unknown, fallback = '') =>
 
 type SportLabel = (typeof SPORTS)[number];
 
-function sportLabelToKey(sport: SportLabel) {
-  switch (sport) {
-    case 'Wrestling':
-      return 'wrestling';
-    case 'Baseball':
-      return 'baseball';
-    case 'Basketball':
-      return 'basketball';
-    case 'Volleyball':
-      return 'volleyball';
-    case 'BJJ':
-      return 'bjj';
-    case 'Softball':
-      return 'softball';
-    case 'Swimming':
-      return 'swimming';
-  }
-}
-
-function sportKeyToNiceLabel(key: string) {
-  switch (key) {
-    case 'wrestling':
-      return 'Wrestling';
-    case 'baseball':
-      return 'Baseball';
-    case 'softball':
-      return 'Softball';
-    case 'basketball':
-      return 'Basketball';
-    case 'volleyball':
-      return 'Volleyball';
-    case 'bjj':
-      return 'BJJ';
-    default:
-      return 'your selected sport';
-  }
-}
-
 function makeAthleteId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -151,9 +113,12 @@ export default function RecordingScreen() {
     uid: null,
     isSignedIn: false,
     isAnonymous: false,
-    allowedSport: null,
     isTester: false,
     isPro: false,
+    plan: 'free',
+    maxCloudVideos: 2,
+    maxCloudStorageBytes: null,
+    maxDevices: 1,
   });
 
   useEffect(() => {
@@ -319,47 +284,10 @@ export default function RecordingScreen() {
     }
   };
 
-  const ALLOW_TAP_LOCKED_TO_UPSELL = true;
-
-  const goToPaywall = () => router.push('/(auth)/paywall');
-
-  const isLockedSport = (sport: SportLabel) => {
-    if (access.loading) return false;
-    if (!access.isSignedIn) return false;
-    if (access.isPro) return false;
-    if (!access.allowedSport) return false;
-
-    return access.allowedSport !== sportLabelToKey(sport);
-  };
-
   const go = (sport: SportLabel) => {
-    const key = sportLabelToKey(sport);
-
     if (!access.isSignedIn) {
       router.push('/(auth)/sign-in');
       return;
-    }
-
-    if (!access.isPro) {
-      if (!access.allowedSport) {
-        router.push('/(auth)/choose-sport');
-        return;
-      }
-
-      if (access.allowedSport !== key) {
-        if (ALLOW_TAP_LOCKED_TO_UPSELL) {
-          goToPaywall();
-          return;
-        }
-
-        Alert.alert(
-          'Sport locked',
-          `Your free account is locked to ${sportKeyToNiceLabel(access.allowedSport)}.\n\nUpgrade to unlock all sports.`,
-          [{ text: 'OK' }, { text: 'Upgrade', onPress: goToPaywall }],
-        );
-
-        return;
-      }
     }
 
     const baseParams = { athlete, athleteId };
@@ -409,9 +337,7 @@ export default function RecordingScreen() {
     const match =
       clean === 'Unassigned'
         ? null
-        : athletes.find(
-            (a) => a.name.trim().toLowerCase() === clean.toLowerCase(),
-          );
+        : athletes.find((a) => a.name.trim().toLowerCase() === clean.toLowerCase());
 
     const nextId = match?.id ?? '';
 
@@ -469,8 +395,7 @@ export default function RecordingScreen() {
 
   const AthleteCard = () => {
     const current =
-      athletes.find((a) => a.id === athleteId) ||
-      athletes.find((a) => a.name === athlete);
+      athletes.find((a) => a.id === athleteId) || athletes.find((a) => a.name === athlete);
 
     const photo =
       current?.photoLocalUri ||
@@ -571,9 +496,7 @@ export default function RecordingScreen() {
             onPress={() => setPickerOpen(true)}
             onLongPress={() =>
               applyAthlete(
-                athlete === 'Unassigned'
-                  ? athletes[0]?.name || 'Unassigned'
-                  : 'Unassigned',
+                athlete === 'Unassigned' ? athletes[0]?.name || 'Unassigned' : 'Unassigned',
               )
             }
             style={{
@@ -597,60 +520,6 @@ export default function RecordingScreen() {
       </View>
     );
   };
-
-  const LockedHint = () => (
-    <View
-      style={{
-        marginTop: 10,
-        borderRadius: 14,
-        padding: 12,
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.10)',
-      }}
-    >
-      <Text
-        style={{
-          color: 'white',
-          fontWeight: '900',
-          fontSize: 12,
-        }}
-      >
-        Free plan: 1 sport unlocked
-      </Text>
-
-      <Text
-        style={{
-          color: 'rgba(255,255,255,0.65)',
-          fontSize: 12,
-          marginTop: 4,
-        }}
-      >
-        Upgrade to record all sports.
-      </Text>
-
-      <TouchableOpacity
-        onPress={goToPaywall}
-        style={{
-          marginTop: 10,
-          alignSelf: 'flex-start',
-          paddingVertical: 8,
-          paddingHorizontal: 12,
-          borderRadius: 999,
-          backgroundColor: 'white',
-        }}
-      >
-        <Text
-          style={{
-            color: 'black',
-            fontWeight: '900',
-          }}
-        >
-          Upgrade
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
 
   const bottomPad = Math.max(24, insets.bottom + 12) + tabBarHeight;
 
@@ -741,84 +610,36 @@ export default function RecordingScreen() {
             justifyContent: 'space-between',
           }}
         >
-          {SPORTS.map((sport) => {
-            const locked = isLockedSport(sport);
-            const bg = locked ? 'rgba(255,255,255,0.18)' : 'white';
-            const border = locked ? 'rgba(255,255,255,0.35)' : '#fff';
-            const titleColor = locked ? 'rgba(0,0,0,0.55)' : 'black';
-
-            return (
-              <TouchableOpacity
-                key={sport}
-                onPress={() => go(sport)}
-                activeOpacity={0.85}
+          {SPORTS.map((sport) => (
+            <TouchableOpacity
+              key={sport}
+              onPress={() => go(sport)}
+              activeOpacity={0.85}
+              style={{
+                width: '49%',
+                paddingVertical: 34,
+                marginBottom: 16,
+                borderWidth: 2,
+                borderColor: '#fff',
+                borderRadius: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'white',
+                position: 'relative',
+              }}
+            >
+              <Text
                 style={{
-                  width: '49%',
-                  paddingVertical: 34,
-                  marginBottom: 16,
-                  borderWidth: 2,
-                  borderColor: border,
-                  borderRadius: 12,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: bg,
-                  position: 'relative',
+                  fontSize: 22,
+                  color: 'black',
+                  fontWeight: '800',
                 }}
               >
-                {locked && (
-                  <View
-                    style={{
-                      position: 'absolute',
-                      top: 10,
-                      right: 10,
-                      paddingVertical: 4,
-                      paddingHorizontal: 8,
-                      borderRadius: 999,
-                      backgroundColor: 'rgba(0,0,0,0.25)',
-                      borderWidth: 1,
-                      borderColor: 'rgba(0,0,0,0.18)',
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: 'rgba(0,0,0,0.65)',
-                        fontWeight: '900',
-                        fontSize: 11,
-                      }}
-                    >
-                      LOCKED
-                    </Text>
-                  </View>
-                )}
-
-                <Text
-                  style={{
-                    fontSize: 22,
-                    color: titleColor,
-                    fontWeight: '800',
-                  }}
-                >
-                  {sport}
-                </Text>
-
-                {locked && (
-                  <Text
-                    style={{
-                      marginTop: 6,
-                      fontSize: 11,
-                      color: 'rgba(0,0,0,0.55)',
-                      fontWeight: '800',
-                    }}
-                  >
-                    Upgrade to unlock
-                  </Text>
-                )}
-              </TouchableOpacity>
-            );
-          })}
+                {sport}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
-
-        {access.isSignedIn && !access.isPro && !!access.allowedSport && <LockedHint />}
       </ScrollView>
 
       <AthletePickerOverlay

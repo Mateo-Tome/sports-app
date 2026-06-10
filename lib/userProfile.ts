@@ -1,52 +1,41 @@
 // lib/userProfile.ts
 import { auth, db } from '@/lib/firebase';
 import {
-    doc,
-    getDoc,
-    onSnapshot,
-    runTransaction,
-    serverTimestamp,
-    setDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
 } from 'firebase/firestore';
 
-/**
- * Sports supported by the app.
- * Keep these lowercase and stable — they become stored data.
- */
-export type SportKey =
-  | 'wrestling'
-  | 'baseball'
-  | 'basketball'
-  | 'volleyball'
-  | 'bjj';
+export type PlanTier = 'free' | 'pro';
 
-/**
- * Firestore user profile document shape.
- * Stored at: users/{uid}
- */
 export type UserProfile = {
   createdAt?: any;
+  updatedAt?: any;
   email?: string | null;
 
-  // Free-tier lock (FOREVER unless Pro)
-  freeSport?: SportKey | null;
-  freeSportLockedAt?: any | null;
+  isPro?: boolean;
+  isTester?: boolean;
+  plan?: PlanTier;
 
-  // Future use
-  storageUsedBytes?: number;
+  // Free = 2 active cloud videos max.
+  cloudUploadsUsed?: number;
+
+  // Pro = storage based.
+  cloudStorageUsedBytes?: number;
+  cloudStorageLimitBytes?: number;
+
+  // Free = 1 active device. Pro = 8 devices.
+  deviceLimit?: number;
 };
 
-/**
- * Get a typed reference to users/{uid}
- */
+const GB = 1024 * 1024 * 1024;
+
 export function userDocRef(uid: string) {
   return doc(db, 'users', uid);
 }
 
-/**
- * Ensure the Firestore user document exists.
- * Safe to call multiple times.
- */
 export async function ensureUserDoc(uid: string) {
   const ref = userDocRef(uid);
   const snap = await getDoc(ref);
@@ -54,18 +43,48 @@ export async function ensureUserDoc(uid: string) {
   if (!snap.exists()) {
     await setDoc(ref, {
       createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
       email: auth.currentUser?.email ?? null,
-      freeSport: null,
-      freeSportLockedAt: null,
-      storageUsedBytes: 0,
+
+      isPro: false,
+      isTester: false,
+      plan: 'free',
+
+      cloudUploadsUsed: 0,
+      cloudStorageUsedBytes: 0,
+      cloudStorageLimitBytes: 0,
+
+      deviceLimit: 1,
     } satisfies UserProfile);
+    return;
+  }
+
+  const data = snap.data() as UserProfile;
+
+  const patch: Partial<UserProfile> = {};
+
+  if (!data.plan) patch.plan = data.isPro ? 'pro' : 'free';
+  if (typeof data.cloudUploadsUsed !== 'number') patch.cloudUploadsUsed = 0;
+  if (typeof data.cloudStorageUsedBytes !== 'number') patch.cloudStorageUsedBytes = 0;
+  if (typeof data.cloudStorageLimitBytes !== 'number') {
+    patch.cloudStorageLimitBytes = data.isPro ? 250 * GB : 0;
+  }
+  if (typeof data.deviceLimit !== 'number') {
+    patch.deviceLimit = data.isPro ? 8 : 1;
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await setDoc(
+      ref,
+      {
+        ...patch,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   }
 }
 
-/**
- * Subscribe to live updates of the user profile.
- * Used by UI to react to freeSport changes.
- */
 export function subscribeUserProfile(
   uid: string,
   onValue: (profile: UserProfile | null) => void
@@ -73,38 +92,6 @@ export function subscribeUserProfile(
   const ref = userDocRef(uid);
 
   return onSnapshot(ref, (snap) => {
-    if (!snap.exists()) {
-      onValue(null);
-    } else {
-      onValue(snap.data() as UserProfile);
-    }
-  });
-}
-
-/**
- * Lock the free-tier sport FOREVER.
- * Uses a transaction to prevent race conditions.
- */
-export async function lockFreeSport(uid: string, chosen: SportKey) {
-  const ref = userDocRef(uid);
-
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
-
-    if (!snap.exists()) {
-      throw new Error('User profile missing.');
-    }
-
-    const data = snap.data() as UserProfile;
-
-    // Already locked → refuse
-    if (data.freeSport) {
-      throw new Error(`Sport already locked to ${data.freeSport}.`);
-    }
-
-    tx.update(ref, {
-      freeSport: chosen,
-      freeSportLockedAt: serverTimestamp(),
-    });
+    onValue(snap.exists() ? (snap.data() as UserProfile) : null);
   });
 }
