@@ -3,7 +3,8 @@ import * as VideoThumbnails from "expo-video-thumbnails";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
-import { addDoc, collection, getFirestore } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getFirestore } from "firebase/firestore";
+import { checkCloudUploadAllowed } from "../../lib/cloudUploadLimits";
 import { app, auth, ensureAnonymous } from "../../lib/firebase";
 
 import { testGetUploadUrl } from "../../lib/backend";
@@ -48,7 +49,7 @@ async function readSidecarForUpload(videoUri: string): Promise<any | null> {
         sc = await tryRead(dir + candidate);
         if (sc) return sc;
       }
-    } catch {}
+    } catch { }
 
     return null;
   } catch (e) {
@@ -69,7 +70,7 @@ async function makeFreshTempUploadCopy(
 
   try {
     await FileSystem.deleteAsync(tempUri, { idempotent: true });
-  } catch {}
+  } catch { }
 
   await FileSystem.copyAsync({ from: sourceUri, to: tempUri });
 
@@ -104,7 +105,7 @@ async function makeUploadThumbnail(videoUri: string, shareId: string): Promise<s
 
     try {
       await FileSystem.deleteAsync(dest, { idempotent: true });
-    } catch {}
+    } catch { }
 
     await FileSystem.copyAsync({ from: generated.uri, to: dest });
 
@@ -382,15 +383,15 @@ export function UploadButton(props: Props) {
 
   return (
     <View style={{ width: "100%", alignItems: "stretch", gap: 6, minWidth: 0 }}>
-     <View
-  style={{
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-    maxWidth: "100%",
-  }}
->
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          maxWidth: "100%",
+        }}
+      >
         <Pressable
           disabled={isBusy}
           onPress={async (e: any) => {
@@ -415,6 +416,34 @@ export function UploadButton(props: Props) {
               const user = await getCurrentOrAnonUser();
               const now = Date.now();
               const shareId = randomShareId();
+
+              const fileInfo: any = await FileSystem.getInfoAsync(localUri);
+              const fileSizeBytes =
+                typeof fileInfo?.size === "number" && Number.isFinite(fileInfo.size)
+                  ? fileInfo.size
+                  : null;
+
+              const userSnap = await getDoc(doc(getFirestore(app), "users", user.uid));
+              const userData = userSnap.exists() ? (userSnap.data() as any) : {};
+
+              const isTester = userData.isTester === true;
+              const isPro = userData.isPro === true || isTester;
+
+              const allowed = await checkCloudUploadAllowed({
+                uid: user.uid,
+                isPro,
+                isTester,
+                fileSizeBytes,
+              });
+
+              if (!allowed.ok) {
+                setState("idle");
+                setStatusText(getStatusLabel("idle"));
+                inFlightRef.current = false;
+
+                Alert.alert(allowed.title, allowed.message);
+                return;
+              }
 
               tempThumbUri = await makeUploadThumbnail(localUri, shareId);
 
@@ -549,12 +578,12 @@ export function UploadButton(props: Props) {
                   fullSidecar?.athleteName ?? fullSidecar?.athlete,
                   "Unassigned"
                 );
-                
+
                 const athleteId =
                   typeof fullSidecar?.athleteId === "string" && fullSidecar.athleteId.trim()
                     ? fullSidecar.athleteId.trim()
                     : null;
-                
+
                 const sport = safeString(fullSidecar?.sport, "unknown");
                 const style = safeString(fullSidecar?.style, "");
                 const effectiveSport = fullSidecar
@@ -570,7 +599,7 @@ export function UploadButton(props: Props) {
 
                 const recordedAt =
                   typeof fullSidecar?.createdAt === "number" &&
-                  Number.isFinite(fullSidecar.createdAt)
+                    Number.isFinite(fullSidecar.createdAt)
                     ? fullSidecar.createdAt
                     : now;
 
@@ -642,11 +671,11 @@ export function UploadButton(props: Props) {
                 const libraryStyle =
                   finalEdgeColor || finalBadgeText || finalBadgeColor
                     ? {
-                        edgeColor: finalEdgeColor,
-                        badgeText: finalBadgeText,
-                        badgeColor: finalBadgeColor,
-                        highlight: finalHighlightGold,
-                      }
+                      edgeColor: finalEdgeColor,
+                      badgeText: finalBadgeText,
+                      badgeColor: finalBadgeColor,
+                      highlight: finalHighlightGold,
+                    }
                     : null;
 
                 const docData: any = {
@@ -665,6 +694,7 @@ export function UploadButton(props: Props) {
                   updatedAt: now,
 
                   storageProvider: "b2",
+                  videoSizeBytes: fileSizeBytes,
                   b2Bucket: creds1.bucketName ?? "quickclip-videos",
                   b2VideoKey,
                   b2VideoFileId,
@@ -739,17 +769,17 @@ export function UploadButton(props: Props) {
               if (tempVideoUri) {
                 try {
                   await FileSystem.deleteAsync(tempVideoUri, { idempotent: true });
-                } catch {}
+                } catch { }
               }
               if (tempThumbUri) {
                 try {
                   await FileSystem.deleteAsync(tempThumbUri, { idempotent: true });
-                } catch {}
+                } catch { }
               }
               if (tempJsonPath) {
                 try {
                   await FileSystem.deleteAsync(tempJsonPath, { idempotent: true });
-                } catch {}
+                } catch { }
               }
             }
           }}
@@ -818,8 +848,8 @@ export function UploadButton(props: Props) {
         </Text>
       )}
 
-{showProgressBar && currentProgress && (
-  <View style={{ width: "100%", gap: 4 }}>
+      {showProgressBar && currentProgress && (
+        <View style={{ width: "100%", gap: 4 }}>
           <View
             style={{
               width: "100%",
