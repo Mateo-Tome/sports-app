@@ -126,7 +126,7 @@ async function readSidecarForUpload(videoUri: string): Promise<any | null> {
         sc = await tryRead(dir + candidate);
         if (sc) return sc;
       }
-    } catch {}
+    } catch { }
 
     return null;
   } catch (e) {
@@ -149,7 +149,7 @@ async function makeFreshTempUploadCopy(
 
   try {
     await FileSystem.deleteAsync(tempUri, { idempotent: true });
-  } catch {}
+  } catch { }
 
   await FileSystem.copyAsync({
     from: sourceUri,
@@ -189,7 +189,7 @@ async function makeUploadThumbnail(videoUri: string, shareId: string): Promise<s
 
     try {
       await FileSystem.deleteAsync(dest, { idempotent: true });
-    } catch {}
+    } catch { }
 
     await FileSystem.copyAsync({ from: generated.uri, to: dest });
 
@@ -294,6 +294,12 @@ export async function uploadClipToCloud({
     onProgress?.({ phase: "uploadingVideo", message: "Uploading video…" });
 
     tempVideoUri = await makeFreshTempUploadCopy(localUri, shareId, "mp4");
+
+    const tempVideoInfo: any = await FileSystem.getInfoAsync(tempVideoUri);
+    const fileSizeBytes =
+      typeof tempVideoInfo?.size === "number" && Number.isFinite(tempVideoInfo.size)
+        ? tempVideoInfo.size
+        : null;
 
     const creds1: any = await testGetUploadUrl();
     if (!creds1?.uploadUrl || !creds1?.uploadAuthToken) {
@@ -428,7 +434,7 @@ export async function uploadClipToCloud({
 
       const recordedAt =
         typeof fullSidecar?.createdAt === "number" &&
-        Number.isFinite(fullSidecar.createdAt)
+          Number.isFinite(fullSidecar.createdAt)
           ? fullSidecar.createdAt
           : now;
 
@@ -492,6 +498,8 @@ export async function uploadClipToCloud({
 
         storageProvider: "b2",
         b2Bucket: creds1.bucketName ?? "quickclip-videos",
+        videoSizeBytes: fileSizeBytes,
+        sizeBytes: fileSizeBytes,
         b2VideoKey,
         b2VideoFileId,
         b2SidecarKey,
@@ -545,7 +553,7 @@ export async function uploadClipToCloud({
         await FileSystem.deleteAsync(tempVideoUri, {
           idempotent: true,
         });
-      } catch {}
+      } catch { }
     }
 
     if (tempThumbUri) {
@@ -553,7 +561,7 @@ export async function uploadClipToCloud({
         await FileSystem.deleteAsync(tempThumbUri, {
           idempotent: true,
         });
-      } catch {}
+      } catch { }
     }
 
     if (tempJsonPath) {
@@ -561,7 +569,7 @@ export async function uploadClipToCloud({
         await FileSystem.deleteAsync(tempJsonPath, {
           idempotent: true,
         });
-      } catch {}
+      } catch { }
     }
   }
 }

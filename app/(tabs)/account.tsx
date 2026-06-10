@@ -1,5 +1,9 @@
 // app/(tabs)/account.tsx
+import { formatStorage, getAccountUsage, type AccountUsage } from '@/lib/accountUsage';
+import { auth, db } from '@/lib/firebase';
 import { router } from 'expo-router';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,9 +15,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-
-import { auth } from '@/lib/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function maskEmail(email?: string | null) {
@@ -24,109 +25,92 @@ function maskEmail(email?: string | null) {
 }
 
 function shortUid(uid?: string | null) {
-  if (!uid) return '';
-  return `${uid.slice(0, 6)}…`;
+  return uid ? `${uid.slice(0, 6)}…` : '';
 }
 
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <View
-      style={{
-        borderRadius: 20,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        backgroundColor: 'rgba(255,255,255,0.04)',
-      }}
-    >
-      <View style={{ padding: 20 }}>{children}</View>
+    <View style={{
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+      backgroundColor: 'rgba(255,255,255,0.045)',
+      overflow: 'hidden',
+      marginBottom: 16,
+    }}>
+      <View style={{ padding: 18 }}>{children}</View>
     </View>
   );
 }
 
-function PrimaryButton({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
+function StatBox({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled}
-      activeOpacity={0.88}
-      style={{
-        flex: 1,
-        borderRadius: 18,
-        paddingVertical: 16,
-        alignItems: 'center',
-        backgroundColor: disabled ? 'rgba(239,68,68,0.45)' : '#ef4444',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.15)',
-        shadowColor: '#000',
-        shadowOpacity: disabled ? 0 : 0.35,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 10 },
-        elevation: disabled ? 0 : 8,
-      }}
-    >
-      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
+    <View style={{
+      flex: 1,
+      minWidth: 130,
+      borderRadius: 16,
+      padding: 14,
+      backgroundColor: 'rgba(0,0,0,0.28)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+    }}>
+      <Text style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '800', fontSize: 11 }}>
         {label}
       </Text>
-    </TouchableOpacity>
+      <Text style={{ color: 'white', fontWeight: '900', fontSize: 22, marginTop: 6 }}>
+        {value}
+      </Text>
+      {!!sub && (
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '700', fontSize: 12, marginTop: 4 }}>
+          {sub}
+        </Text>
+      )}
+    </View>
   );
 }
 
-function GhostButton({
+function Button({
   label,
   onPress,
+  kind = 'primary',
   disabled,
 }: {
   label: string;
   onPress: () => void;
+  kind?: 'primary' | 'ghost' | 'danger';
   disabled?: boolean;
 }) {
+  const bg =
+    kind === 'primary' ? '#ef4444' :
+    kind === 'danger' ? 'rgba(220,38,38,0.18)' :
+    'rgba(255,255,255,0.07)';
+
   return (
     <TouchableOpacity
       onPress={onPress}
       disabled={disabled}
-      activeOpacity={0.88}
+      activeOpacity={0.86}
       style={{
         flex: 1,
-        borderRadius: 18,
-        paddingVertical: 16,
+        borderRadius: 16,
+        paddingVertical: 14,
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.06)',
+        backgroundColor: bg,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.14)',
+        borderColor: kind === 'primary' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.12)',
         opacity: disabled ? 0.5 : 1,
       }}
     >
-      <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '800', fontSize: 16 }}>
-        {label}
-      </Text>
+      <Text style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function IconCheck() {
+function Feature({ text }: { text: string }) {
   return (
-    <View
-      style={{
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        backgroundColor: 'rgba(34,197,94,0.16)',
-        borderWidth: 1.5,
-        borderColor: 'rgba(34,197,94,0.5)',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Text style={{ color: '#22c55e', fontWeight: '900', fontSize: 12, lineHeight: 12 }}>✓</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <Text style={{ color: '#22c55e', fontWeight: '900' }}>✓</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.82)', fontWeight: '700', flex: 1 }}>{text}</Text>
     </View>
   );
 }
@@ -136,8 +120,10 @@ export default function AccountScreen() {
 
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
+  const [profile, setProfile] = useState<any>({});
+  const [usage, setUsage] = useState<AccountUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
 
-  // ✅ For beta: disable paywall / pricing UI so Apple doesn’t see “buy” without purchase flow
   const PRO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_PRO === '1';
 
   useEffect(() => {
@@ -145,46 +131,72 @@ export default function AccountScreen() {
     return unsub;
   }, []);
 
-  const identity = useMemo(() => {
-    if (!user) {
-      return {
-        badge: 'SIGNED OUT',
-        badgeColor: 'rgba(239,68,68,0.12)',
-        badgeBorder: 'rgba(239,68,68,0.30)',
-        badgeText: '#ef4444',
-        headline: "You're not signed in",
-        detail: 'Sign in to sync your clips across all devices and unlock Pro features.',
-        line1: '',
-        line2: '',
-      };
+  useEffect(() => {
+    if (!user?.uid) {
+      setProfile({});
+      setUsage(null);
+      return;
     }
 
-    if (user.isAnonymous) {
-      const id = shortUid(user.uid);
-      return {
-        badge: 'GUEST SESSION',
-        badgeColor: 'rgba(245,194,77,0.12)',
-        badgeBorder: 'rgba(245,194,77,0.30)',
-        badgeText: '#f5c24d',
-        headline: 'Guest mode active',
-        detail: 'Create an account to preserve your data and sync across devices.',
-        line1: id ? `Guest ID: ${id}` : '',
-        line2: '⚠️ Data not backed up',
-      };
-    }
+    const unsubProfile = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+      setProfile(snap.exists() ? snap.data() : {});
+    });
 
-    const emailLine = maskEmail(user.email);
+    let alive = true;
+
+    (async () => {
+      setUsageLoading(true);
+      try {
+        const next = await getAccountUsage(user.uid);
+        if (alive) setUsage(next);
+      } catch (e) {
+        console.log('[Account] usage load failed:', e);
+        if (alive) setUsage(null);
+      } finally {
+        if (alive) setUsageLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+      unsubProfile();
+    };
+  }, [user?.uid]);
+
+  const isTester = profile?.isTester === true;
+  const isPro = profile?.isPro === true || isTester;
+  const planName = isPro ? 'PRO' : 'FREE';
+
+  const accountState = useMemo(() => {
+    if (!user) return {
+      badge: 'SIGNED OUT',
+      headline: 'Sign in to protect your clips',
+      detail: 'Use QuickClip as a guest, or create an account to keep your data safer.',
+      line: '',
+    };
+
+    if (user.isAnonymous) return {
+      badge: 'GUEST',
+      headline: 'Guest mode active',
+      detail: 'You can record and use all sports. Create an account before switching devices.',
+      line: `Guest ID: ${shortUid(user.uid)}`,
+    };
+
     return {
       badge: 'SIGNED IN',
-      badgeColor: 'rgba(34,197,94,0.12)',
-      badgeBorder: 'rgba(34,197,94,0.30)',
-      badgeText: '#22c55e',
       headline: 'Account active',
-      detail: 'Your clips are synced and backed up across all devices.',
-      line1: emailLine || (user.uid ? `User ID: ${shortUid(user.uid)}` : ''),
-      line2: user.emailVerified ? '✓ Email verified' : 'Email not verified',
+      detail: 'Your account is ready for cloud uploads, sync, and sharing.',
+      line: maskEmail(user.email) || `User ID: ${shortUid(user.uid)}`,
     };
-  }, [user?.uid, user?.email, user?.isAnonymous, user?.emailVerified]);
+  }, [user?.uid, user?.email, user?.isAnonymous]);
+
+  const uploadText = usage
+    ? `${Math.min(usage.cloudVideoCount, usage.freeMaxCloudVideos)} / ${usage.freeMaxCloudVideos}`
+    : '— / 2';
+
+  const storageText = usage
+    ? `${formatStorage(usage.cloudStorageUsedBytes)} / ${formatStorage(usage.proStorageLimitBytes)}`
+    : '— / 250 GB';
 
   const goToSignIn = () => router.push('/(auth)/sign-in');
   const goToPaywall = () => router.push('/(auth)/paywall');
@@ -211,268 +223,165 @@ export default function AccountScreen() {
   const openTerms = () => Linking.openURL('https://quickclipapp.com/terms');
   const requestDeletion = () =>
     Linking.openURL(
-      'mailto:support@quickclipapp.com?subject=Account%20Deletion%20Request&body=Please%20delete%20my%20QuickClip%20account.%0A%0AEmail%20used%20to%20sign%20in%3A%0AUser%20ID%20(if%20known)%3A'
+      'mailto:support@quickclipapp.com?subject=Account%20Deletion%20Request'
     );
-
-  const actionRow = () => {
-    if (!user) {
-      return (
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
-          <PrimaryButton label="Sign In" onPress={goToSignIn} disabled={busy} />
-          <GhostButton label="Close" onPress={() => router.back()} disabled={busy} />
-        </View>
-      );
-    }
-
-    if (user.isAnonymous) {
-      return (
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
-          <PrimaryButton label="Create Account" onPress={goToSignIn} disabled={busy} />
-          <GhostButton label="Not now" onPress={() => router.back()} disabled={busy} />
-        </View>
-      );
-    }
-
-    // ✅ Signed-in (real user): include legal links inside THIS same status box
-    return (
-      <View style={{ marginTop: 18 }}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <PrimaryButton
-            label={PRO_ENABLED ? 'Upgrade to Pro' : 'Pro (coming soon)'}
-            onPress={PRO_ENABLED ? goToPaywall : () => {}}
-            disabled={busy || !PRO_ENABLED}
-          />
-          <GhostButton label="Sign Out" onPress={handleSignOut} disabled={busy} />
-        </View>
-
-        {/* ✅ Legal links INSIDE the same Card as “Account active” */}
-        <View
-          style={{
-            marginTop: 16,
-            borderRadius: 14,
-            overflow: 'hidden',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.10)',
-            backgroundColor: 'rgba(0,0,0,0.22)',
-          }}
-        >
-          <TouchableOpacity
-            onPress={openPrivacy}
-            activeOpacity={0.85}
-            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
-          >
-            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
-              Privacy Policy
-            </Text>
-          </TouchableOpacity>
-
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-
-          <TouchableOpacity
-            onPress={openTerms}
-            activeOpacity={0.85}
-            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
-          >
-            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
-              Terms of Service
-            </Text>
-          </TouchableOpacity>
-
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-
-          <TouchableOpacity
-            onPress={requestDeletion}
-            activeOpacity={0.85}
-            style={{ paddingVertical: 12, paddingHorizontal: 14 }}
-          >
-            <Text style={{ color: '#60a5fa', fontWeight: '800', fontSize: 14 }}>
-              Request account deletion
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right']}>
       <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingBottom: Math.max(28, insets.bottom + 20),
-          paddingTop: Math.max(16, insets.top + 12), // notch-safe
-        }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: 18,
+          paddingTop: Math.max(16, insets.top + 10),
+          paddingBottom: Math.max(30, insets.bottom + 22),
+        }}
       >
-        {/* Header */}
-        <View style={{ marginTop: 4, marginBottom: 24 }}>
-          <View
-            style={{
-              backgroundColor: identity.badgeColor,
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 20,
-              alignSelf: 'flex-start',
-              borderWidth: 1,
-              borderColor: identity.badgeBorder,
-            }}
-          >
-            <Text style={{ color: identity.badgeText, fontSize: 13, fontWeight: '900' }}>
-              {identity.badge}
+        <View style={{ marginBottom: 18 }}>
+          <View style={{
+            alignSelf: 'flex-start',
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: isPro ? 'rgba(245,194,77,0.14)' : 'rgba(255,255,255,0.08)',
+            borderWidth: 1,
+            borderColor: isPro ? 'rgba(245,194,77,0.35)' : 'rgba(255,255,255,0.14)',
+          }}>
+            <Text style={{ color: isPro ? '#f5c24d' : 'rgba(255,255,255,0.85)', fontWeight: '900', fontSize: 12 }}>
+              {planName}
             </Text>
           </View>
 
-          <Text
-            style={{
-              color: 'white',
-              fontSize: 36,
-              fontWeight: '900',
-              marginTop: 16,
-              letterSpacing: -0.5,
-            }}
-          >
+          <Text style={{ color: 'white', fontSize: 38, fontWeight: '900', marginTop: 14 }}>
             Account
           </Text>
-
-          <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 10, fontSize: 16, lineHeight: 24 }}>
-            Manage your QuickClip account and subscription
+          <Text style={{ color: 'rgba(255,255,255,0.60)', fontSize: 15, lineHeight: 22, marginTop: 6 }}>
+            Manage your plan, uploads, and account settings.
           </Text>
         </View>
 
-        {/* Status */}
-        <View style={{ marginBottom: 16 }}>
-          <Card>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.70)', fontWeight: '800', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Status
+        <Card>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.58)', fontWeight: '900', fontSize: 12 }}>
+              {accountState.badge}
+            </Text>
+            {(busy || usageLoading) && <ActivityIndicator color="#ef4444" />}
+          </View>
+
+          <Text style={{ color: 'white', fontWeight: '900', fontSize: 23, marginTop: 12 }}>
+            {accountState.headline}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.62)', fontSize: 14, lineHeight: 20, marginTop: 6 }}>
+            {accountState.detail}
+          </Text>
+
+          {!!accountState.line && (
+            <View style={{
+              marginTop: 14,
+              borderRadius: 14,
+              padding: 12,
+              backgroundColor: 'rgba(0,0,0,0.30)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.10)',
+            }}>
+              <Text style={{ color: 'rgba(255,255,255,0.82)', fontWeight: '800' }}>
+                {accountState.line}
               </Text>
-
-              {busy && <ActivityIndicator color="#ef4444" size="small" />}
             </View>
+          )}
 
-            <Text style={{ color: 'white', fontWeight: '900', fontSize: 22, marginBottom: 8 }}>
-              {identity.headline}
-            </Text>
-
-            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 14, lineHeight: 20 }}>
-              {identity.detail}
-            </Text>
-
-            {(!!identity.line1 || !!identity.line2) && (
-              <View
-                style={{
-                  marginTop: 16,
-                  borderRadius: 14,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                  backgroundColor: 'rgba(0,0,0,0.35)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.10)',
-                }}
-              >
-                {!!identity.line1 && (
-                  <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '800', fontSize: 13 }}>
-                    {identity.line1}
-                  </Text>
-                )}
-                {!!identity.line2 && (
-                  <Text
-                    style={{
-                      color: identity.line2.includes('✓')
-                        ? '#22c55e'
-                        : identity.line2.includes('⚠️')
-                        ? '#f5c24d'
-                        : 'rgba(255,255,255,0.55)',
-                      fontWeight: '700',
-                      fontSize: 12,
-                      marginTop: identity.line1 ? 6 : 0,
-                    }}
-                  >
-                    {identity.line2}
-                  </Text>
-                )}
-              </View>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            {!user || user.isAnonymous ? (
+              <>
+                <Button label={user?.isAnonymous ? 'Create Account' : 'Sign In'} onPress={goToSignIn} />
+                <Button label="Not now" kind="ghost" onPress={() => router.back()} />
+              </>
+            ) : (
+              <>
+                <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy} />
+              </>
             )}
+          </View>
+        </Card>
 
-            {actionRow()}
-          </Card>
-        </View>
+        <Card>
+          <Text style={{ color: 'white', fontSize: 24, fontWeight: '900' }}>
+            {isPro ? 'Pro Plan' : 'Free Plan'}
+          </Text>
 
-        {/* Pro benefits */}
-        <View style={{ marginBottom: 16 }}>
-          <Card>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <View>
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 20 }}>
-                  QuickClip Pro
-                </Text>
-                <Text style={{ color: 'rgba(255,255,255,0.60)', fontWeight: '700', fontSize: 13, marginTop: 2 }}>
-                  {PRO_ENABLED ? 'Everything unlocked' : 'Coming soon'}
-                </Text>
-              </View>
+          <Text style={{ color: 'rgba(255,255,255,0.60)', marginTop: 6, lineHeight: 20 }}>
+            {isPro
+              ? '250 GB cloud storage, share links, sync, and more devices.'
+              : 'All sports are unlocked. Free includes 2 active cloud uploads.'}
+          </Text>
 
-              <View
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  backgroundColor: 'rgba(245,194,77,0.14)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(245,194,77,0.3)',
-                  opacity: PRO_ENABLED ? 1 : 0.55,
-                }}
-              >
-                <Text style={{ color: '#f5c24d', fontWeight: '900', fontSize: 14 }}>
-                  {PRO_ENABLED ? '$10.99/mo' : 'BETA'}
-                </Text>
-              </View>
-            </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>
+            {isPro ? (
+              <>
+                <StatBox label="STORAGE" value={storageText} sub="Cloud storage" />
+                <StatBox label="DEVICES" value="8" sub="Device limit" />
+              </>
+            ) : (
+              <>
+                <StatBox label="UPLOADS" value={uploadText} sub="Active cloud videos" />
+                <StatBox label="SPORTS" value="All" sub="Unlocked" />
+              </>
+            )}
+          </View>
 
-            <View style={{ gap: 12, opacity: PRO_ENABLED ? 1 : 0.7 }}>
-              {[
-                'All sports unlocked',
-                'Extended cloud storage',
-                'Sync up to 5 devices',
-                'Priority upload processing',
-                'Advanced stats & analytics',
-              ].map((t) => (
-                <View key={t} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <IconCheck />
-                  <Text style={{ color: 'rgba(255,255,255,0.88)', fontWeight: '700', fontSize: 14, flex: 1 }}>
-                    {t}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
+          {!isPro && (
             <TouchableOpacity
               onPress={PRO_ENABLED ? goToPaywall : undefined}
               disabled={!PRO_ENABLED}
               activeOpacity={0.88}
               style={{
-                marginTop: 18,
+                marginTop: 16,
                 borderRadius: 18,
-                paddingVertical: 15,
+                paddingVertical: 16,
                 alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.06)',
+                backgroundColor: PRO_ENABLED ? '#ef4444' : 'rgba(239,68,68,0.35)',
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.14)',
-                opacity: PRO_ENABLED ? 1 : 0.45,
               }}
             >
-              <Text style={{ color: 'rgba(255,255,255,0.90)', fontWeight: '900', fontSize: 16, letterSpacing: 0.3 }}>
-                {PRO_ENABLED ? 'View plan options' : 'Pro is not enabled in beta'}
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
+                {PRO_ENABLED ? 'Upgrade to Pro' : 'Pro coming soon'}
               </Text>
             </TouchableOpacity>
-          </Card>
-        </View>
+          )}
+        </Card>
 
-        {/* App info */}
-        <View style={{ alignItems: 'center', paddingVertical: 20 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.40)', fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
+        <Card>
+          <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
+            What you get
+          </Text>
+
+          <View style={{ gap: 12, marginTop: 14 }}>
+            <Feature text="All sports unlocked on Free and Pro" />
+            <Feature text="Unlimited local videos, athletes, and events" />
+            <Feature text="Free: 2 active cloud uploads" />
+            <Feature text="Pro: 250 GB cloud storage" />
+            <Feature text="Pro: share links and cross-device sync" />
+            <Feature text="Pro: up to 8 active devices" />
+          </View>
+        </Card>
+
+        <Card>
+          <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
+            Support & Legal
+          </Text>
+
+          <View style={{ marginTop: 12, gap: 10 }}>
+            <Button label="Privacy Policy" kind="ghost" onPress={openPrivacy} />
+            <Button label="Terms of Service" kind="ghost" onPress={openTerms} />
+            <Button label="Request account deletion" kind="danger" onPress={requestDeletion} />
+          </View>
+        </Card>
+
+        <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '700', fontSize: 12 }}>
             QuickClip
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.30)', fontSize: 11, fontWeight: '600' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.25)', fontWeight: '600', fontSize: 11, marginTop: 4 }}>
             {Platform.OS === 'ios' ? 'iOS' : 'Android'} • Version 1.0.0
           </Text>
         </View>
