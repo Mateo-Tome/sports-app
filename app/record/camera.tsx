@@ -142,7 +142,14 @@ const raceLabelParam = useMemo(
         camOpacity.setValue(0);
 
         try {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+          await ScreenOrientation.lockAsync(
+            Platform.OS === 'ios'
+              ? ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT
+              : ScreenOrientation.OrientationLock.LANDSCAPE
+          );
+          
+          const afterLock = await ScreenOrientation.getOrientationAsync();
+          console.log('[camera] after landscape lock orientation=', afterLock);
         } catch (e) {
           console.log('[camera] failed to lock landscape', e);
         }
