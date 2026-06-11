@@ -1,11 +1,11 @@
 // lib/accountUsage.ts
 import { db } from '@/lib/firebase';
 import {
-    collection,
-    getDocs,
-    limit,
-    query,
-    where,
+  collection,
+  getDocs,
+  limit,
+  query,
+  where,
 } from 'firebase/firestore';
 
 const GB = 1024 * 1024 * 1024;
@@ -58,5 +58,11 @@ export async function getAccountUsage(uid: string): Promise<AccountUsage> {
 
 export function formatStorage(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 GB';
-  return `${(bytes / GB).toFixed(2)} GB`;
+
+  const mb = bytes / (1024 * 1024);
+  const gb = bytes / GB;
+
+  if (gb < 0.1) return `${mb.toFixed(1)} MB`;
+
+  return `${gb.toFixed(2)} GB`;
 }
