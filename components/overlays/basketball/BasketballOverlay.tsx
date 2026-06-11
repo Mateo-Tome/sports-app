@@ -1,6 +1,7 @@
 // components/overlays/basketball/BasketballOverlay.tsx
+import { isTabletSize } from '@/lib/ui/device';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OverlayCompactText } from '../OverlayCompactText';
@@ -9,10 +10,10 @@ import type { OverlayEvent, OverlayProps } from '../types';
 
 import {
   BB_COLORS,
-  LEFT_BTNS,
-  RIGHT_BTNS,
   laneForAction,
+  LEFT_BTNS,
   pointsForShot,
+  RIGHT_BTNS,
   tintForShot,
   type OverlayBtn,
   type ShotType,
@@ -38,6 +39,7 @@ function CircleButton({
   onPress,
   disabled,
   lit,
+  size,
 }: {
   label: string;
   subLabel?: string;
@@ -45,6 +47,7 @@ function CircleButton({
   onPress: () => void;
   disabled?: boolean;
   lit?: boolean;
+  size: number;
 }) {
   return (
     <Pressable
@@ -52,9 +55,9 @@ function CircleButton({
       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
       style={{
-        width: 58,
-        height: 58,
-        borderRadius: 29,
+        width: size,
+        height: size,
+        borderRadius: size / 2,
         backgroundColor: lit ? THEME.btnFillLit : THEME.btnFill,
         borderWidth: 2,
         borderColor: ringColor,
@@ -70,7 +73,9 @@ function CircleButton({
         paddingHorizontal: 4,
       }}
     >
-      <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+      <OverlayCompactText
+        style={{ color: 'white', fontWeight: '900', fontSize: size >= 70 ? 16 : 14 }}
+      >
         {label}
       </OverlayCompactText>
 
@@ -79,7 +84,7 @@ function CircleButton({
           style={{
             color: THEME.textDim,
             fontWeight: '900',
-            fontSize: 10,
+            fontSize: size >= 70 ? 11 : 10,
             marginTop: 1,
           }}
         >
@@ -244,6 +249,9 @@ function CenterChooser({
 
 export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec }: OverlayProps) {
   const insets = useSafeAreaInsets();
+  const dims = useWindowDimensions();
+  const isIPad = isTabletSize(dims.width, dims.height);
+
   const disableTaps = !isRecording;
 
   const [picker, setPicker] = useState<Picker>(null);
@@ -378,6 +386,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
 
         next.pts += pts;
       }
+
       return next;
     });
 
@@ -456,9 +465,10 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
     );
   };
 
-  const BTN = 58;
-  const GAP = 10;
+  const BTN = isIPad ? 78 : 58;
+  const GAP = isIPad ? 16 : 10;
   const COLS = 2;
+
   const leftWidth = COLS * BTN + (COLS - 1) * GAP;
   const rightWidth = COLS * BTN + (COLS - 1) * GAP;
 
@@ -541,9 +551,9 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
         pointerEvents="box-none"
         style={{
           position: 'absolute',
-          left: insets.left + 12,
-          top: insets.top + 110,
-          bottom: insets.bottom + 110,
+          left: insets.left + (isIPad ? 24 : 12),
+          top: insets.top + (isIPad ? 140 : 110),
+          bottom: insets.bottom + (isIPad ? 140 : 110),
           width: leftWidth,
         }}
       >
@@ -556,6 +566,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
               ringColor={b.ringColor}
               disabled={disableTaps}
               lit={litId === b.id}
+              size={BTN}
               onPress={() => {
                 if (b.action === 'rebound') return openReboundPicker(b.id);
                 logSimple(b);
@@ -569,9 +580,9 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
         pointerEvents="box-none"
         style={{
           position: 'absolute',
-          right: insets.right + 12,
-          top: insets.top + 110,
-          bottom: insets.bottom + 110,
+          right: insets.right + (isIPad ? 24 : 12),
+          top: insets.top + (isIPad ? 140 : 110),
+          bottom: insets.bottom + (isIPad ? 140 : 110),
           width: rightWidth,
           alignItems: 'flex-end',
         }}
@@ -592,6 +603,7 @@ export default function BasketballOverlay({ isRecording, onEvent, getCurrentTSec
               ringColor={b.ringColor}
               disabled={disableTaps}
               lit={litId === b.id}
+              size={BTN}
               onPress={() => {
                 if (b.action === 'shot2') return openShotPicker('2PT', b.id);
                 if (b.action === 'shot3') return openShotPicker('3PT', b.id);
