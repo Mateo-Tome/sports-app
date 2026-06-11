@@ -1,5 +1,6 @@
 // components/overlays/WrestlingFreestyleOverlay.tsx
 
+import { isTabletSize } from '@/lib/ui/device';
 import React from 'react';
 import {
   Animated,
@@ -89,17 +90,27 @@ export default function WrestlingFreestyleOverlay({
 
   const recordedName = cleanName(athleteName);
 
-  const EDGE_L = insets.left + 10;
-  const EDGE_R = insets.right + 10;
-  const TOP = insets.top + 52;
-  const BOTTOM = insets.bottom + 92;
+  const isIPad = isTabletSize(screenW, screenH);
+
+  // Phone values stay EXACTLY the same.
+  const EDGE_L = insets.left + (isIPad ? 24 : 10);
+  const EDGE_R = insets.right + (isIPad ? 24 : 10);
+  const TOP = insets.top + (isIPad ? 120 : 52);
+  const BOTTOM = insets.bottom + (isIPad ? 122 : 92);
 
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
-  const TITLE_H = 28;
+  const TITLE_H = isIPad ? 36 : 28;
   const ROWS = 3;
-  const GAP = 10;
-  const maxSize = Math.floor((availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS);
-  const SIZE = Math.max(36, Math.min(60, maxSize));
+  const GAP = isIPad ? 16 : 10;
+  const maxSize = Math.floor(
+    (availableHeight - TITLE_H - (ROWS - 1) * GAP) / ROWS
+  );
+
+  const SIZE = Math.max(
+    isIPad ? 54 : 36,
+    Math.min(isIPad ? 86 : 60, maxSize)
+  );
+
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
