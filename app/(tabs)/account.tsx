@@ -1,5 +1,6 @@
 // app/(tabs)/account.tsx
 import { formatStorage, getAccountUsage, type AccountUsage } from '@/lib/accountUsage';
+import { getDeviceUsage } from '@/lib/devices/deviceRegistry';
 import { auth, db } from '@/lib/firebase';
 import { router } from 'expo-router';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -17,6 +18,15 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const APP_VERSION = '1.0.3';
+
+type DeviceUsageState = {
+  activeDeviceCount: number;
+  maxDevices: number;
+  text: string;
+  isOverLimit: boolean;
+};
+
 function maskEmail(email?: string | null) {
   if (!email) return '';
   const [u, d] = email.split('@');
@@ -28,32 +38,49 @@ function shortUid(uid?: string | null) {
   return uid ? `${uid.slice(0, 6)}…` : '';
 }
 
-function Card({ children }: { children: React.ReactNode }) {
+function Card({ children, highlight = false }: { children: React.ReactNode; highlight?: boolean }) {
   return (
-    <View style={{
-      borderRadius: 22,
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.12)',
-      backgroundColor: 'rgba(255,255,255,0.045)',
-      overflow: 'hidden',
-      marginBottom: 16,
-    }}>
+    <View
+      style={{
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: highlight ? 'rgba(239,68,68,0.35)' : 'rgba(255,255,255,0.12)',
+        backgroundColor: highlight ? 'rgba(239,68,68,0.075)' : 'rgba(255,255,255,0.045)',
+        overflow: 'hidden',
+        marginBottom: 16,
+      }}
+    >
       <View style={{ padding: 18 }}>{children}</View>
+    </View>
+  );
+}
+
+function SectionTitle({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <Text style={{ color: 'white', fontSize: 21, fontWeight: '900' }}>{title}</Text>
+      {!!sub && (
+        <Text style={{ color: 'rgba(255,255,255,0.58)', marginTop: 5, lineHeight: 20 }}>
+          {sub}
+        </Text>
+      )}
     </View>
   );
 }
 
 function StatBox({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <View style={{
-      flex: 1,
-      minWidth: 130,
-      borderRadius: 16,
-      padding: 14,
-      backgroundColor: 'rgba(0,0,0,0.28)',
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.10)',
-    }}>
+    <View
+      style={{
+        flex: 1,
+        minWidth: 130,
+        borderRadius: 16,
+        padding: 14,
+        backgroundColor: 'rgba(0,0,0,0.28)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+      }}
+    >
       <Text style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '800', fontSize: 11 }}>
         {label}
       </Text>
@@ -61,7 +88,14 @@ function StatBox({ label, value, sub }: { label: string; value: string; sub?: st
         {value}
       </Text>
       {!!sub && (
-        <Text style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '700', fontSize: 12, marginTop: 4 }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.55)',
+            fontWeight: '700',
+            fontSize: 12,
+            marginTop: 4,
+          }}
+        >
           {sub}
         </Text>
       )}
@@ -81,9 +115,11 @@ function Button({
   disabled?: boolean;
 }) {
   const bg =
-    kind === 'primary' ? '#ef4444' :
-    kind === 'danger' ? 'rgba(220,38,38,0.18)' :
-    'rgba(255,255,255,0.07)';
+    kind === 'primary'
+      ? '#ef4444'
+      : kind === 'danger'
+        ? 'rgba(220,38,38,0.18)'
+        : 'rgba(255,255,255,0.07)';
 
   return (
     <TouchableOpacity
@@ -115,6 +151,58 @@ function Feature({ text }: { text: string }) {
   );
 }
 
+function CompareRow({
+  label,
+  free,
+  pro,
+  dimFree,
+}: {
+  label: string;
+  free: string;
+  pro: string;
+  dimFree?: boolean;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        paddingVertical: 12,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.07)',
+        alignItems: 'center',
+      }}
+    >
+      <Text style={{ flex: 1.15, color: 'rgba(255,255,255,0.78)', fontWeight: '800', fontSize: 13 }}>
+        {label}
+      </Text>
+
+      <Text
+        style={{
+          flex: 1,
+          color: dimFree ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.86)',
+          fontWeight: '800',
+          fontSize: 13,
+          textAlign: 'center',
+        }}
+      >
+        {free}
+      </Text>
+
+      <Text
+        style={{
+          flex: 1,
+          color: '#f5c24d',
+          fontWeight: '900',
+          fontSize: 13,
+          textAlign: 'center',
+        }}
+      >
+        {pro}
+      </Text>
+    </View>
+  );
+}
+
 export default function AccountScreen() {
   const insets = useSafeAreaInsets();
 
@@ -123,8 +211,14 @@ export default function AccountScreen() {
   const [profile, setProfile] = useState<any>({});
   const [usage, setUsage] = useState<AccountUsage | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [deviceUsage, setDeviceUsage] = useState<DeviceUsageState | null>(null);
+  const [deviceLoading, setDeviceLoading] = useState(false);
 
   const PRO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_PRO === '1';
+
+  const isTester = profile?.isTester === true;
+  const isPro = profile?.isPro === true || isTester;
+  const planName = isPro ? 'PRO' : 'FREE';
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -135,12 +229,24 @@ export default function AccountScreen() {
     if (!user?.uid) {
       setProfile({});
       setUsage(null);
+      setDeviceUsage(null);
       return;
     }
 
     const unsubProfile = onSnapshot(doc(db, 'users', user.uid), (snap) => {
       setProfile(snap.exists() ? snap.data() : {});
     });
+
+    return () => {
+      unsubProfile();
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setUsage(null);
+      return;
+    }
 
     let alive = true;
 
@@ -159,28 +265,59 @@ export default function AccountScreen() {
 
     return () => {
       alive = false;
-      unsubProfile();
     };
   }, [user?.uid]);
 
-  const isTester = profile?.isTester === true;
-  const isPro = profile?.isPro === true || isTester;
-  const planName = isPro ? 'PRO' : 'FREE';
+  useEffect(() => {
+    if (!user?.uid) {
+      setDeviceUsage(null);
+      return;
+    }
+
+    let alive = true;
+
+    (async () => {
+      setDeviceLoading(true);
+      try {
+        const maxDevices = isPro ? 8 : 1;
+        const next = await getDeviceUsage(user.uid, maxDevices);
+        if (alive) setDeviceUsage(next);
+      } catch (e) {
+        console.log('[Account] device usage load failed:', e);
+        if (alive) {
+          setDeviceUsage({
+            activeDeviceCount: 1,
+            maxDevices: isPro ? 8 : 1,
+            text: isPro ? '1 / 8' : '1 / 1',
+            isOverLimit: false,
+          });
+        }
+      } finally {
+        if (alive) setDeviceLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [user?.uid, isPro]);
 
   const accountState = useMemo(() => {
-    if (!user) return {
-      badge: 'SIGNED OUT',
-      headline: 'Sign in to protect your clips',
-      detail: 'Use QuickClip as a guest, or create an account to keep your data safer.',
-      line: '',
-    };
+    if (!user)
+      return {
+        badge: 'SIGNED OUT',
+        headline: 'Sign in to protect your clips',
+        detail: 'Use QuickClip as a guest, or create an account to keep your clips safer.',
+        line: '',
+      };
 
-    if (user.isAnonymous) return {
-      badge: 'GUEST',
-      headline: 'Guest mode active',
-      detail: 'You can record and use all sports. Create an account before switching devices.',
-      line: `Guest ID: ${shortUid(user.uid)}`,
-    };
+    if (user.isAnonymous)
+      return {
+        badge: 'GUEST MODE',
+        headline: 'Guest mode active',
+        detail: 'You can record and use all sports. Sign in before switching devices.',
+        line: `Guest ID: ${shortUid(user.uid)}`,
+      };
 
     return {
       badge: 'SIGNED IN',
@@ -197,6 +334,8 @@ export default function AccountScreen() {
   const storageText = usage
     ? `${formatStorage(usage.cloudStorageUsedBytes)} / ${formatStorage(usage.proStorageLimitBytes)}`
     : '— / 250 GB';
+
+  const deviceText = deviceUsage?.text ?? (isPro ? '— / 8' : '— / 1');
 
   const goToSignIn = () => router.push('/(auth)/sign-in');
   const goToPaywall = () => router.push('/(auth)/paywall');
@@ -222,9 +361,7 @@ export default function AccountScreen() {
   const openPrivacy = () => Linking.openURL('https://quickclipapp.com/privacy');
   const openTerms = () => Linking.openURL('https://quickclipapp.com/terms');
   const requestDeletion = () =>
-    Linking.openURL(
-      'mailto:support@quickclipapp.com?subject=Account%20Deletion%20Request'
-    );
+    Linking.openURL('mailto:support@quickclipapp.com?subject=Account%20Deletion%20Request');
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }} edges={['top', 'left', 'right']}>
@@ -237,17 +374,25 @@ export default function AccountScreen() {
         }}
       >
         <View style={{ marginBottom: 18 }}>
-          <View style={{
-            alignSelf: 'flex-start',
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderRadius: 999,
-            backgroundColor: isPro ? 'rgba(245,194,77,0.14)' : 'rgba(255,255,255,0.08)',
-            borderWidth: 1,
-            borderColor: isPro ? 'rgba(245,194,77,0.35)' : 'rgba(255,255,255,0.14)',
-          }}>
-            <Text style={{ color: isPro ? '#f5c24d' : 'rgba(255,255,255,0.85)', fontWeight: '900', fontSize: 12 }}>
-              {planName}
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: isPro ? 'rgba(245,194,77,0.14)' : 'rgba(255,255,255,0.08)',
+              borderWidth: 1,
+              borderColor: isPro ? 'rgba(245,194,77,0.35)' : 'rgba(255,255,255,0.14)',
+            }}
+          >
+            <Text
+              style={{
+                color: isPro ? '#f5c24d' : 'rgba(255,255,255,0.85)',
+                fontWeight: '900',
+                fontSize: 12,
+              }}
+            >
+              {isTester ? 'TESTER • PRO' : planName}
             </Text>
           </View>
 
@@ -255,7 +400,7 @@ export default function AccountScreen() {
             Account
           </Text>
           <Text style={{ color: 'rgba(255,255,255,0.60)', fontSize: 15, lineHeight: 22, marginTop: 6 }}>
-            Manage your plan, uploads, and account settings.
+            Manage your plan, uploads, devices, and account settings.
           </Text>
         </View>
 
@@ -264,7 +409,7 @@ export default function AccountScreen() {
             <Text style={{ color: 'rgba(255,255,255,0.58)', fontWeight: '900', fontSize: 12 }}>
               {accountState.badge}
             </Text>
-            {(busy || usageLoading) && <ActivityIndicator color="#ef4444" />}
+            {(busy || usageLoading || deviceLoading) && <ActivityIndicator color="#ef4444" />}
           </View>
 
           <Text style={{ color: 'white', fontWeight: '900', fontSize: 23, marginTop: 12 }}>
@@ -275,14 +420,16 @@ export default function AccountScreen() {
           </Text>
 
           {!!accountState.line && (
-            <View style={{
-              marginTop: 14,
-              borderRadius: 14,
-              padding: 12,
-              backgroundColor: 'rgba(0,0,0,0.30)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.10)',
-            }}>
+            <View
+              style={{
+                marginTop: 14,
+                borderRadius: 14,
+                padding: 12,
+                backgroundColor: 'rgba(0,0,0,0.30)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.10)',
+              }}
+            >
               <Text style={{ color: 'rgba(255,255,255,0.82)', fontWeight: '800' }}>
                 {accountState.line}
               </Text>
@@ -296,34 +443,46 @@ export default function AccountScreen() {
                 <Button label="Not now" kind="ghost" onPress={() => router.back()} />
               </>
             ) : (
-              <>
-                <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy} />
-              </>
+              <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy} />
             )}
           </View>
         </Card>
 
-        <Card>
-          <Text style={{ color: 'white', fontSize: 24, fontWeight: '900' }}>
-            {isPro ? 'Pro Plan' : 'Free Plan'}
-          </Text>
+        {deviceUsage?.isOverLimit ? (
+          <Card highlight>
+            <SectionTitle
+              title="Device limit reached"
+              sub={
+                isPro
+                  ? 'This account is over the 8 active device limit. Recording still works offline, but cloud features may need device management soon.'
+                  : 'Free allows 1 active device. Recording still works offline, but Pro allows up to 8 active devices.'
+              }
+            />
+          </Card>
+        ) : null}
 
-          <Text style={{ color: 'rgba(255,255,255,0.60)', marginTop: 6, lineHeight: 20 }}>
-            {isPro
-              ? '250 GB cloud storage, share links, sync, and more devices.'
-              : 'All sports are unlocked. Free includes 2 active cloud uploads.'}
-          </Text>
+        <Card highlight={!isPro}>
+          <SectionTitle
+            title={isPro ? 'Pro Plan' : 'Free Plan'}
+            sub={
+              isPro
+                ? 'You have the full QuickClip cloud plan.'
+                : 'Free is built for local recording. Upgrade when you need sync, sharing, and more cloud storage.'
+            }
+          />
 
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
             {isPro ? (
               <>
                 <StatBox label="STORAGE" value={storageText} sub="Cloud storage" />
-                <StatBox label="DEVICES" value="8" sub="Device limit" />
+                <StatBox label="DEVICES" value={deviceText} sub="Active devices" />
               </>
             ) : (
               <>
                 <StatBox label="UPLOADS" value={uploadText} sub="Active cloud videos" />
+                <StatBox label="DEVICES" value={deviceText} sub="Active devices" />
                 <StatBox label="SPORTS" value="All" sub="Unlocked" />
+                <StatBox label="LOCAL" value="Unlimited" sub="Videos, athletes, events" />
               </>
             )}
           </View>
@@ -346,31 +505,77 @@ export default function AccountScreen() {
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
                 {PRO_ENABLED ? 'Upgrade to Pro' : 'Pro coming soon'}
               </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.75)', fontWeight: '700', fontSize: 12, marginTop: 4 }}>
+                250 GB cloud • Share links • 8 devices
+              </Text>
             </TouchableOpacity>
           )}
         </Card>
 
         <Card>
-          <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
-            What you get
-          </Text>
+          <SectionTitle
+            title="Free vs Pro"
+            sub="Simple difference: Free is local-first. Pro unlocks cloud, sharing, sync, and more devices."
+          />
 
-          <View style={{ gap: 12, marginTop: 14 }}>
-            <Feature text="All sports unlocked on Free and Pro" />
-            <Feature text="Unlimited local videos, athletes, and events" />
-            <Feature text="Free: 2 active cloud uploads" />
-            <Feature text="Pro: 250 GB cloud storage" />
-            <Feature text="Pro: share links and cross-device sync" />
-            <Feature text="Pro: up to 8 active devices" />
+          <View
+            style={{
+              borderRadius: 18,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.10)',
+              backgroundColor: 'rgba(0,0,0,0.22)',
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                paddingVertical: 13,
+                paddingHorizontal: 12,
+                backgroundColor: 'rgba(255,255,255,0.045)',
+              }}
+            >
+              <Text style={{ flex: 1.15, color: 'rgba(255,255,255,0.45)', fontWeight: '900', fontSize: 12 }}>
+                FEATURE
+              </Text>
+              <Text style={{ flex: 1, color: 'rgba(255,255,255,0.80)', fontWeight: '900', fontSize: 12, textAlign: 'center' }}>
+                FREE
+              </Text>
+              <Text style={{ flex: 1, color: '#f5c24d', fontWeight: '900', fontSize: 12, textAlign: 'center' }}>
+                PRO
+              </Text>
+            </View>
+
+            <View style={{ paddingHorizontal: 12 }}>
+              <CompareRow label="Sports" free="All" pro="All" />
+              <CompareRow label="Local videos" free="Unlimited" pro="Unlimited" />
+              <CompareRow label="Athletes & events" free="Unlimited" pro="Unlimited" />
+              <CompareRow label="Cloud uploads" free="2 active" pro="250 GB" />
+              <CompareRow label="Share links" free="—" pro="Included" dimFree />
+              <CompareRow label="Cross-device sync" free="—" pro="Included" dimFree />
+              <CompareRow label="Devices" free="1 active" pro="Up to 8" />
+              <CompareRow label="Support" free="Standard" pro="Priority" />
+            </View>
           </View>
         </Card>
 
         <Card>
-          <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>
-            Support & Legal
-          </Text>
+          <SectionTitle title="What you get today" />
 
-          <View style={{ marginTop: 12, gap: 10 }}>
+          <View style={{ gap: 12 }}>
+            <Feature text="All sports unlocked on Free and Pro" />
+            <Feature text="Unlimited local videos, athletes, and events" />
+            <Feature text="Free includes 2 active cloud uploads" />
+            <Feature text="Pro adds 250 GB cloud storage" />
+            <Feature text="Pro adds share links and cross-device sync" />
+            <Feature text="Pro allows up to 8 active devices" />
+          </View>
+        </Card>
+
+        <Card>
+          <SectionTitle title="Support & Legal" />
+
+          <View style={{ gap: 10 }}>
             <Button label="Privacy Policy" kind="ghost" onPress={openPrivacy} />
             <Button label="Terms of Service" kind="ghost" onPress={openTerms} />
             <Button label="Request account deletion" kind="danger" onPress={requestDeletion} />
@@ -382,7 +587,7 @@ export default function AccountScreen() {
             QuickClip
           </Text>
           <Text style={{ color: 'rgba(255,255,255,0.25)', fontWeight: '600', fontSize: 11, marginTop: 4 }}>
-            {Platform.OS === 'ios' ? 'iOS' : 'Android'} • Version 1.0.0
+            {Platform.OS === 'ios' ? 'iOS' : 'Android'} • Version {APP_VERSION}
           </Text>
         </View>
       </ScrollView>
