@@ -2,16 +2,21 @@
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  GoogleSignin,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 import { router } from 'expo-router';
 import {
   EmailAuthProvider,
+  GoogleAuthProvider,
   createUserWithEmailAndPassword,
   linkWithCredential,
   sendPasswordResetEmail,
-  signInAnonymously,
+  signInWithCredential,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,144 +32,156 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-type Screen = 'start' | 'signin' | 'signup';
+type Mode = 'signin' | 'signup';
 
 const GUEST_OK_KEY = 'guest_ok';
 
+const GOOGLE_WEB_CLIENT_ID =
+  '149278395589-fvs4adqfascj8cntgndod3u4gaokssni.apps.googleusercontent.com';
+
 const colors = {
   bg: '#050507',
-  card: 'rgba(18,18,22,0.86)',
+  card: '#101014',
   stroke: 'rgba(255,255,255,0.10)',
-  strokeSoft: 'rgba(255,255,255,0.06)',
   text: '#FFFFFF',
-  sub: 'rgba(255,255,255,0.65)',
-  dim: 'rgba(255,255,255,0.45)',
+  sub: 'rgba(255,255,255,0.62)',
+  dim: 'rgba(255,255,255,0.42)',
   accent: '#ef4444',
-  accentDark: '#7f1d1d',
-  inputBg: 'rgba(0,0,0,0.35)',
-  ghostBg: 'rgba(255,255,255,0.06)',
-  ghostStroke: 'rgba(255,255,255,0.18)',
+  input: 'rgba(255,255,255,0.06)',
 };
 
-function Card({ children }: { children: React.ReactNode }) {
+function AppText({
+  children,
+  style,
+  numberOfLines,
+}: {
+  children: React.ReactNode;
+  style?: any;
+  numberOfLines?: number;
+}) {
   return (
-    <View
-      style={{
-        borderRadius: 22,
-        padding: 18,
-        backgroundColor: colors.card,
-        borderWidth: 1,
-        borderColor: colors.stroke,
-        shadowColor: '#000',
-        shadowOpacity: 0.35,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 8,
-      }}
-    >
+    <Text maxFontSizeMultiplier={1.25} numberOfLines={numberOfLines} style={style}>
       {children}
-    </View>
+    </Text>
   );
 }
 
-function PrimaryButton({
+function AuthButton({
   label,
   onPress,
-  disabled,
   busy,
+  disabled,
 }: {
   label: string;
   onPress: () => void;
-  disabled?: boolean;
   busy?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      disabled={disabled || busy}
+      disabled={busy || disabled}
+      activeOpacity={0.88}
       style={{
-        borderRadius: 999,
-        paddingVertical: 12,
+        height: 54,
+        borderRadius: 16,
         alignItems: 'center',
-        backgroundColor: busy || disabled ? colors.accentDark : colors.accent,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.10)',
+        justifyContent: 'center',
+        backgroundColor: colors.accent,
+        opacity: busy || disabled ? 0.55 : 1,
       }}
     >
       {busy ? (
-        <ActivityIndicator color="#fff" />
+        <ActivityIndicator color="white" />
       ) : (
-        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{label}</Text>
+        <AppText style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
+          {label}
+        </AppText>
       )}
     </TouchableOpacity>
   );
 }
 
-function GhostButton({
+function ProviderButton({
   label,
+  icon,
   onPress,
-  disabled,
   busy,
+  disabled,
+  dark = false,
 }: {
   label: string;
+  icon: string;
   onPress: () => void;
-  disabled?: boolean;
   busy?: boolean;
+  disabled?: boolean;
+  dark?: boolean;
 }) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      disabled={disabled || busy}
+      disabled={busy || disabled}
+      activeOpacity={0.88}
       style={{
-        marginTop: 10,
+        height: 50,
         borderRadius: 999,
-        paddingVertical: 11,
-        alignItems: 'center',
-        backgroundColor: colors.ghostBg,
+        backgroundColor: dark ? '#000000' : '#FFFFFF',
         borderWidth: 1,
-        borderColor: colors.ghostStroke,
-        opacity: busy ? 0.7 : 1,
+        borderColor: dark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: busy || disabled ? 0.55 : 1,
+        marginTop: 10,
       }}
     >
-      <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 13 }}>
-        {label}
-      </Text>
+      {busy ? (
+        <ActivityIndicator color={dark ? 'white' : 'black'} />
+      ) : (
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <AppText
+            style={{
+              width: 24,
+              textAlign: 'center',
+              marginRight: 10,
+              fontSize: 19,
+              fontWeight: '900',
+              color: dark ? 'white' : 'black',
+            }}
+          >
+            {icon}
+          </AppText>
+
+          <AppText
+            style={{
+              color: dark ? 'white' : '#1f1f1f',
+              fontWeight: '800',
+              fontSize: 15,
+            }}
+          >
+            {label}
+          </AppText>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
 
-function BackLink({ label, onBack }: { label: string; onBack: () => void }) {
-  return (
-    <Pressable
-      onPress={onBack}
-      hitSlop={12}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.7 : 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-      })}
-    >
-      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>← Back</Text>
-      <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '900', fontSize: 12 }}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 export default function SignInScreen() {
-  const [screen, setScreen] = useState<Screen>('start');
-
+  const [mode, setMode] = useState<Mode>('signup');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
-
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  // ✅ This prevents “shake”: when keyboard is open, we DO NOT vertically re-center.
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  const isAnon = !!auth.currentUser?.isAnonymous;
+
+  useEffect(() => {
+    GoogleSignin.configure({
+      webClientId: GOOGLE_WEB_CLIENT_ID,
+      offlineAccess: false,
+    });
+  }, []);
 
   useEffect(() => {
     const show = Keyboard.addListener(
@@ -175,69 +192,145 @@ export default function SignInScreen() {
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
       () => setKeyboardOpen(false)
     );
+
     return () => {
       show.remove();
       hide.remove();
     };
   }, []);
 
-  const isAnon = !!auth.currentUser?.isAnonymous;
-
   const goToApp = () => router.replace('/(tabs)');
 
-  const headerTitle = useMemo(() => {
-    if (screen === 'start') return 'QuickClip';
-    if (screen === 'signin') return 'Sign in';
-    return 'Create account';
-  }, [screen]);
+  const resetError = () => setErr(null);
 
-  const headerSub = useMemo(() => {
-    if (screen === 'start') {
-      return isAnon
-        ? 'Guest session active — create an account to keep this device and sync.'
-        : 'Record. Review. Win.';
+  async function linkAnonToEmailPassword(trimmedEmail: string, password: string) {
+    const u = auth.currentUser;
+    if (!u || !u.isAnonymous) return false;
+
+    const cred = EmailAuthProvider.credential(trimmedEmail, password);
+
+    try {
+      await linkWithCredential(u, cred);
+      await ensureUserDoc(u.uid);
+      return true;
+    } catch (e: any) {
+      if (String(e?.code) === 'auth/email-already-in-use') {
+        setErr('That email already has an account. Sign in instead.');
+        return false;
+      }
+      throw e;
     }
-    if (screen === 'signin') return 'Sign in to sync across devices.';
-    return isAnon
-      ? 'Create an account to save this guest session (keeps the same ID).'
-      : 'Create an account so your clips follow you everywhere.';
-  }, [screen, isAnon]);
+  }
 
-  const validateEmailPass = (minPassLen = 6) => {
+  const validate = () => {
     const trimmedEmail = email.trim();
+
     if (!trimmedEmail) return 'Enter your email.';
     if (!pass) return 'Enter your password.';
-    if (pass.length < minPassLen) return `Password must be at least ${minPassLen} characters.`;
+    if (mode === 'signup' && pass.length < 6) {
+      return 'Password must be at least 6 characters.';
+    }
+
     return null;
   };
 
-  const onContinueGuest = async () => {
-    setErr(null);
+  const onGoogleSignIn = async () => {
+    resetError();
     setBusy(true);
+
     try {
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
+      if (Platform.OS === 'android') {
+        await GoogleSignin.hasPlayServices({
+          showPlayServicesUpdateDialog: true,
+        });
       }
 
-      const u = auth.currentUser;
-      if (!u) throw new Error('Guest session failed to initialize.');
+      const result = await GoogleSignin.signIn();
+      const idToken = result.data?.idToken;
 
-      await ensureUserDoc(u.uid);
-      await AsyncStorage.setItem(GUEST_OK_KEY, '1');
+      if (!idToken) {
+        throw new Error('Google sign-in did not return an ID token.');
+      }
+
+      const credential = GoogleAuthProvider.credential(idToken);
+      const u = auth.currentUser;
+
+      if (u?.isAnonymous) {
+        try {
+          await linkWithCredential(u, credential);
+        } catch (e: any) {
+          const code = String(e?.code ?? '');
+          if (
+            code === 'auth/credential-already-in-use' ||
+            code === 'auth/email-already-in-use'
+          ) {
+            await signInWithCredential(auth, credential);
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        await signInWithCredential(auth, credential);
+      }
+
+      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+      await AsyncStorage.removeItem(GUEST_OK_KEY);
 
       goToApp();
     } catch (e: any) {
-      setErr(e?.message ?? 'Failed to continue as guest.');
+      if (e?.code === statusCodes.SIGN_IN_CANCELLED) return;
+      setErr(e?.message ?? 'Google sign-in failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onAppleSignIn = () => {
+    Alert.alert(
+      'Apple Sign-In next',
+      'The Apple button is ready visually. We will wire the actual Apple login after Google is fully tested.'
+    );
+  };
+
+  const onSubmit = async () => {
+    resetError();
+
+    const msg = validate();
+    if (msg) {
+      setErr(msg);
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+
+    setBusy(true);
+    try {
+      if (mode === 'signin') {
+        await signInWithEmailAndPassword(auth, trimmedEmail, pass);
+      } else if (isAnon) {
+        const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
+        if (!ok) return;
+      } else {
+        await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
+      }
+
+      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+      await AsyncStorage.removeItem(GUEST_OK_KEY);
+
+      goToApp();
+    } catch (e: any) {
+      setErr(e?.message ?? 'Something went wrong.');
     } finally {
       setBusy(false);
     }
   };
 
   const onForgotPassword = async () => {
-    setErr(null);
+    resetError();
+
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
-      setErr('Enter your email first, then tap “Forgot password?”.');
+      setErr('Enter your email first.');
       return;
     }
 
@@ -252,330 +345,297 @@ export default function SignInScreen() {
     }
   };
 
-  async function linkAnonToEmailPassword(trimmedEmail: string, password: string) {
-    const u = auth.currentUser;
-    if (!u || !u.isAnonymous) return false;
-
-    const cred = EmailAuthProvider.credential(trimmedEmail, password);
-
-    try {
-      await linkWithCredential(u, cred);
-      await ensureUserDoc(u.uid);
-      return true;
-    } catch (e: any) {
-      if (String(e?.code) === 'auth/email-already-in-use') {
-        setErr(
-          'That email already has an account. Tap “Sign in” instead to use your existing account.'
-        );
-        return false;
-      }
-      throw e;
-    }
-  }
-
-  const onSubmitSignIn = async () => {
-    setErr(null);
-
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) return setErr('Enter your email.');
-    if (!pass) return setErr('Enter your password.');
-
-    setBusy(true);
-    try {
-      await signInWithEmailAndPassword(auth, trimmedEmail, pass);
-      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-
-      await AsyncStorage.removeItem(GUEST_OK_KEY);
-
-      goToApp();
-    } catch (e: any) {
-      setErr(e?.message ?? 'Sign-in failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onSubmitSignUp = async () => {
-    setErr(null);
-
-    const msg = validateEmailPass(6);
-    if (msg) return setErr(msg);
-
-    const trimmedEmail = email.trim();
-
-    setBusy(true);
-    try {
-      if (isAnon) {
-        const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
-        if (ok) {
-          await AsyncStorage.removeItem(GUEST_OK_KEY);
-          goToApp();
-        }
-        return;
-      }
-
-      await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
-      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-
-      await AsyncStorage.removeItem(GUEST_OK_KEY);
-
-      goToApp();
-    } catch (e: any) {
-      setErr(e?.message ?? 'Sign-up failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const title = mode === 'signup' ? 'Create account' : 'Sign in';
+  const subtitle =
+    mode === 'signup'
+      ? 'Save clips, athletes, events, and device access.'
+      : 'Welcome back to QuickClip.';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View style={{ paddingHorizontal: 22, paddingTop: 10, paddingBottom: 14 }}>
-        <Text style={{ color: colors.text, fontSize: 30, fontWeight: '900', letterSpacing: 0.8 }}>
-          {headerTitle}
-        </Text>
-
-        {/* Stable height prevents reflow */}
-        <Text style={{ color: colors.sub, marginTop: 6, fontSize: 12 }} numberOfLines={2}>
-          {headerSub}
-        </Text>
-
-        {isAnon && screen === 'start' && (
-          <View
-            style={{
-              marginTop: 10,
-              alignSelf: 'flex-start',
-              borderRadius: 999,
-              paddingVertical: 6,
-              paddingHorizontal: 10,
-              backgroundColor: 'rgba(239,68,68,0.16)',
-              borderWidth: 1,
-              borderColor: 'rgba(239,68,68,0.35)',
-            }}
-          >
-            <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '800', fontSize: 12 }}>
-              Guest session active
-            </Text>
-          </View>
-        )}
-      </View>
-
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        // ✅ Use padding (stable on route replaces / sign-out), not position (can go blank)
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          style={{ flex: 1 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           contentContainerStyle={{
             flexGrow: 1,
-            paddingHorizontal: 18,
-            paddingBottom: 24,
-            // ✅ Center when keyboard closed; switch to top when typing so it doesn't "shake"
+            paddingHorizontal: 22,
+            paddingBottom: 28,
             justifyContent: keyboardOpen ? 'flex-start' : 'center',
           }}
         >
-          {screen === 'start' && (
-            <Card>
-              <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }}>Get started</Text>
-              <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
-                Choose one option. You can change later.
-              </Text>
+          <View style={{ marginBottom: 26 }}>
+            <AppText
+              numberOfLines={1}
+              style={{
+                color: colors.text,
+                fontSize: 34,
+                fontWeight: '900',
+                letterSpacing: -0.5,
+              }}
+            >
+              QuickClip
+            </AppText>
 
-              <PrimaryButton
-                label={isAnon ? 'Create account (save this device)' : 'Create account'}
-                onPress={() => {
-                  setErr(null);
-                  setScreen('signup');
-                }}
-                busy={busy}
-              />
+            <AppText
+              numberOfLines={2}
+              style={{
+                color: colors.sub,
+                fontSize: 15,
+                lineHeight: 21,
+                marginTop: 8,
+                maxWidth: 330,
+              }}
+            >
+              Record. Organize. Analyze. Share.
+            </AppText>
+          </View>
 
-              <GhostButton
-                label="Sign in to existing account"
-                onPress={() => {
-                  setErr(null);
-                  setScreen('signin');
-                }}
-                busy={busy}
-              />
-
-              <View
-                style={{
-                  marginTop: 16,
-                  borderTopWidth: 1,
-                  borderTopColor: colors.strokeSoft,
-                  paddingTop: 14,
-                }}
-              >
-                <Text
-                  style={{
-                    color: colors.sub,
-                    fontSize: 11,
-                    textAlign: 'center',
-                    marginBottom: 10,
-                  }}
-                >
-                  Just want to try it out?
-                </Text>
-
-                <TouchableOpacity
-                  onPress={onContinueGuest}
-                  disabled={busy}
-                  style={{
-                    borderRadius: 999,
-                    paddingVertical: 11,
-                    alignItems: 'center',
-                    backgroundColor: 'rgba(0,0,0,0.35)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.25)',
-                    opacity: busy ? 0.7 : 1,
-                  }}
-                >
-                  <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
-                    Continue as Guest
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {!!err && (
-                <Text style={{ color: colors.accent, marginTop: 12, fontSize: 13 }} numberOfLines={4}>
-                  {err}
-                </Text>
-              )}
-            </Card>
-          )}
-
-          {(screen === 'signin' || screen === 'signup') && (
-            <Card>
-              <BackLink
-                label={screen === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'}
-                onBack={() => {
-                  setErr(null);
-                  setBusy(false);
-                  setScreen('start');
-                }}
-              />
-
-              <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900', marginTop: 6 }}>
-                {screen === 'signin' ? 'Sign in' : 'Create account'}
-              </Text>
-              <Text style={{ color: colors.sub, fontSize: 12, marginTop: 6, marginBottom: 16 }}>
-                {screen === 'signin'
-                  ? 'Use your existing email and password.'
-                  : isAnon
-                  ? 'This keeps your guest data and ID — it just adds an email/password.'
-                  : 'Create a new account with email and password.'}
-              </Text>
-
-              <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Email</Text>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                autoCorrect={false}
-                textContentType="emailAddress"
-                autoComplete="email"
-                keyboardType="email-address"
-                placeholder="you@example.com"
-                placeholderTextColor="rgba(255,255,255,0.35)"
-                editable={!busy}
-                style={{
-                  color: colors.text,
-                  backgroundColor: colors.inputBg,
-                  borderWidth: 1,
-                  borderColor: colors.strokeSoft,
-                  borderRadius: 14,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  fontSize: 14,
-                  marginBottom: 12,
-                }}
-              />
-
-              <Text style={{ color: colors.dim, fontSize: 12, marginBottom: 6 }}>Password</Text>
-              <TextInput
-                value={pass}
-                onChangeText={setPass}
-                secureTextEntry
-                autoCorrect={false}
-                textContentType="password"
-                autoComplete="password"
-                placeholder="••••••••"
-                placeholderTextColor="rgba(255,255,255,0.35)"
-                editable={!busy}
-                style={{
-                  color: colors.text,
-                  backgroundColor: colors.inputBg,
-                  borderWidth: 1,
-                  borderColor: colors.strokeSoft,
-                  borderRadius: 14,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  fontSize: 14,
-                  marginBottom: 10,
-                }}
-              />
-
-              {screen === 'signin' && (
-                <Pressable
-                  onPress={onForgotPassword}
-                  disabled={busy}
-                  style={{ alignSelf: 'flex-end', marginBottom: 12 }}
-                >
-                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 12 }}>
-                    Forgot password?
-                  </Text>
-                </Pressable>
-              )}
-
-              {!!err && (
-                <Text style={{ color: colors.accent, marginBottom: 12, fontSize: 13 }} numberOfLines={4}>
-                  {err}
-                </Text>
-              )}
-
-              <PrimaryButton
-                label={screen === 'signin' ? 'Sign in' : 'Create account'}
-                onPress={screen === 'signin' ? onSubmitSignIn : onSubmitSignUp}
-                busy={busy}
-              />
-
-              {screen === 'signup' && !isAnon && (
-                <GhostButton
-                  label="Already have an account? Sign in"
-                  onPress={() => {
-                    setErr(null);
-                    setScreen('signin');
-                  }}
-                  busy={busy}
-                />
-              )}
-
-              {screen === 'signin' && (
-                <GhostButton
-                  label="Need an account? Create one"
-                  onPress={() => {
-                    setErr(null);
-                    setScreen('signup');
-                  }}
-                  busy={busy}
-                />
-              )}
-            </Card>
-          )}
-
-          <Text
+          <View
             style={{
-              color: 'rgba(255,255,255,0.35)',
-              fontSize: 11,
-              textAlign: 'center',
-              marginTop: 14,
+              borderRadius: 24,
+              backgroundColor: colors.card,
+              borderWidth: 1,
+              borderColor: colors.stroke,
+              padding: 18,
             }}
           >
-            You’ll only see this screen if you sign out.
-          </Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                borderRadius: 14,
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                padding: 4,
+                marginBottom: 18,
+              }}
+            >
+              {(['signup', 'signin'] as Mode[]).map((m) => {
+                const active = mode === m;
+                return (
+                  <Pressable
+                    key={m}
+                    onPress={() => {
+                      setMode(m);
+                      resetError();
+                    }}
+                    style={{
+                      flex: 1,
+                      height: 40,
+                      borderRadius: 11,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: active ? 'white' : 'transparent',
+                    }}
+                  >
+                    <AppText
+                      numberOfLines={1}
+                      style={{
+                        color: active ? 'black' : 'rgba(255,255,255,0.72)',
+                        fontWeight: '900',
+                        fontSize: 13,
+                      }}
+                    >
+                      {m === 'signup' ? 'Join' : 'Sign in'}
+                    </AppText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <AppText
+              numberOfLines={1}
+              style={{ color: colors.text, fontSize: 24, fontWeight: '900' }}
+            >
+              {title}
+            </AppText>
+
+            <AppText
+              numberOfLines={2}
+              style={{
+                color: colors.sub,
+                fontSize: 13,
+                lineHeight: 19,
+                marginTop: 6,
+                marginBottom: 18,
+              }}
+            >
+              {subtitle}
+            </AppText>
+
+            <AppText
+              style={{
+                color: colors.dim,
+                fontSize: 12,
+                fontWeight: '800',
+                marginBottom: 7,
+              }}
+            >
+              Email
+            </AppText>
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="emailAddress"
+              autoComplete="email"
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              placeholderTextColor="rgba(255,255,255,0.34)"
+              editable={!busy}
+              maxFontSizeMultiplier={1.2}
+              style={{
+                height: 52,
+                color: colors.text,
+                backgroundColor: colors.input,
+                borderWidth: 1,
+                borderColor: colors.stroke,
+                borderRadius: 15,
+                paddingHorizontal: 14,
+                fontSize: 15,
+                marginBottom: 13,
+              }}
+            />
+
+            <AppText
+              style={{
+                color: colors.dim,
+                fontSize: 12,
+                fontWeight: '800',
+                marginBottom: 7,
+              }}
+            >
+              Password
+            </AppText>
+            <TextInput
+              value={pass}
+              onChangeText={setPass}
+              secureTextEntry
+              autoCorrect={false}
+              textContentType="password"
+              autoComplete="password"
+              placeholder="••••••••"
+              placeholderTextColor="rgba(255,255,255,0.34)"
+              editable={!busy}
+              maxFontSizeMultiplier={1.2}
+              style={{
+                height: 52,
+                color: colors.text,
+                backgroundColor: colors.input,
+                borderWidth: 1,
+                borderColor: colors.stroke,
+                borderRadius: 15,
+                paddingHorizontal: 14,
+                fontSize: 15,
+                marginBottom: 10,
+              }}
+            />
+
+            {mode === 'signin' ? (
+              <Pressable
+                onPress={onForgotPassword}
+                disabled={busy}
+                hitSlop={10}
+                style={{ alignSelf: 'flex-end', marginBottom: 14 }}
+              >
+                <AppText
+                  style={{
+                    color: colors.sub,
+                    fontWeight: '800',
+                    fontSize: 12,
+                  }}
+                >
+                  Forgot password?
+                </AppText>
+              </Pressable>
+            ) : (
+              <View style={{ height: 10 }} />
+            )}
+
+            {!!err && (
+              <AppText
+                numberOfLines={3}
+                style={{
+                  color: colors.accent,
+                  fontSize: 13,
+                  lineHeight: 18,
+                  marginBottom: 12,
+                }}
+              >
+                {err}
+              </AppText>
+            )}
+
+            <AuthButton label="Continue" onPress={onSubmit} busy={busy} />
+
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                marginTop: 18,
+                marginBottom: 2,
+              }}
+            >
+              <View
+                style={{
+                  flex: 1,
+                  height: 1,
+                  backgroundColor: 'rgba(255,255,255,0.10)',
+                }}
+              />
+              <AppText
+                style={{
+                  color: colors.dim,
+                  fontSize: 11,
+                  fontWeight: '900',
+                }}
+              >
+                OR
+              </AppText>
+              <View
+                style={{
+                  flex: 1,
+                  height: 1,
+                  backgroundColor: 'rgba(255,255,255,0.10)',
+                }}
+              />
+            </View>
+
+            <ProviderButton
+              label="Continue with Google"
+              icon="G"
+              onPress={onGoogleSignIn}
+              busy={busy}
+            />
+
+            {Platform.OS === 'ios' && (
+              <ProviderButton
+                label="Continue with Apple"
+                icon=""
+                onPress={onAppleSignIn}
+                busy={false}
+                disabled={busy}
+                dark
+              />
+            )}
+          </View>
+
+          <AppText
+            numberOfLines={2}
+            style={{
+              color: 'rgba(255,255,255,0.34)',
+              fontSize: 11,
+              lineHeight: 16,
+              textAlign: 'center',
+              marginTop: 16,
+            }}
+          >
+            Free includes all sports and unlimited local recording.
+          </AppText>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

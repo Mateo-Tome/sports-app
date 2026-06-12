@@ -35,7 +35,8 @@
           "microphonePermission": "Allow QuickClip to access your microphone to record match audio."
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "@react-native-google-signin/google-signin"
     ],
     "ios": {
       "supportsTablet": true,
