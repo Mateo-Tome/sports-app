@@ -1,4 +1,5 @@
 // components/overlays/BaseballPitchingOverlay.tsx
+import { isTabletSize } from '@/lib/ui/device';
 import React from 'react';
 import { TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,16 +33,19 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
 
-  const EDGE_L = insets.left + 10;
-  const EDGE_R = insets.right + 10;
-  const TOP = insets.top + 52;
-  const BOTTOM = insets.bottom + 92;
+  const isIPad = isTabletSize(screenW, screenH);
+
+  // Phone values stay EXACTLY the same.
+  const EDGE_L = insets.left + (isIPad ? 24 : 10);
+  const EDGE_R = insets.right + (isIPad ? 24 : 10);
+  const TOP = insets.top + (isIPad ? 120 : 52);
+  const BOTTOM = insets.bottom + (isIPad ? 122 : 92);
 
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
   const ROWS = 3;
-  const GAP = 10;
+  const GAP = isIPad ? 16 : 10;
   const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
-  const SIZE = Math.max(44, Math.min(70, maxSize));
+  const SIZE = Math.max(isIPad ? 64 : 44, Math.min(isIPad ? 92 : 70, maxSize));
   const BTN_SIZE = Math.round(SIZE * 0.75);
 
   const [balls, setBalls] = React.useState(0);
@@ -286,7 +290,7 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
         paddingHorizontal: 4,
       }}
     >
-      <OverlayCompactText style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
+      <OverlayCompactText style={{ color: 'white', fontSize: isIPad ? 16 : 14, fontWeight: '800' }}>
         {label}
       </OverlayCompactText>
     </TouchableOpacity>
@@ -412,7 +416,6 @@ export default function BaseballPitchingOverlay({ isRecording, onEvent }: Overla
           onDone={() => setToast(null)}
         />
       ) : null}
-      
 
       <LeftStackPitching />
       <RightStackPitching />

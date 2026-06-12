@@ -1,5 +1,6 @@
 // components/overlays/volleyball/VolleyballOverlay.tsx
 
+import { isTabletSize } from '@/lib/ui/device';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,6 +49,7 @@ function CircleButton({
   onPress,
   disabled,
   lit,
+  size,
 }: {
   label: string;
   subLabel?: string;
@@ -55,6 +57,7 @@ function CircleButton({
   onPress: () => void;
   disabled?: boolean;
   lit?: boolean;
+  size: number;
 }) {
   return (
     <Pressable
@@ -62,38 +65,36 @@ function CircleButton({
       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
       pressRetentionOffset={{ top: 18, bottom: 18, left: 18, right: 18 }}
       style={{
-        width: 58,
-        height: 58,
-        borderRadius: 29,
-      
-        // cleaner look
-        backgroundColor: lit
-          ? 'rgba(255,255,255,0.10)'
-          : 'transparent',
-      
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+
+        backgroundColor: lit ? 'rgba(255,255,255,0.10)' : 'transparent',
+
         borderWidth: 2,
         borderColor: ringColor,
-      
+
         alignItems: 'center',
         justifyContent: 'center',
-      
+
         opacity: disabled ? 0.35 : 1,
-      
+
         transform: [{ scale: lit ? 1.02 : 1 }],
-      
-        // much lighter shadow
+
         shadowColor: '#000',
         shadowOpacity: lit ? 0.2 : 0,
         shadowOffset: { width: 0, height: 2 },
         shadowRadius: lit ? 4 : 0,
         elevation: lit ? 2 : 0,
-      
+
         overflow: 'hidden',
-      
+
         paddingHorizontal: 4,
       }}
     >
-      <OverlayCompactText style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+      <OverlayCompactText
+        style={{ color: 'white', fontWeight: '900', fontSize: size >= 70 ? 16 : 14 }}
+      >
         {label}
       </OverlayCompactText>
 
@@ -102,7 +103,7 @@ function CircleButton({
           style={{
             color: lit ? 'rgba(255,255,255,0.92)' : TEXT_DIM,
             fontWeight: '800',
-            fontSize: 10,
+            fontSize: size >= 70 ? 11 : 10,
             marginTop: 1,
           }}
         >
@@ -160,6 +161,7 @@ export default function VolleyballOverlay({
   const insets = useSafeAreaInsets();
   const dims = useWindowDimensions();
   const isLandscape = dims.width > dims.height;
+  const isIPad = isTabletSize(dims.width, dims.height);
 
   const [passChooserOpen, setPassChooserOpen] = useState(false);
 
@@ -295,8 +297,8 @@ export default function VolleyballOverlay({
     onEvent?.(evt);
   };
 
-  const BTN = 58;
-  const GAP = 10;
+  const BTN = isIPad ? 78 : 58;
+  const GAP = isIPad ? 16 : 10;
   const COLS = 2;
 
   const leftWidth = COLS * BTN + (COLS - 1) * GAP;
@@ -308,8 +310,11 @@ export default function VolleyballOverlay({
   const leftHeight = LEFT_ROWS * BTN + (LEFT_ROWS - 1) * GAP;
   const rightHeight = RIGHT_ROWS * BTN + (RIGHT_ROWS - 1) * GAP;
 
-  const GRID_TOP = isLandscape ? insets.top + 28 : insets.top + 72;
-  const SIDE_PAD = isLandscape ? 18 : 12;
+  const GRID_TOP = isLandscape
+    ? insets.top + (isIPad ? 52 : 28)
+    : insets.top + (isIPad ? 96 : 72);
+
+  const SIDE_PAD = isIPad ? 24 : isLandscape ? 18 : 12;
 
   return (
     <View
@@ -324,7 +329,6 @@ export default function VolleyballOverlay({
         elevation: 9999,
       }}
     >
-      {/* Live stats pill */}
       <View
         pointerEvents="none"
         style={{
@@ -397,7 +401,6 @@ export default function VolleyballOverlay({
         </Animated.View>
       ) : null}
 
-      {/* Left grid */}
       <View
         pointerEvents="box-none"
         style={{
@@ -425,6 +428,7 @@ export default function VolleyballOverlay({
               ringColor={b.color}
               disabled={disableTaps}
               lit={litId === b.id}
+              size={BTN}
               onPress={() => {
                 if (disableTaps) return;
                 emit(b.key, b.label, b.value, b.color, { kind: b.kind }, b.action, b.id);
@@ -434,7 +438,6 @@ export default function VolleyballOverlay({
         </View>
       </View>
 
-      {/* Right grid */}
       <View
         pointerEvents="box-none"
         style={{
@@ -464,6 +467,7 @@ export default function VolleyballOverlay({
               ringColor={b.color}
               disabled={disableTaps}
               lit={litId === b.id}
+              size={BTN}
               onPress={() => {
                 if (disableTaps) return;
 
@@ -481,7 +485,6 @@ export default function VolleyballOverlay({
         </View>
       </View>
 
-      {/* Pass rating chooser */}
       {passChooserOpen ? (
         <Pressable
           onPress={() => setPassChooserOpen(false)}

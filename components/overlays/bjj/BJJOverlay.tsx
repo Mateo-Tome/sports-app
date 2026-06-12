@@ -1,5 +1,6 @@
 // components/overlays/bjj/BJJOverlay.tsx
 
+import { isTabletSize } from '@/lib/ui/device';
 import React from 'react';
 import {
   Animated,
@@ -83,17 +84,19 @@ export default function BJJOverlay({
   const dims = useWindowDimensions();
   const { width: screenW, height: screenH } = dims;
   const isPortrait = screenH >= screenW;
+  const isIPad = isTabletSize(screenW, screenH);
 
-  const EDGE_L = insets.left + 10;
-  const EDGE_R = insets.right + 10;
-  const TOP = insets.top + 52;
-  const BOTTOM = insets.bottom + 92;
+  // Phone values stay EXACTLY the same.
+  const EDGE_L = insets.left + (isIPad ? 24 : 10);
+  const EDGE_R = insets.right + (isIPad ? 24 : 10);
+  const TOP = insets.top + (isIPad ? 120 : 52);
+  const BOTTOM = insets.bottom + (isIPad ? 122 : 92);
 
   const availableHeight = Math.max(0, dims.height - TOP - BOTTOM);
   const ROWS = 4;
-  const GAP = 10;
+  const GAP = isIPad ? 16 : 10;
   const maxSize = Math.floor((availableHeight - (ROWS - 1) * GAP) / ROWS);
-  const SIZE = Math.max(34, Math.min(58, maxSize));
+  const SIZE = Math.max(isIPad ? 50 : 34, Math.min(isIPad ? 76 : 58, maxSize));
   const COLS = 2;
   const COL_W = COLS * SIZE + (COLS - 1) * GAP;
 
@@ -202,7 +205,9 @@ export default function BJJOverlay({
         paddingHorizontal: 4,
       }}
     >
-      <OverlayCompactText style={{ color: 'white', fontSize: 12, fontWeight: '900' }}>
+      <OverlayCompactText
+        style={{ color: 'white', fontSize: isIPad ? 14 : 12, fontWeight: '900' }}
+      >
         {shortLabel}
       </OverlayCompactText>
     </TouchableOpacity>
@@ -303,7 +308,6 @@ export default function BJJOverlay({
       pointerEvents="box-none"
       style={{ position: 'absolute', left: 0, right: 0, top: TOP, bottom: BOTTOM }}
     >
-      {/* Controls row */}
       <View style={{ position: 'absolute', top: -36, left: 0, right: 0 }} pointerEvents="box-none">
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
           <TouchableOpacity
@@ -341,7 +345,6 @@ export default function BJJOverlay({
         </View>
       </View>
 
-      {/* Finish marker */}
       <View style={{ position: 'absolute', top: -36, right: EDGE_R }} pointerEvents="box-none">
         <TouchableOpacity
           disabled={!isRecording}
