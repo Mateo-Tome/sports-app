@@ -2,10 +2,6 @@
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  GoogleSignin,
-  statusCodes,
-} from '@react-native-google-signin/google-signin';
 import { router } from 'expo-router';
 import {
   EmailAuthProvider,
@@ -177,10 +173,18 @@ export default function SignInScreen() {
   const isAnon = !!auth.currentUser?.isAnonymous;
 
   useEffect(() => {
-    GoogleSignin.configure({
-      webClientId: GOOGLE_WEB_CLIENT_ID,
-      offlineAccess: false,
-    });
+    try {
+      const { GoogleSignin } = require(
+        '@react-native-google-signin/google-signin'
+      );
+
+      GoogleSignin.configure({
+        webClientId: GOOGLE_WEB_CLIENT_ID,
+        offlineAccess: false,
+      });
+    } catch {
+      console.log('Google Sign-In native module not available in this build.');
+    }
   }, []);
 
   useEffect(() => {
@@ -238,6 +242,19 @@ export default function SignInScreen() {
     resetError();
     setBusy(true);
 
+    let GoogleSignin: any;
+    let statusCodes: any;
+
+    try {
+      const google = require('@react-native-google-signin/google-signin');
+      GoogleSignin = google.GoogleSignin;
+      statusCodes = google.statusCodes;
+    } catch {
+      setErr('Google Sign-In is not available in this iOS build yet.');
+      setBusy(false);
+      return;
+    }
+
     try {
       if (Platform.OS === 'android') {
         await GoogleSignin.hasPlayServices({
@@ -278,7 +295,7 @@ export default function SignInScreen() {
 
       goToApp();
     } catch (e: any) {
-      if (e?.code === statusCodes.SIGN_IN_CANCELLED) return;
+      if (e?.code === statusCodes?.SIGN_IN_CANCELLED) return;
       setErr(e?.message ?? 'Google sign-in failed.');
     } finally {
       setBusy(false);
