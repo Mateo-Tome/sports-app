@@ -35,6 +35,9 @@ const GUEST_OK_KEY = 'guest_ok';
 const GOOGLE_WEB_CLIENT_ID =
   '149278395589-fvs4adqfascj8cntgndod3u4gaokssni.apps.googleusercontent.com';
 
+  const GOOGLE_IOS_CLIENT_ID =
+  '149278395589-9kivu7054ffsann7f433tootouc6bmhv.apps.googleusercontent.com';
+
 const colors = {
   bg: '#050507',
   card: '#101014',
@@ -180,6 +183,7 @@ export default function SignInScreen() {
 
       GoogleSignin.configure({
         webClientId: GOOGLE_WEB_CLIENT_ID,
+        iosClientId: GOOGLE_IOS_CLIENT_ID,
         offlineAccess: false,
       });
     } catch {

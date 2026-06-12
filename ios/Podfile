@@ -1,4 +1,3 @@
-# 🚩 CRITICAL FIX: Tell ffmpeg-kit-react-native which package to use
 ENV['FFMPEG_KIT_PACKAGE'] = 'full'
 
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
@@ -19,13 +18,12 @@ prepare_react_native_project!
 target 'QuickClip' do
   use_expo_modules!
 
-  # ✅ 1) Your custom FULL iOS podspec (KEEP THIS)
+  pod 'GoogleUtilities', :modular_headers => true
+  pod 'RecaptchaInterop', :modular_headers => true
+
   pod 'ffmpeg-kit-ios-full',
       :podspec => 'https://raw.githubusercontent.com/Mateo-Tome/ffmpeg-kit-ios-full/main/ffmpeg-kit-ios-full.podspec'
 
-  # ✅ 2) Force the RN wrapper to use FULL
-  # NOTE: This only works correctly if autolinking does NOT also add ffmpeg-kit-react-native.
-  # In your case it is NOT autolinking (Podfile.lock had no ffmpeg), so this is correct.
   pod 'ffmpeg-kit-react-native',
       :path => '../node_modules/ffmpeg-kit-react-native',
       :subspecs => ['full']
@@ -63,7 +61,6 @@ target 'QuickClip' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
-    # Xcode signs resource bundles by default for devices; disable for pods.
     installer.target_installation_results.pod_target_installation_results
       .each do |pod_name, target_installation_result|
       target_installation_result.resource_bundle_targets.each do |resource_bundle_target|
