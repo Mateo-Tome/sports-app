@@ -23,7 +23,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth, ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 import { getCloudAthletes } from '../../src/hooks/athletes/cloudAthletes';
 
 import AthleteCard from '../../src/components/AthleteCard';
@@ -104,8 +104,9 @@ function makeAthleteId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function getActiveUid(): Promise<string> {
-  const u = await ensureAnonymous();
+async function getActiveUid(): Promise<string | null> {
+  const u = auth.currentUser ?? (await authReady());
+  if (!u || u.isAnonymous) return null;
   return u.uid;
 }
 
@@ -288,6 +289,12 @@ export default function HomeAthletes() {
   const loadLocal = useCallback(async (useUid?: string | null) => {
     try {
       const effectiveUid = useUid ?? (await getActiveUid());
+
+      if (!effectiveUid) {
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       const key = athletesKey(effectiveUid);
 
       const raw = await AsyncStorage.getItem(key);
@@ -435,7 +442,12 @@ export default function HomeAthletes() {
 
     const unsub = onAuthStateChanged(auth, async (user) => {
       try {
-        const u = user ?? (await ensureAnonymous());
+        if (!user || user.isAnonymous) {
+          router.replace('/(auth)/sign-in');
+          return;
+        }
+
+        const u = user;
         setUid(u.uid);
 
         const key = athletesKey(u.uid);
@@ -469,6 +481,12 @@ export default function HomeAthletes() {
 
   const saveAthletes = async (list: Athlete[]) => {
     const effectiveUid = uid ?? (await getActiveUid());
+
+    if (!effectiveUid) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
     const key = athletesKey(effectiveUid);
 
     const now = Date.now();
@@ -603,38 +621,47 @@ export default function HomeAthletes() {
         : a
     );
 
-
     await saveAthletes(next);
   };
 
   const deleteAthleteShell = async (id: string) => {
     const effectiveUid = uid ?? (await getActiveUid());
-  
+
+    if (!effectiveUid) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
     await rememberDeletedAthlete(effectiveUid, id);
-  
+
     const next = athletes.filter((a) => a.id !== id);
     await saveAthletes(next);
-  
+
     const curNameKey = currentAthleteKey(effectiveUid);
     const curIdKey = currentAthleteIdKey(effectiveUid);
-  
+
     const currentName = await AsyncStorage.getItem(curNameKey);
     const currentId = await AsyncStorage.getItem(curIdKey);
-  
+
     if (currentId && !next.find((a) => a.id === currentId)) {
       await AsyncStorage.removeItem(curIdKey);
       await AsyncStorage.removeItem(curNameKey);
       return;
     }
-  
+
     if (currentName && !next.find((a) => a.name === currentName)) {
       await AsyncStorage.removeItem(curNameKey);
     }
   };
 
-
   const recordNoAthlete = async () => {
     const effectiveUid = uid ?? (await getActiveUid());
+
+    if (!effectiveUid) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
     await AsyncStorage.removeItem(currentAthleteKey(effectiveUid));
     await AsyncStorage.removeItem(currentAthleteIdKey(effectiveUid));
 
@@ -664,7 +691,12 @@ export default function HomeAthletes() {
       String((found as any)?.name ?? (typeof value === 'string' ? value : '')).trim() ||
       'Unassigned';
 
-    const effectiveUid = uid ?? (await getActiveUid());
+      const effectiveUid = uid ?? (await getActiveUid());
+
+    if (!effectiveUid) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
 
     await AsyncStorage.setItem(currentAthleteKey(effectiveUid), athleteName);
 

@@ -21,7 +21,7 @@ import AddExistingVideoButton from '../../components/recording/AddExistingVideoB
 import AthletePickerOverlay from '../../components/recording/AthletePickerOverlay';
 import pickVideoFromPhotos from '../../lib/imports/pickVideoFromPhotos';
 
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 
 const SPORTS = ['Wrestling', 'Basketball', 'Baseball', 'Softball', 'Swimming', 'Volleyball', 'BJJ'] as const;
 
@@ -47,8 +47,9 @@ function makeAthleteId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function getActiveUid(): Promise<string> {
-  const u = await ensureAnonymous();
+async function getActiveUid(): Promise<string | null> {
+  const u = auth.currentUser ?? (await authReady());
+  if (!u || u.isAnonymous) return null;
   return u.uid;
 }
 
@@ -150,6 +151,12 @@ export default function RecordingScreen() {
   const loadAthletes = useCallback(async () => {
     try {
       const uid = await getActiveUid();
+
+      if (!uid) {
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       const key = athletesKey(uid);
 
       const raw = await AsyncStorage.getItem(key);
@@ -157,16 +164,16 @@ export default function RecordingScreen() {
 
       const safeList: Athlete[] = Array.isArray(list)
         ? list
-            .map((a: any) => ({
-              id: String(a?.id ?? '').trim(),
-              name: String(a?.name ?? '').trim(),
-              photoUri: safeStr(a?.photoUri),
-              photoLocalUri: safeStr(a?.photoLocalUri),
-              photoUrl: safeStr(a?.photoUrl),
-              photoKey: safeStr(a?.photoKey),
-              photoUpdatedAt: safeNum(a?.photoUpdatedAt),
-            }))
-            .filter((a) => a.id && a.name)
+          .map((a: any) => ({
+            id: String(a?.id ?? '').trim(),
+            name: String(a?.name ?? '').trim(),
+            photoUri: safeStr(a?.photoUri),
+            photoLocalUri: safeStr(a?.photoLocalUri),
+            photoUrl: safeStr(a?.photoUrl),
+            photoKey: safeStr(a?.photoKey),
+            photoUpdatedAt: safeNum(a?.photoUpdatedAt),
+          }))
+          .filter((a) => a.id && a.name)
         : [];
 
       let changed = false;
@@ -223,7 +230,7 @@ export default function RecordingScreen() {
 
           try {
             router.setParams({ athleteId: match.id });
-          } catch {}
+          } catch { }
         }
       }
     } catch (e) {
@@ -351,7 +358,7 @@ export default function RecordingScreen() {
         athlete: clean,
         athleteId: nextId,
       });
-    } catch {}
+    } catch { }
   };
 
   const addAthleteFromPicker = async () => {
@@ -361,6 +368,12 @@ export default function RecordingScreen() {
 
     try {
       const uid = await getActiveUid();
+
+      if (!uid) {
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       const key = athletesKey(uid);
       const id = makeAthleteId();
 
@@ -383,7 +396,7 @@ export default function RecordingScreen() {
           athlete: n,
           athleteId: id,
         });
-      } catch {}
+      } catch { }
 
       setNewName('');
       setPickerOpen(false);

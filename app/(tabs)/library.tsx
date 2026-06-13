@@ -29,7 +29,7 @@ import {
 } from '../../components/library/LibraryVideoRow';
 
 import { deleteCloudVideo } from '../../lib/backend';
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 import { buildLibraryRows } from '../../lib/library/buildLibraryRows';
 import {
   assignClipToGame,
@@ -205,7 +205,13 @@ export default function LibraryScreen() {
     setRows(filtered);
 
     try {
-      const u = await ensureAnonymous();
+      const u = auth.currentUser ?? (await authReady());
+
+      if (!u || u.isAnonymous) {
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       const raw = await AsyncStorage.getItem(athletesKey(u.uid));
       setAthleteList(raw ? (JSON.parse(raw) as Athlete[]) : []);
     } catch {
@@ -639,7 +645,13 @@ export default function LibraryScreen() {
         setAthleteList(nextList);
 
         try {
-          const u = await ensureAnonymous();
+          const u = auth.currentUser ?? (await authReady());
+
+          if (!u || u.isAnonymous) {
+            router.replace('/(auth)/sign-in');
+            return;
+          }
+          
           await AsyncStorage.setItem(athletesKey(u.uid), JSON.stringify(nextList));
         } catch { }
       }

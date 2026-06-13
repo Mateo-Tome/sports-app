@@ -36,13 +36,19 @@
         }
       ],
       "expo-notifications",
-      "@react-native-google-signin/google-signin"
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.149278395589-9kivu7054ffsann7f433tootouc6bmhv"
+        }
+      ]
     ],
     "ios": {
       "supportsTablet": true,
       "requireFullScreen": true,
       "bundleIdentifier": "com.mateotome2133.sportapp",
       "buildNumber": "28",
+      "googleServicesFile": "./ios/GoogleService-Info.plist",
       "associatedDomains": [
         "applinks:quickclipapp.com",
         "applinks:www.quickclipapp.com"
@@ -67,6 +73,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.mateotome2133.sportapp",
+      "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ],

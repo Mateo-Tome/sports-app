@@ -29,6 +29,7 @@
         <array>
           <string>quickclip</string>
           <string>com.mateotome2133.sportapp</string>
+          <string>com.googleusercontent.apps.149278395589-9kivu7054ffsann7f433tootouc6bmhv</string>
         </array>
       </dict>
       <dict>
@@ -69,13 +70,10 @@
     <array>
       <string>arm64</string>
     </array>
-
     <key>UIRequiresFullScreen</key>
     <true/>
-
     <key>UIStatusBarStyle</key>
     <string>UIStatusBarStyleDefault</string>
-
     <key>UISupportedInterfaceOrientations</key>
     <array>
       <string>UIInterfaceOrientationPortrait</string>
@@ -83,7 +81,6 @@
       <string>UIInterfaceOrientationLandscapeLeft</string>
       <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
-
     <key>UISupportedInterfaceOrientations~ipad</key>
     <array>
       <string>UIInterfaceOrientationPortrait</string>
@@ -91,7 +88,6 @@
       <string>UIInterfaceOrientationLandscapeLeft</string>
       <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
-
     <key>UIUserInterfaceStyle</key>
     <string>Automatic</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
