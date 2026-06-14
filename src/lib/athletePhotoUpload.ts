@@ -1,6 +1,6 @@
 // src/lib/athletePhotoUpload.ts
 import * as FileSystem from 'expo-file-system';
-import { auth, ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 
 const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
 
@@ -12,20 +12,15 @@ function mustBaseUrl() {
 type UploadUrlResp = {
   uploadUrl: string;
   uploadAuthToken: string;
-
-  // B2 object key/name (stable)
   fileName: string;
-
-  // legacy: tokened url (may expire)
   photoUrl: string;
-
   expiresInSec?: number;
   photoKey?: string | null;
 };
 
 export async function uploadAthleteProfilePhotoToB2(params: {
   athleteId: string;
-  localFileUri: string; // file://... (documentDirectory)
+  localFileUri: string;
 }): Promise<{
   photoKey: string;
   photoUrl: string;
@@ -33,13 +28,13 @@ export async function uploadAthleteProfilePhotoToB2(params: {
 }> {
   const { athleteId, localFileUri } = params;
 
-  // Ensure we have a Firebase user (anon is fine), but don't create anon during restore window
-  await ensureAnonymous();
+  const user = auth.currentUser ?? (await authReady());
 
-  // IMPORTANT: use the SAME auth instance as the rest of the app
-  const user = auth.currentUser;
-  const idToken = user ? await user.getIdToken() : null;
-  if (!idToken) throw new Error('Not authenticated');
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required.');
+  }
+
+  const idToken = await user.getIdToken();
 
   const base = mustBaseUrl();
   const url = `${base}/getAthletePhotoUploadUrl?athleteId=${encodeURIComponent(athleteId)}`;
@@ -54,7 +49,10 @@ export async function uploadAthleteProfilePhotoToB2(params: {
     details?: string;
   };
 
-  if (!r.ok) throw new Error(j?.error || j?.details || `getAthletePhotoUploadUrl failed (${r.status})`);
+  if (!r.ok) {
+    throw new Error(j?.error || j?.details || `getAthletePhotoUploadUrl failed (${r.status})`);
+  }
+
   if (!j.uploadUrl || !j.uploadAuthToken || !j.fileName || !j.photoUrl) {
     throw new Error('Bad response from getAthletePhotoUploadUrl (missing fields)');
   }

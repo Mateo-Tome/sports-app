@@ -3,7 +3,7 @@ import * as VideoThumbnails from "expo-video-thumbnails";
 import { addDoc, collection, getFirestore } from "firebase/firestore";
 
 import { testGetUploadUrl } from "../backend";
-import { app, auth, ensureAnonymous } from "../firebase";
+import { app, auth, authReady } from "../firebase";
 import { computeSportColor } from "../sportColors/computeSportColor";
 import {
   UploadCancelledError,
@@ -44,10 +44,14 @@ export type UploadClipToCloudResult = {
   url: string;
 };
 
-async function getCurrentOrAnonUser() {
-  const current = auth.currentUser;
-  if (current) return current;
-  return await ensureAnonymous();
+async function getSignedInUserForUpload() {
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error("Sign in required to upload.");
+  }
+
+  return user;
 }
 
 function randomShareId(length = 12): string {
@@ -283,7 +287,7 @@ export async function uploadClipToCloud({
   try {
     onProgress?.({ phase: "preparing", message: "Preparing clip…" });
 
-    const user = await getCurrentOrAnonUser();
+    const user = await getSignedInUserForUpload();
     const now = Date.now();
     const shareId = randomShareId();
 

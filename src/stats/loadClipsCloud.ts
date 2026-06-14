@@ -1,5 +1,3 @@
-// src/stats/loadClipsCloud.ts
-
 import {
   collection,
   getDocs,
@@ -10,7 +8,7 @@ import {
   where,
 } from 'firebase/firestore';
 
-import { app, auth, ensureAnonymous } from '../../lib/firebase';
+import { app, auth, authReady } from '../../lib/firebase';
 import { fetchClipSidecarByShareId } from './fetchSidecarByShareId';
 import type { ClipSidecar } from './types';
 
@@ -43,6 +41,16 @@ function cleanOrNull(v: any): string | null {
   return s.length ? s : null;
 }
 
+async function getSignedInUid(): Promise<string | null> {
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    return null;
+  }
+
+  return user.uid;
+}
+
 export async function loadClipsForAthleteFromCloud(
   athleteName: string,
   athleteId?: string | null,
@@ -52,9 +60,7 @@ export async function loadClipsForAthleteFromCloud(
 
   if (!cleanName && !cleanId) return [];
 
-  await ensureAnonymous();
-
-  const uid = auth.currentUser?.uid;
+  const uid = await getSignedInUid();
   if (!uid) return [];
 
   const db = getFirestore(app);

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 import {
   getCloudAthletes,
   setCloudAthletes,
@@ -48,8 +48,13 @@ function athletesKey(uid: string) {
   return `athletes:list:${uid}`;
 }
 
-async function getActiveUid() {
-  const u = await ensureAnonymous();
+async function getActiveUid(): Promise<string | null> {
+  const u = auth.currentUser ?? (await authReady());
+
+  if (!u || u.isAnonymous) {
+    return null;
+  }
+
   return u.uid;
 }
 
@@ -180,6 +185,11 @@ export default function ProfilePhotoCamera() {
 
     try {
       const uid = await getActiveUid();
+
+      if (!uid) {
+        Alert.alert('Sign in required', 'Please sign in before saving a profile photo.');
+        return;
+      }
 
       const savedUri = await persistAthleteProfilePhoto(previewUri, athleteId);
       const updatedAt = Date.now();

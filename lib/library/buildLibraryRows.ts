@@ -19,7 +19,7 @@ import './sportLibraryBitsInit';
 import { buildSportLibraryBits } from './sportLibraryStyleRegistry';
 
 // ✅ IMPORTANT: use the same UID-scoped athlete list as Athletes tab
-import { ensureAnonymous } from '../firebase';
+import { auth, authReady } from '../firebase';
 
 const UPLOADED_MAP_KEY = 'uploaded:map';
 
@@ -229,15 +229,19 @@ export async function buildLibraryRows(): Promise<{
   let athleteList: Athlete[] = [];
 
   try {
-    const u = await ensureAnonymous();
-
-    const raw = await AsyncStorage.getItem(
-      athletesKey(u.uid),
-    );
-
-    athleteList = raw
-      ? (JSON.parse(raw) as Athlete[])
-      : [];
+    const u = auth.currentUser ?? (await authReady());
+  
+    if (!u || u.isAnonymous) {
+      athleteList = [];
+    } else {
+      const raw = await AsyncStorage.getItem(
+        athletesKey(u.uid),
+      );
+  
+      athleteList = raw
+        ? (JSON.parse(raw) as Athlete[])
+        : [];
+    }
   } catch {
     athleteList = [];
   }

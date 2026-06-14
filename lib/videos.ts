@@ -10,7 +10,7 @@ import {
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import { app, ensureAnonymous } from './firebase';
+import { app, auth, authReady } from './firebase';
 
 export type LibraryStyle = {
   edgeColor?: string | null;
@@ -94,7 +94,7 @@ function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
       typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
 
     hittingLabel: data.hittingLabel ?? null,
-    pitchingLabel: data.pitchingLabel ?? null,
+    pitchingLabel: data.pitchtingLabel ?? null,
 
     b2VideoKey: data.b2VideoKey ?? null,
     b2SidecarKey: data.b2SidecarKey ?? null,
@@ -117,7 +117,12 @@ export async function fetchMyVideosPage(params?: {
   pageSize?: number;
   cursor?: VideoPageCursor;
 }): Promise<FetchMyVideosPageResult> {
-  const user = await ensureAnonymous();
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required.');
+  }
+
   const db = getFirestore(app);
 
   const pageSize = Math.max(1, params?.pageSize ?? 20);

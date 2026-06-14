@@ -30,7 +30,7 @@ const GET_THUMBNAIL_URL =
 async function getFreshIdToken() {
   const user = auth.currentUser;
   if (!user) {
-    throw new Error("No Firebase user (sign in or call ensureAnonymous first).");
+    throw new Error("No Firebase user. Sign in first.");
   }
   return await user.getIdToken(true);
 }

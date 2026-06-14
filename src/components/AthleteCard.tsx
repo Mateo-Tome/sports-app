@@ -10,9 +10,7 @@ import {
 } from 'react-native';
 
 import * as FileSystem from 'expo-file-system';
-import { getAuth } from 'firebase/auth';
-
-import { ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 
 import type { Athlete } from '../lib/athleteTypes';
 export type { Athlete };
@@ -69,11 +67,11 @@ async function fileInfo(uri: string) {
 }
 
 async function getSignedPhotoUrl(photoKey: string): Promise<{ photoUrl: string; expiresInSec?: number } | null> {
-  await ensureAnonymous();
+  const user = auth.currentUser ?? (await authReady());
 
-  const user = getAuth().currentUser;
-  const idToken = user ? await user.getIdToken() : null;
-  if (!idToken) return null;
+  if (!user || user.isAnonymous) return null;
+
+  const idToken = await user.getIdToken();
 
   const base = mustBaseUrl();
   const url = `${base}/getAthletePhotoViewUrl?path=${encodeURIComponent(photoKey)}`;

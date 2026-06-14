@@ -12,10 +12,8 @@ import {
   type User,
 } from 'firebase/auth';
 
-// Namespace import so we can call getReactNativePersistence at runtime
 import * as AuthNS from 'firebase/auth';
 
-// ✅ Direct assignment ensures Expo can "find and replace" these during the build
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -25,50 +23,50 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Optional: Log an error in dev if keys are missing without crashing the whole app
 if (__DEV__ && !firebaseConfig.apiKey) {
   console.warn('Firebase configuration is missing. Check your .env file or EAS Secrets.');
 }
 
-// ✅ Initialize Firebase app ONCE
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// ✅ Initialize Auth ONCE with React Native persistence
 let auth: ReturnType<typeof getAuth>;
 
 try {
   auth = initializeAuth(app, {
-    // Your Firebase typings may not export getReactNativePersistence, so call it via namespace.
     persistence: (AuthNS as any).getReactNativePersistence(AsyncStorage),
   });
-} catch (e: any) {
-  // If Auth was already initialized (Fast Refresh / reload), reuse it
+} catch {
   auth = getAuth(app);
 }
 
 const db = getFirestore(app);
 const storage = getStorage(app);
 
-// ✅ Resolves once Firebase finishes restoring auth from persistence.
-// Prevents accidental guest creation during cold start restore window.
 let _authReady: Promise<User | null> | null = null;
 
 export function authReady(): Promise<User | null> {
   if (_authReady) return _authReady;
+
   _authReady = new Promise((resolve) => {
     const unsub = onAuthStateChanged(auth, (u) => {
       unsub();
       resolve(u);
     });
   });
+
   return _authReady;
 }
 
-/**
- * Ensure we have a Firebase user.
- * - If a user is already restored (real or anon), return it.
- * - If no user exists after restore completes, create an anonymous user.
- */
+export async function requireSignedInUser(): Promise<User> {
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required.');
+  }
+
+  return user;
+}
+
 export async function ensureAnonymous(): Promise<User> {
   const restored = auth.currentUser ?? (await authReady());
   if (restored) return restored;

@@ -1,28 +1,20 @@
-// src/stats/fetchSidecarByKey.ts
-import { auth, ensureAnonymous } from '../../lib/firebase';
+import { auth, authReady } from '../../lib/firebase';
 import type { ClipSidecar } from './types';
 
 const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
 
-/**
- * Fetch a sidecar JSON from B2 using a Cloud Function proxy.
- * We pass the B2 "key" (file path) like: videos/{uid}/{shareId}.json
- *
- * This does NOT download the video.
- */
 export async function fetchClipSidecarByKey(b2SidecarKey: string): Promise<ClipSidecar> {
   const key = String(b2SidecarKey ?? '').trim();
   if (!key) throw new Error('missing b2SidecarKey');
 
-  // Make sure we have a Firebase user (anon is fine), but don't create anon during restore window
-  await ensureAnonymous();
+  const user = auth.currentUser ?? (await authReady());
 
-  // IMPORTANT: use the SAME auth instance as the rest of the app
-  const user = auth.currentUser;
-  const idToken = user ? await user.getIdToken() : null;
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required.');
+  }
 
-  // If you already use EXPO_PUBLIC_FUNCTIONS_BASE_URL elsewhere (like AthleteCard), keep it consistent.
-  // Example: https://us-central1-sports-app-9efb3.cloudfunctions.net
+  const idToken = await user.getIdToken();
+
   const base =
     (FUNCTIONS_BASE_URL && FUNCTIONS_BASE_URL.trim()) ||
     'https://us-central1-sports-app-9efb3.cloudfunctions.net';
@@ -31,7 +23,7 @@ export async function fetchClipSidecarByKey(b2SidecarKey: string): Promise<ClipS
 
   const res = await fetch(url, {
     method: 'GET',
-    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+    headers: { Authorization: `Bearer ${idToken}` },
   });
 
   if (!res.ok) {
@@ -41,7 +33,6 @@ export async function fetchClipSidecarByKey(b2SidecarKey: string): Promise<ClipS
 
   const json = await res.json();
 
-  // Sidecar can be either the full JSON, or wrapped; normalize:
   const meta = (json?.meta ?? json?.data?.meta ?? json) as any;
   const events = (json?.events ?? json?.data?.events ?? meta?.events ?? []) as any[];
 

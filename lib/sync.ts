@@ -1,10 +1,5 @@
-// lib/sync.ts
-// Firebase Storage uploads for Expo (no native modules)
-// Exports: uploadFileOnTap(fileUri), uploadJSONOnTap(data, prefix?)
-
 import * as FileSystem from 'expo-file-system';
 
-// Firebase Storage helpers
 import {
   getDownloadURL,
   ref,
@@ -12,10 +7,8 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 
-// ✅ Reuse our shared Firebase setup (auth + storage)
-import { ensureAnonymous, storage } from './firebase';
+import { auth, authReady, storage } from './firebase';
 
-// ---------- utils ----------
 const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
 
 function yyyymmdd_hhmmss(d = new Date()) {
@@ -41,7 +34,7 @@ function baseName(p: string) {
 
 async function uriToBlob(uri: string): Promise<Blob> {
   const res = await fetch(uri);
-  // @ts-ignore - RN fetch polyfill in Expo supports blob()
+  // @ts-ignore
   const blob = await res.blob();
   return blob as Blob;
 }
@@ -54,19 +47,23 @@ function contentTypeFromName(name: string) {
   return 'application/octet-stream';
 }
 
-// ---------- auth helper ----------
-async function ensureAnonAuth() {
-  // Delegate to shared Firebase helper (with RN persistence)
-  await ensureAnonymous();
+async function requireSignedInUser() {
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required.');
+  }
+
+  return user;
 }
 
-// ---------- uploads ----------
 export async function uploadFileOnTap(
   localUri: string,
 ): Promise<{ key: string; url: string }> {
-  await ensureAnonAuth();
+  await requireSignedInUser();
 
   const info = await FileSystem.getInfoAsync(localUri);
+
   // @ts-ignore
   if (!(info as any)?.exists) {
     throw new Error(`File not found: ${localUri}`);
@@ -96,7 +93,7 @@ export async function uploadJSONOnTap(
   jsonData: unknown,
   prefix = 'sidecars/',
 ): Promise<{ key: string; url: string }> {
-  await ensureAnonAuth();
+  await requireSignedInUser();
 
   const stamp = yyyymmdd_hhmmss();
   const key = `${prefix}${stamp}.json`;

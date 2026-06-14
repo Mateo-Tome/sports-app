@@ -1,18 +1,16 @@
 // lib/firestoreClient.ts
 // Thin Firestore helpers for video metadata.
 
-import { app, ensureAnonymous } from './firebase';
 import {
-  getFirestore,
-  collection,
   addDoc,
+  collection,
   getDocs,
+  getFirestore,
   query,
-  where,
-  doc,
-  getDoc,
+  where
 } from 'firebase/firestore';
 import type { VideoDoc } from '../types/firestore';
+import { app, auth, authReady } from './firebase';
 
 const db = getFirestore(app);
 
@@ -29,7 +27,7 @@ function randomShareId(length = 12): string {
 
 /**
  * Create a VideoDoc for a newly uploaded video.
- * - Uses anonymous (or logged-in) Firebase user as ownerUid.
+ * - Uses the logged-in Firebase user as ownerUid.
  * - Stores storageKey so we can find the file later (Firebase or B2).
  */
 export async function createVideoDocFromUpload(opts: {
@@ -39,7 +37,12 @@ export async function createVideoDocFromUpload(opts: {
   style?: string;
   athleteId?: string;
 }): Promise<string> {
-  const user = await ensureAnonymous();
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error('Sign in required to upload videos.');
+  }
+
   const now = Date.now();
   const shareId = randomShareId();
 
@@ -68,12 +71,15 @@ export async function getVideoByShareId(
 ): Promise<(VideoDoc & { id: string }) | null> {
   const q = query(collection(db, 'videos'), where('shareId', '==', shareId));
   const snap = await getDocs(q);
+
   if (snap.empty) return null;
 
   const docSnap = snap.docs[0];
-  return { id: docSnap.id, ...(docSnap.data() as any) } as VideoDoc & {
-    id: string;
-  };
+
+  return {
+    id: docSnap.id,
+    ...(docSnap.data() as any),
+  } as VideoDoc & { id: string };
 }
 
 /**
@@ -86,7 +92,11 @@ export async function listVideosForUser(
   const snap = await getDocs(q);
 
   return snap.docs.map(
-    (d) => ({ id: d.id, ...(d.data() as any) } as VideoDoc & { id: string }),
+    (d) =>
+      ({
+        id: d.id,
+        ...(d.data() as any),
+      }) as VideoDoc & { id: string },
   );
 }
 

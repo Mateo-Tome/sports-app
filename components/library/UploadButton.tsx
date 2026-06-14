@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
 import { addDoc, collection, doc, getDoc, getFirestore } from "firebase/firestore";
 import { checkCloudUploadAllowed } from "../../lib/cloudUploadLimits";
-import { app, auth, ensureAnonymous } from "../../lib/firebase";
+import { app, auth, authReady } from "../../lib/firebase";
 
 import { testGetUploadUrl } from "../../lib/backend";
 import {
@@ -171,10 +171,14 @@ function randomShareId(length = 12): string {
   return out;
 }
 
-async function getCurrentOrAnonUser() {
-  const current = auth.currentUser;
-  if (current) return current;
-  return await ensureAnonymous();
+async function getSignedInUserForUpload() {
+  const user = auth.currentUser ?? (await authReady());
+
+  if (!user || user.isAnonymous) {
+    throw new Error("Sign in required to upload.");
+  }
+
+  return user;
 }
 
 function isOldStyle(p: Props): p is OldStyleProps {
@@ -413,7 +417,7 @@ export function UploadButton(props: Props) {
             let tempJsonPath: string | null = null;
 
             try {
-              const user = await getCurrentOrAnonUser();
+              const user = await getSignedInUserForUpload();
               const now = Date.now();
               const shareId = randomShareId();
 

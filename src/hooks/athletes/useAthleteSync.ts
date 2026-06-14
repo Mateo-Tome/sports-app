@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 
-import { ensureAnonymous } from '../../../lib/firebase';
+import { auth, authReady } from '../../../lib/firebase';
 import { uploadAthleteProfilePhotoToB2 } from '../../lib/athletePhotoUpload';
 import type { Athlete } from '../../lib/athleteTypes';
 import {
@@ -244,8 +244,8 @@ function toCloudPayload(list: Athlete[]): CloudAthlete[] {
     name: String(a?.name ?? '').trim(),
     updatedAt:
       typeof a?.updatedAt === 'number' &&
-      Number.isFinite(a.updatedAt) &&
-      a.updatedAt > 0
+        Number.isFinite(a.updatedAt) &&
+        a.updatedAt > 0
         ? a.updatedAt
         : Date.now(),
     photoKey: toStringOrNull(a?.photoKey),
@@ -267,7 +267,12 @@ export default function useAthleteSync(params: {
     setSyncing(true);
 
     try {
-      const user = await ensureAnonymous();
+      const user = auth.currentUser ?? (await authReady());
+
+      if (!user || user.isAnonymous) {
+        throw new Error('Sign in required to sync athletes.');
+      }
+
       const uid = user.uid;
 
       const localDeleted = await readLocalDeletedAthletes(uid);
