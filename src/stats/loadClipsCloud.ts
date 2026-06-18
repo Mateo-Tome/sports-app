@@ -78,9 +78,7 @@ export async function loadClipsForAthleteFromCloud(
     );
 
     snaps.push(await getDocs(byId));
-  }
-
-  if (cleanName) {
+  } else if (cleanName) {
     const byName = query(
       videosRef,
       where('ownerUid', '==', uid),
@@ -165,4 +163,5 @@ export async function loadVerifiedClipsForAthleteFromCloud(
   athleteId?: string | null,
 ): Promise<ClipSidecar[]> {
   return loadClipsForAthleteFromCloud(athleteName, athleteId);
+  
 }
