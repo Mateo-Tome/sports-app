@@ -1,9 +1,11 @@
 // app/(auth)/sign-in.tsx
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
 import {
   GoogleAuthProvider,
+  OAuthProvider,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   signInWithCredential,
@@ -261,11 +263,51 @@ export default function SignInScreen() {
     }
   };
 
-  const onAppleSignIn = () => {
-    Alert.alert(
-      'Apple Sign-In next',
-      'The Apple button is ready visually. We will wire the actual Apple login next.'
-    );
+  const onAppleSignIn = async () => {
+    resetError();
+
+    if (Platform.OS !== 'ios') {
+      setErr('Apple Sign-In is only available on iOS.');
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      const available = await AppleAuthentication.isAvailableAsync();
+
+      if (!available) {
+        setErr('Apple Sign-In is not available on this device.');
+        return;
+      }
+
+      const appleCredential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      if (!appleCredential.identityToken) {
+        throw new Error('Apple sign-in did not return an identity token.');
+      }
+
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({
+        idToken: appleCredential.identityToken,
+      });
+
+      await signInWithCredential(auth, credential);
+
+      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+
+      goToApp();
+    } catch (e: any) {
+      if (e?.code === 'ERR_REQUEST_CANCELED') return;
+      setErr(e?.message ?? 'Apple sign-in failed.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onSubmit = async () => {
@@ -589,7 +631,7 @@ export default function SignInScreen() {
                 label="Continue with Apple"
                 icon=""
                 onPress={onAppleSignIn}
-                busy={false}
+                busy={busy}
                 disabled={busy}
                 dark
               />
