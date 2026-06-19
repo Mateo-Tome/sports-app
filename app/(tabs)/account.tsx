@@ -303,21 +303,14 @@ export default function AccountScreen() {
   }, [user?.uid, isPro]);
 
   const accountState = useMemo(() => {
-    if (!user)
+    if (!user) {
       return {
         badge: 'SIGNED OUT',
         headline: 'Sign in to protect your clips',
-        detail: 'Use QuickClip as a guest, or create an account to keep your clips safer.',
+        detail: 'Create or sign in to an account to use cloud uploads, sync, sharing, and device access.',
         line: '',
       };
-
-    if (user.isAnonymous)
-      return {
-        badge: 'GUEST MODE',
-        headline: 'Guest mode active',
-        detail: 'You can record and use all sports. Sign in before switching devices.',
-        line: `Guest ID: ${shortUid(user.uid)}`,
-      };
+    }
 
     return {
       badge: 'SIGNED IN',
@@ -325,7 +318,7 @@ export default function AccountScreen() {
       detail: 'Your account is ready for cloud uploads, sync, and sharing.',
       line: maskEmail(user.email) || `User ID: ${shortUid(user.uid)}`,
     };
-  }, [user?.uid, user?.email, user?.isAnonymous]);
+  }, [user?.uid, user?.email]);
 
   const uploadText = usage
     ? `${Math.min(usage.cloudVideoCount, usage.freeMaxCloudVideos)} / ${usage.freeMaxCloudVideos}`
@@ -437,11 +430,8 @@ export default function AccountScreen() {
           )}
 
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-            {!user || user.isAnonymous ? (
-              <>
-                <Button label={user?.isAnonymous ? 'Create Account' : 'Sign In'} onPress={goToSignIn} />
-                <Button label="Not now" kind="ghost" onPress={() => router.back()} />
-              </>
+            {!user ? (
+              <Button label="Sign In" onPress={goToSignIn} />
             ) : (
               <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy} />
             )}

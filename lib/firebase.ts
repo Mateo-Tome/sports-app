@@ -8,7 +8,6 @@ import {
   getAuth,
   initializeAuth,
   onAuthStateChanged,
-  signInAnonymously,
   type User,
 } from 'firebase/auth';
 
@@ -64,14 +63,6 @@ export async function requireSignedInUser(): Promise<User> {
     throw new Error('Sign in required.');
   }
 
-  return user;
-}
-
-export async function ensureAnonymous(): Promise<User> {
-  const restored = auth.currentUser ?? (await authReady());
-  if (restored) return restored;
-
-  const { user } = await signInAnonymously(auth);
   return user;
 }
 

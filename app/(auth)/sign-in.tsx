@@ -1,13 +1,10 @@
 // app/(auth)/sign-in.tsx
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
-  EmailAuthProvider,
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
-  linkWithCredential,
   sendPasswordResetEmail,
   signInWithCredential,
   signInWithEmailAndPassword,
@@ -30,12 +27,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Mode = 'signin' | 'signup';
 
-const GUEST_OK_KEY = 'guest_ok';
-
 const GOOGLE_WEB_CLIENT_ID =
   '149278395589-fvs4adqfascj8cntgndod3u4gaokssni.apps.googleusercontent.com';
 
-  const GOOGLE_IOS_CLIENT_ID =
+const GOOGLE_IOS_CLIENT_ID =
   '149278395589-9kivu7054ffsann7f433tootouc6bmhv.apps.googleusercontent.com';
 
 const colors = {
@@ -173,8 +168,6 @@ export default function SignInScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
-  const isAnon = !!auth.currentUser?.isAnonymous;
-
   useEffect(() => {
     try {
       const { GoogleSignin } = require(
@@ -210,25 +203,6 @@ export default function SignInScreen() {
   const goToApp = () => router.replace('/(tabs)');
 
   const resetError = () => setErr(null);
-
-  async function linkAnonToEmailPassword(trimmedEmail: string, password: string) {
-    const u = auth.currentUser;
-    if (!u || !u.isAnonymous) return false;
-
-    const cred = EmailAuthProvider.credential(trimmedEmail, password);
-
-    try {
-      await linkWithCredential(u, cred);
-      await ensureUserDoc(u.uid);
-      return true;
-    } catch (e: any) {
-      if (String(e?.code) === 'auth/email-already-in-use') {
-        setErr('That email already has an account. Sign in instead.');
-        return false;
-      }
-      throw e;
-    }
-  }
 
   const validate = () => {
     const trimmedEmail = email.trim();
@@ -274,28 +248,9 @@ export default function SignInScreen() {
       }
 
       const credential = GoogleAuthProvider.credential(idToken);
-      const u = auth.currentUser;
-
-      if (u?.isAnonymous) {
-        try {
-          await linkWithCredential(u, credential);
-        } catch (e: any) {
-          const code = String(e?.code ?? '');
-          if (
-            code === 'auth/credential-already-in-use' ||
-            code === 'auth/email-already-in-use'
-          ) {
-            await signInWithCredential(auth, credential);
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        await signInWithCredential(auth, credential);
-      }
+      await signInWithCredential(auth, credential);
 
       if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-      await AsyncStorage.removeItem(GUEST_OK_KEY);
 
       goToApp();
     } catch (e: any) {
@@ -309,7 +264,7 @@ export default function SignInScreen() {
   const onAppleSignIn = () => {
     Alert.alert(
       'Apple Sign-In next',
-      'The Apple button is ready visually. We will wire the actual Apple login after Google is fully tested.'
+      'The Apple button is ready visually. We will wire the actual Apple login next.'
     );
   };
 
@@ -328,15 +283,11 @@ export default function SignInScreen() {
     try {
       if (mode === 'signin') {
         await signInWithEmailAndPassword(auth, trimmedEmail, pass);
-      } else if (isAnon) {
-        const ok = await linkAnonToEmailPassword(trimmedEmail, pass);
-        if (!ok) return;
       } else {
         await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
       }
 
       if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-      await AsyncStorage.removeItem(GUEST_OK_KEY);
 
       goToApp();
     } catch (e: any) {

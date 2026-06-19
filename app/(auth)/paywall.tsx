@@ -183,13 +183,9 @@ export default function PaywallScreen() {
     if (!access.isSignedIn) {
       return 'Sign in to unlock cloud storage, share links, and sync across devices.';
     }
-
-    if (access.isAnonymous) {
-      return 'Your guest session can be preserved after creating an account.';
-    }
-
+  
     return 'Upgrade for more cloud storage, share links, sync, and more devices.';
-  }, [access.isSignedIn, access.isAnonymous]);
+  }, [access.isSignedIn]);
 
   if (access.loading) {
     return (

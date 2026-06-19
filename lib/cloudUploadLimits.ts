@@ -1,11 +1,11 @@
 // lib/cloudUploadLimits.ts
 import { db } from '@/lib/firebase';
 import {
-    collection,
-    getDocs,
-    limit,
-    query,
-    where,
+  collection,
+  getDocs,
+  limit,
+  query,
+  where,
 } from 'firebase/firestore';
 
 const GB = 1024 * 1024 * 1024;
@@ -29,7 +29,7 @@ export async function checkCloudUploadAllowed(params: {
     return {
       ok: false,
       title: 'Sign in required',
-      message: 'Sign in or continue as guest before uploading.',
+      message: 'Sign in before uploading to the cloud.',
     };
   }
 
