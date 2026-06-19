@@ -20,13 +20,16 @@ async function mapLimit<T, R>(
   const out = new Array<R>(items.length);
   let nextIndex = 0;
 
-  const workers = Array.from({ length: Math.max(1, maxConcurrent) }, async () => {
-    while (true) {
-      const idx = nextIndex++;
-      if (idx >= items.length) return;
-      out[idx] = await fn(items[idx], idx);
-    }
-  });
+  const workers = Array.from(
+    { length: Math.max(1, maxConcurrent) },
+    async () => {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= items.length) return;
+        out[idx] = await fn(items[idx], idx);
+      }
+    },
+  );
 
   await Promise.all(workers);
   return out;
@@ -128,17 +131,13 @@ export async function loadClipsForAthleteFromCloud(
             ? (sc as any).createdAt
             : Date.now();
 
-      const clip: ClipSidecar = {
+      return {
         ...(sc as any),
-
         athlete: sidecarAthleteName,
         athleteName: sidecarAthleteName,
         athleteId: sidecarAthleteId,
-
         createdAt,
-      } as any;
-
-      return clip;
+      } as ClipSidecar;
     } catch (e) {
       console.log('[loadClipsForAthleteFromCloud] sidecar fetch failed', {
         shareId,
@@ -163,5 +162,4 @@ export async function loadVerifiedClipsForAthleteFromCloud(
   athleteId?: string | null,
 ): Promise<ClipSidecar[]> {
   return loadClipsForAthleteFromCloud(athleteName, athleteId);
-  
 }
