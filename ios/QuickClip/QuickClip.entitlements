@@ -7,5 +7,9 @@
 		<string>applinks:www.quickclipapp.com</string>
 		<string>applinks:quickclipapp.com</string>
 	</array>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

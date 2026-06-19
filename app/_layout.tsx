@@ -1,40 +1,39 @@
 // app/_layout.tsx
-import { authReady } from '@/lib/firebase';
+import { auth } from '@/lib/firebase';
 import { Stack, router, useSegments } from 'expo-router';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 export default function RootLayout() {
   const segments = useSegments();
-  const [ready, setReady] = useState(false);
+  const [user, setUser] = useState<User | null | undefined>(undefined);
 
   useEffect(() => {
-    let alive = true;
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
 
-    (async () => {
-      const user = await authReady();
+    return unsub;
+  }, []);
 
-      if (!alive) return;
+  useEffect(() => {
+    if (user === undefined) return;
 
-      const inAuthGroup = segments[0] === '(auth)';
+    const inAuthGroup = segments[0] === '(auth)';
+    const signedIn = !!user && !user.isAnonymous;
 
-      if (!user || user.isAnonymous) {
-        if (!inAuthGroup) {
-          router.replace('/(auth)/sign-in');
-        }
-      } else if (inAuthGroup) {
-        router.replace('/(tabs)');
-      }
+    if (!signedIn && !inAuthGroup) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
 
-      setReady(true);
-    })();
+    if (signedIn && inAuthGroup) {
+      router.replace('/(tabs)');
+    }
+  }, [user, segments]);
 
-    return () => {
-      alive = false;
-    };
-  }, [segments]);
-
-  if (!ready) {
+  if (user === undefined) {
     return (
       <View
         style={{
