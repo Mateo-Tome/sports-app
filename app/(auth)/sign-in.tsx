@@ -1,14 +1,10 @@
 // app/(auth)/sign-in.tsx
 import { auth } from '@/lib/firebase';
 import { ensureUserDoc } from '@/lib/userProfile';
-import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
 import {
-  GoogleAuthProvider,
-  OAuthProvider,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
-  signInWithCredential,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
 import React, { useEffect, useState } from 'react';
@@ -28,12 +24,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Mode = 'signin' | 'signup';
-
-const GOOGLE_WEB_CLIENT_ID =
-  '149278395589-fvs4adqfascj8cntgndod3u4gaokssni.apps.googleusercontent.com';
-
-const GOOGLE_IOS_CLIENT_ID =
-  '149278395589-9kivu7054ffsann7f433tootouc6bmhv.apps.googleusercontent.com';
 
 const colors = {
   bg: '#050507',
@@ -98,70 +88,6 @@ function AuthButton({
   );
 }
 
-function ProviderButton({
-  label,
-  icon,
-  onPress,
-  busy,
-  disabled,
-  dark = false,
-}: {
-  label: string;
-  icon: string;
-  onPress: () => void;
-  busy?: boolean;
-  disabled?: boolean;
-  dark?: boolean;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={busy || disabled}
-      activeOpacity={0.88}
-      style={{
-        height: 50,
-        borderRadius: 999,
-        backgroundColor: dark ? '#000000' : '#FFFFFF',
-        borderWidth: 1,
-        borderColor: dark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.12)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: busy || disabled ? 0.55 : 1,
-        marginTop: 10,
-      }}
-    >
-      {busy ? (
-        <ActivityIndicator color={dark ? 'white' : 'black'} />
-      ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <AppText
-            style={{
-              width: 24,
-              textAlign: 'center',
-              marginRight: 10,
-              fontSize: 19,
-              fontWeight: '900',
-              color: dark ? 'white' : 'black',
-            }}
-          >
-            {icon}
-          </AppText>
-
-          <AppText
-            style={{
-              color: dark ? 'white' : '#1f1f1f',
-              fontWeight: '800',
-              fontSize: 15,
-            }}
-          >
-            {label}
-          </AppText>
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-}
-
 export default function SignInScreen() {
   const [mode, setMode] = useState<Mode>('signup');
   const [email, setEmail] = useState('');
@@ -171,29 +97,14 @@ export default function SignInScreen() {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
-    try {
-      const { GoogleSignin } = require(
-        '@react-native-google-signin/google-signin'
-      );
-
-      GoogleSignin.configure({
-        webClientId: GOOGLE_WEB_CLIENT_ID,
-        iosClientId: GOOGLE_IOS_CLIENT_ID,
-        offlineAccess: false,
-      });
-    } catch {
-      console.log('Google Sign-In native module not available in this build.');
-    }
-  }, []);
-
-  useEffect(() => {
     const show = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => setKeyboardOpen(true)
+      () => setKeyboardOpen(true),
     );
+
     const hide = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => setKeyboardOpen(false)
+      () => setKeyboardOpen(false),
     );
 
     return () => {
@@ -218,98 +129,6 @@ export default function SignInScreen() {
     return null;
   };
 
-  const onGoogleSignIn = async () => {
-    resetError();
-    setBusy(true);
-
-    let GoogleSignin: any;
-    let statusCodes: any;
-
-    try {
-      const google = require('@react-native-google-signin/google-signin');
-      GoogleSignin = google.GoogleSignin;
-      statusCodes = google.statusCodes;
-    } catch {
-      setErr('Google Sign-In is not available in this iOS build yet.');
-      setBusy(false);
-      return;
-    }
-
-    try {
-      if (Platform.OS === 'android') {
-        await GoogleSignin.hasPlayServices({
-          showPlayServicesUpdateDialog: true,
-        });
-      }
-
-      const result = await GoogleSignin.signIn();
-      const idToken = result.data?.idToken;
-
-      if (!idToken) {
-        throw new Error('Google sign-in did not return an ID token.');
-      }
-
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
-
-      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-
-      goToApp();
-    } catch (e: any) {
-      if (e?.code === statusCodes?.SIGN_IN_CANCELLED) return;
-      setErr(e?.message ?? 'Google sign-in failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onAppleSignIn = async () => {
-    resetError();
-
-    if (Platform.OS !== 'ios') {
-      setErr('Apple Sign-In is only available on iOS.');
-      return;
-    }
-
-    setBusy(true);
-
-    try {
-      const available = await AppleAuthentication.isAvailableAsync();
-
-      if (!available) {
-        setErr('Apple Sign-In is not available on this device.');
-        return;
-      }
-
-      const appleCredential = await AppleAuthentication.signInAsync({
-        requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL,
-        ],
-      });
-
-      if (!appleCredential.identityToken) {
-        throw new Error('Apple sign-in did not return an identity token.');
-      }
-
-      const provider = new OAuthProvider('apple.com');
-      const credential = provider.credential({
-        idToken: appleCredential.identityToken,
-      });
-
-      await signInWithCredential(auth, credential);
-
-      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
-
-      goToApp();
-    } catch (e: any) {
-      if (e?.code === 'ERR_REQUEST_CANCELED') return;
-      setErr(e?.message ?? 'Apple sign-in failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const onSubmit = async () => {
     resetError();
 
@@ -329,7 +148,9 @@ export default function SignInScreen() {
         await createUserWithEmailAndPassword(auth, trimmedEmail, pass);
       }
 
-      if (auth.currentUser) await ensureUserDoc(auth.currentUser.uid);
+      if (auth.currentUser) {
+        await ensureUserDoc(auth.currentUser.uid);
+      }
 
       goToApp();
     } catch (e: any) {
@@ -362,8 +183,8 @@ export default function SignInScreen() {
   const title = mode === 'signup' ? 'Create account' : 'Sign in';
   const subtitle =
     mode === 'signup'
-      ? 'Save clips, athletes, events, and device access.'
-      : 'Welcome back to QuickClip.';
+      ? 'Use the same email and password on every device.'
+      : 'Sign in using the email and password you created for QuickClip.';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -428,6 +249,7 @@ export default function SignInScreen() {
             >
               {(['signup', 'signin'] as Mode[]).map((m) => {
                 const active = mode === m;
+
                 return (
                   <Pressable
                     key={m}
@@ -467,7 +289,7 @@ export default function SignInScreen() {
             </AppText>
 
             <AppText
-              numberOfLines={2}
+              numberOfLines={3}
               style={{
                 color: colors.sub,
                 fontSize: 13,
@@ -489,6 +311,7 @@ export default function SignInScreen() {
             >
               Email
             </AppText>
+
             <TextInput
               value={email}
               onChangeText={setEmail}
@@ -524,6 +347,7 @@ export default function SignInScreen() {
             >
               Password
             </AppText>
+
             <TextInput
               value={pass}
               onChangeText={setPass}
@@ -571,7 +395,7 @@ export default function SignInScreen() {
 
             {!!err && (
               <AppText
-                numberOfLines={3}
+                numberOfLines={4}
                 style={{
                   color: colors.accent,
                   fontSize: 13,
@@ -584,62 +408,10 @@ export default function SignInScreen() {
             )}
 
             <AuthButton label="Continue" onPress={onSubmit} busy={busy} />
-
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                marginTop: 18,
-                marginBottom: 2,
-              }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  height: 1,
-                  backgroundColor: 'rgba(255,255,255,0.10)',
-                }}
-              />
-              <AppText
-                style={{
-                  color: colors.dim,
-                  fontSize: 11,
-                  fontWeight: '900',
-                }}
-              >
-                OR
-              </AppText>
-              <View
-                style={{
-                  flex: 1,
-                  height: 1,
-                  backgroundColor: 'rgba(255,255,255,0.10)',
-                }}
-              />
-            </View>
-
-            <ProviderButton
-              label="Continue with Google"
-              icon="G"
-              onPress={onGoogleSignIn}
-              busy={busy}
-            />
-
-            {Platform.OS === 'ios' && (
-              <ProviderButton
-                label="Continue with Apple"
-                icon=""
-                onPress={onAppleSignIn}
-                busy={busy}
-                disabled={busy}
-                dark
-              />
-            )}
           </View>
 
           <AppText
-            numberOfLines={2}
+            numberOfLines={3}
             style={{
               color: 'rgba(255,255,255,0.34)',
               fontSize: 11,
@@ -648,7 +420,7 @@ export default function SignInScreen() {
               marginTop: 16,
             }}
           >
-            Free includes all sports and unlimited local recording.
+            One parent account. Athletes are profiles, not separate accounts.
           </AppText>
         </ScrollView>
       </KeyboardAvoidingView>
