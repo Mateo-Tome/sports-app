@@ -41,7 +41,80 @@ function cleanAthleteId(v: any): string | null {
 // Lazy loader to avoid iOS NativeEventEmitter crash on import
 async function getFFmpeg() {
   const mod = await import('ffmpeg-kit-react-native');
-  return { FFmpegKit: mod.FFmpegKit, ReturnCode: mod.ReturnCode };
+  return {
+    FFmpegKit: mod.FFmpegKit,
+    FFprobeKit: mod.FFprobeKit,
+    ReturnCode: mod.ReturnCode,
+  };
+}
+
+async function logVideoProbe(inputUri: string, label: string) {
+  try {
+    const { FFprobeKit } = await getFFmpeg();
+
+    console.log(`[orientation][probe:${label}] input=`, inputUri);
+
+    const session = await FFprobeKit.execute(`-i ${q(inputUri)}`);
+    const logs = await session.getAllLogsAsString();
+
+    console.log(`[orientation][probe:${label}] logs start`);
+    console.log(logs);
+    console.log(`[orientation][probe:${label}] logs end`);
+  } catch (e) {
+    console.log(`[orientation][probe:${label}] failed`, e);
+  }
+}
+
+export async function forceQuickClipLandscapeVideo(inputUri: string) {
+  if (!inputUri) return inputUri;
+
+  let FFmpegKit: any;
+  let ReturnCode: any;
+
+  try {
+    const m = await getFFmpeg();
+    FFmpegKit = m.FFmpegKit;
+    ReturnCode = m.ReturnCode;
+  } catch (e) {
+    console.log('[orientation] ffmpeg unavailable, keeping original', e);
+    return inputUri;
+  }
+
+  await logVideoProbe(inputUri, 'before');
+
+  const outUri = FileSystem.cacheDirectory + `quickclip_landscape_${Date.now()}.mp4`;
+
+  const cmd =
+  `-y -i ${q(inputUri)} ` +
+  `-map 0:v:0 -map 0:a? ` +
+  `-c copy ` +
+  `-metadata:s:v:0 rotate=0 ` +
+  `${q(outUri)}`;
+
+  console.log('[orientation] command=', cmd);
+
+  const session = await FFmpegKit.execute(cmd);
+  const code = await session.getReturnCode();
+
+  if (ReturnCode.isSuccess(code)) {
+    console.log('[orientation] forced landscape video created', outUri);
+    await logVideoProbe(outUri, 'after');
+    return outUri;
+  }
+
+  try {
+    const failStack = await session.getFailStack();
+    const logs = await session.getAllLogsAsString();
+
+    console.log('[orientation] force landscape failed');
+    console.log('[orientation] failStack=', failStack);
+    console.log('[orientation] logs=', logs);
+  } catch (e) {
+    console.log('[orientation] failed to read ffmpeg failure logs', e);
+  }
+
+  Alert.alert('Orientation fix failed', 'FFmpeg failed. Check Metro logs.');
+  return inputUri;
 }
 
 // ---------- index & album helpers ----------
@@ -135,8 +208,6 @@ export const saveToAppStorage = async (
   const sport = (sportRaw || '').trim() || 'unknown';
   const athleteId = cleanAthleteId(opts?.athleteId);
 
-  // Keep folder path name-based for now so old file browsing still works.
-  // The permanent key is stored in index + sidecar as athleteId.
   const dir = `${VIDEOS_DIR}${slug(athlete)}/${slug(sport)}/`;
   await ensureDir(dir);
 

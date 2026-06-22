@@ -5,6 +5,7 @@ import { Alert, Platform } from 'react-native';
 
 import { stitchSegmentsWithFallback } from './segmentStitcher';
 import {
+  forceQuickClipLandscapeVideo,
   processHighlights,
   runPostSaveTasksSafe,
   saveToAppStorage,
@@ -129,10 +130,15 @@ export async function finalizeRecording(
       ? options.athleteId.trim()
       : null;
 
-  const { appUri } = await saveToAppStorage(finalPath, athlete, sport, {
-    importToPhotos: false,
-    athleteId,
-  } as any);
+      const normalizedPath =
+      Platform.OS === 'ios'
+        ? await forceQuickClipLandscapeVideo(finalPath)
+        : finalPath;
+    
+    const { appUri } = await saveToAppStorage(normalizedPath, athlete, sport, {
+      importToPhotos: false,
+      athleteId,
+    } as any);
 
   log('saveToAppStorage done');
 

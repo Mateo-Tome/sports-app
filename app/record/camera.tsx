@@ -295,15 +295,19 @@ const raceLabelParam = useMemo(
 
   const captureRecordingSnapshot = () => {
     const win = Dimensions.get('window');
-
-    recordingOrientationRef.current = orientation === 'landscape' ? 'landscape' : 'unknown';
+  
+    const isLandscapeViewport = win.width > win.height;
+  
+    recordingOrientationRef.current = isLandscapeViewport ? 'landscape' : 'portrait';
+  
     recordingViewportRef.current = {
       width: win.width,
       height: win.height,
     };
-
+  
     console.log('[camera] recording snapshot', {
-      recordingOrientation: recordingOrientationRef.current,
+      sensorOrientation: orientation,
+      savedOrientation: recordingOrientationRef.current,
       viewport: recordingViewportRef.current,
       platform: Platform.OS,
     });
@@ -399,7 +403,7 @@ const raceLabelParam = useMemo(
           windowOrientation: recordingOrientationRef.current,
           viewportWidth: recordingViewportRef.current.width,
           viewportHeight: recordingViewportRef.current.height,
-          orientationOverride: 0,
+          orientationOverride: Platform.OS === 'ios' ? -90 : 0,
           athleteId,
         } as any,
       );
