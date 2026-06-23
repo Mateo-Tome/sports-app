@@ -1,5 +1,3 @@
-// lib/firestoreClient.ts
-// Thin Firestore helpers for video metadata.
 
 import {
   addDoc,

@@ -403,7 +403,7 @@ const raceLabelParam = useMemo(
           windowOrientation: recordingOrientationRef.current,
           viewportWidth: recordingViewportRef.current.width,
           viewportHeight: recordingViewportRef.current.height,
-          orientationOverride: Platform.OS === 'ios' ? -90 : 0,
+          orientationOverride: 0,
           athleteId,
         } as any,
       );
