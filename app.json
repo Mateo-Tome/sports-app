@@ -48,7 +48,7 @@
       "supportsTablet": true,
       "requireFullScreen": true,
       "bundleIdentifier": "com.mateotome2133.sportapp",
-      "buildNumber": "28",
+      "buildNumber": "36",
       "googleServicesFile": "./ios/GoogleService-Info.plist",
       "associatedDomains": [
         "applinks:quickclipapp.com",
