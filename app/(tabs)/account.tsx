@@ -6,12 +6,7 @@ import {
 } from '@/lib/devices/deviceRegistry';
 import { auth, db } from '@/lib/firebase';
 import { router } from 'expo-router';
-import {
-  EmailAuthProvider,
-  linkWithCredential,
-  onAuthStateChanged,
-  signOut,
-} from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -21,7 +16,6 @@ import {
   Platform,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -199,8 +193,6 @@ export default function AccountScreen() {
   const insets = useSafeAreaInsets();
 
   const [busy, setBusy] = useState(false);
-  const [linkBusy, setLinkBusy] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
   const [user, setUser] = useState(auth.currentUser);
   const [profile, setProfile] = useState<any>({});
   const [usage, setUsage] = useState<AccountUsage | null>(null);
@@ -208,17 +200,9 @@ export default function AccountScreen() {
   const [deviceUsage, setDeviceUsage] = useState<DeviceUsageState | null>(null);
   const [deviceLoading, setDeviceLoading] = useState(false);
 
-  const PRO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_PRO === '1';
-
   const isTester = profile?.isTester === true;
   const isPro = profile?.isPro === true || isTester;
   const planName = isPro ? 'PRO' : 'FREE';
-
-  const hasPasswordProvider =
-    user?.providerData?.some((p) => p.providerId === 'password') ?? false;
-
-  const providerText =
-    user?.providerData?.map((p) => p.providerId).join(', ') || '—';
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -331,53 +315,6 @@ export default function AccountScreen() {
   const deviceText = deviceUsage?.text ?? (isPro ? '— / 8' : '— / 1');
 
   const goToSignIn = () => router.push('/(auth)/sign-in');
-  const goToPaywall = () => router.push('/(auth)/paywall');
-
-  const handleLinkPassword = async () => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser?.email) {
-      Alert.alert('No signed in user', 'Sign in with Google first, then try again.');
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      Alert.alert('Password too short', 'Password must be at least 6 characters.');
-      return;
-    }
-
-    Alert.alert(
-      'Add password?',
-      `This will add email/password sign-in to ${currentUser.email}. Your UID and all videos stay the same.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Add Password',
-          onPress: async () => {
-            setLinkBusy(true);
-            try {
-              const credential = EmailAuthProvider.credential(currentUser.email!, newPassword);
-              await linkWithCredential(currentUser, credential);
-
-              await currentUser.reload();
-              setUser(auth.currentUser);
-              setNewPassword('');
-
-              Alert.alert(
-                'Password added',
-                'Now sign out and sign back in using your email and this password.'
-              );
-            } catch (e: any) {
-              console.log('[Account] link password failed:', e);
-              Alert.alert('Could not add password', e?.message ?? 'Unknown error');
-            } finally {
-              setLinkBusy(false);
-            }
-          },
-        },
-      ]
-    );
-  };
 
   const handleSignOut = async () => {
     Alert.alert('Sign out?', 'You can sign back in anytime.', [
@@ -454,7 +391,7 @@ export default function AccountScreen() {
             <Text style={{ color: 'rgba(255,255,255,0.58)', fontWeight: '900', fontSize: 12 }}>
               {accountState.badge}
             </Text>
-            {(busy || usageLoading || deviceLoading || linkBusy) && <ActivityIndicator color="#ef4444" />}
+            {(busy || usageLoading || deviceLoading) && <ActivityIndicator color="#ef4444" />}
           </View>
 
           <Text style={{ color: 'white', fontWeight: '900', fontSize: 23, marginTop: 12 }}>
@@ -478,9 +415,6 @@ export default function AccountScreen() {
               <Text style={{ color: 'rgba(255,255,255,0.82)', fontWeight: '800' }}>
                 {accountState.line}
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.45)', fontWeight: '700', marginTop: 6, fontSize: 12 }}>
-                Providers: {providerText}
-              </Text>
             </View>
           )}
 
@@ -488,75 +422,10 @@ export default function AccountScreen() {
             {!user ? (
               <Button label="Sign In" onPress={goToSignIn} />
             ) : (
-              <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy || linkBusy} />
+              <Button label="Sign Out" kind="ghost" onPress={handleSignOut} disabled={busy} />
             )}
           </View>
         </Card>
-
-        {user && !hasPasswordProvider ? (
-          <Card highlight>
-            <SectionTitle
-              title="Temporary password fix"
-              sub="You are signed in with Google. Add a password to this same account so you can remove Google sign-in and still keep the same UID, athletes, videos, and uploads."
-            />
-
-            <Text style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '900', fontSize: 12, marginBottom: 8 }}>
-              New password
-            </Text>
-
-            <TextInput
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-              autoCorrect={false}
-              autoCapitalize="none"
-              placeholder="Enter new password"
-              placeholderTextColor="rgba(255,255,255,0.34)"
-              editable={!linkBusy}
-              style={{
-                height: 52,
-                borderRadius: 15,
-                paddingHorizontal: 14,
-                color: 'white',
-                backgroundColor: 'rgba(0,0,0,0.30)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.12)',
-                fontSize: 15,
-                marginBottom: 12,
-              }}
-            />
-
-            <TouchableOpacity
-              onPress={handleLinkPassword}
-              disabled={linkBusy}
-              activeOpacity={0.88}
-              style={{
-                borderRadius: 16,
-                paddingVertical: 15,
-                alignItems: 'center',
-                backgroundColor: '#ef4444',
-                opacity: linkBusy ? 0.55 : 1,
-              }}
-            >
-              {linkBusy ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>
-                  Add Password To This Account
-                </Text>
-              )}
-            </TouchableOpacity>
-          </Card>
-        ) : null}
-
-        {user && hasPasswordProvider ? (
-          <Card>
-            <SectionTitle
-              title="Password sign-in ready"
-              sub="This account already has email/password attached. You can remove Google/Apple buttons again after testing sign out and sign in."
-            />
-          </Card>
-        ) : null}
 
         {deviceUsage?.isOverLimit ? (
           <Card highlight>
@@ -564,8 +433,8 @@ export default function AccountScreen() {
               title="Device limit reached"
               sub={
                 isPro
-                  ? 'This account is over the 8 active device limit. Recording still works offline, but cloud features may need device management soon.'
-                  : 'Free allows 1 active device. Recording still works offline, but Pro allows up to 8 active devices.'
+                  ? 'This account is over the 8 active device limit. Sign out on another device to free a spot.'
+                  : 'Free allows 1 active device. Pro allows up to 8 active devices.'
               }
             />
           </Card>
@@ -667,6 +536,13 @@ export default function AccountScreen() {
             <Button label="Request account deletion" kind="danger" onPress={requestDeletion} />
           </View>
         </Card>
+
+        <Card>
+            <SectionTitle
+              title="Local video safety"
+              sub="Local videos are stored on this device. Upload important clips to cloud before deleting or reinstalling QuickClip."
+            />
+          </Card>
 
         <View style={{ alignItems: 'center', paddingVertical: 12 }}>
           <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '700', fontSize: 12 }}>
