@@ -1,6 +1,9 @@
 // app/(tabs)/account.tsx
 import { formatStorage, getAccountUsage, type AccountUsage } from '@/lib/accountUsage';
-import { getDeviceUsage } from '@/lib/devices/deviceRegistry';
+import {
+  getDeviceUsage,
+  signOutCurrentDevice,
+} from '@/lib/devices/deviceRegistry';
 import { auth, db } from '@/lib/firebase';
 import { router } from 'expo-router';
 import {
@@ -385,6 +388,12 @@ export default function AccountScreen() {
         onPress: async () => {
           setBusy(true);
           try {
+            const uid = auth.currentUser?.uid;
+
+            if (uid) {
+              await signOutCurrentDevice(uid);
+            }
+
             await signOut(auth);
           } finally {
             setBusy(false);

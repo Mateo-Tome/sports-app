@@ -3,16 +3,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Device from 'expo-device';
 import {
-    collection,
-    doc,
-    getDocs,
-    serverTimestamp,
-    setDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
 } from 'firebase/firestore';
 import { Platform } from 'react-native';
 
-const DEVICE_ID_KEY = 'quickclip_device_id_v1';
-const ACTIVE_WINDOW_DAYS = 30;
+const DEVICE_ID_KEY = 'quickclip_device_id_v2';
 
 export type RegisteredDevice = {
   id: string;
@@ -20,27 +20,90 @@ export type RegisteredDevice = {
   deviceName: string;
   modelName: string;
   appVersion: string;
+  isActive?: boolean;
   lastSeenAt?: any;
+  signedInAt?: any;
+  signedOutAt?: any;
   createdAt?: any;
 };
 
-function makeDeviceId() {
+function cleanIdPart(v: string) {
+  return v.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+async function getStableNativeDeviceId() {
+  if (Platform.OS === 'android') {
+    const androidId = await Application.getAndroidId();
+
+    if (androidId) {
+      return `android_${cleanIdPart(androidId)}`;
+    }
+  }
+
+  if (Platform.OS === 'ios') {
+    const iosId = await Application.getIosIdForVendorAsync();
+
+    if (iosId) {
+      return `ios_${cleanIdPart(iosId)}`;
+    }
+  }
+
+  return null;
+}
+
+function makeFallbackDeviceId() {
   return `dev_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export async function getLocalDeviceId() {
+  const nativeId = await getStableNativeDeviceId();
+
+  if (nativeId) {
+    await AsyncStorage.setItem(DEVICE_ID_KEY, nativeId);
+    return nativeId;
+  }
+
   let id = await AsyncStorage.getItem(DEVICE_ID_KEY);
 
   if (!id) {
-    id = makeDeviceId();
+    id = makeFallbackDeviceId();
     await AsyncStorage.setItem(DEVICE_ID_KEY, id);
   }
 
   return id;
 }
 
+async function cleanupDuplicateDeviceDocs(uid: string, currentDeviceId: string) {
+  const snap = await getDocs(collection(db, 'users', uid, 'devices'));
+
+  const currentPlatform = Platform.OS;
+  const currentDeviceName = Device.deviceName ?? 'Unknown device';
+  const currentModelName = Device.modelName ?? 'Unknown model';
+
+  const deletes: Promise<void>[] = [];
+
+  snap.forEach((d) => {
+    if (d.id === currentDeviceId) return;
+
+    const data = d.data();
+
+    const samePhysicalDevice =
+      data?.platform === currentPlatform &&
+      data?.deviceName === currentDeviceName &&
+      data?.modelName === currentModelName;
+
+    if (samePhysicalDevice) {
+      deletes.push(deleteDoc(doc(db, 'users', uid, 'devices', d.id)));
+    }
+  });
+
+  await Promise.all(deletes);
+}
+
 export async function registerCurrentDevice(uid: string) {
   const deviceId = await getLocalDeviceId();
+
+  await cleanupDuplicateDeviceDocs(uid, deviceId);
 
   const ref = doc(db, 'users', uid, 'devices', deviceId);
 
@@ -50,7 +113,10 @@ export async function registerCurrentDevice(uid: string) {
     deviceName: Device.deviceName ?? 'Unknown device',
     modelName: Device.modelName ?? 'Unknown model',
     appVersion: Application.nativeApplicationVersion ?? 'unknown',
+    isActive: true,
     lastSeenAt: serverTimestamp(),
+    signedInAt: serverTimestamp(),
+    signedOutAt: null,
     createdAt: serverTimestamp(),
   };
 
@@ -59,21 +125,33 @@ export async function registerCurrentDevice(uid: string) {
   return deviceId;
 }
 
+export async function signOutCurrentDevice(uid: string) {
+  const deviceId = await getLocalDeviceId();
+
+  const ref = doc(db, 'users', uid, 'devices', deviceId);
+
+  await setDoc(
+    ref,
+    {
+      isActive: false,
+      signedOutAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return deviceId;
+}
+
 export async function getActiveDeviceCount(uid: string) {
   const snap = await getDocs(collection(db, 'users', uid, 'devices'));
-
-  const now = Date.now();
-  const activeMs = ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
   let active = 0;
 
   snap.forEach((d) => {
     const data = d.data();
-    const lastSeen = data?.lastSeenAt?.toMillis?.();
 
-    if (!lastSeen) return;
-
-    if (now - lastSeen <= activeMs) {
+    if (data?.isActive === true) {
       active += 1;
     }
   });
