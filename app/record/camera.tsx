@@ -1,3 +1,5 @@
+// app/(tabs)/recordingScreen.tsx
+
 import { useFocusEffect } from '@react-navigation/native';
 import {
   CameraView,
@@ -49,11 +51,28 @@ type RouteParams = {
   swimRace?: string | string[];
 };
 
+const CAMERA_READY_SETTLE_MS = 900;
+const CAMERA_READY_TIMEOUT_MS = 6500;
+const MAX_CAMERA_REMOUNTS = 2;
+
 function paramToStr(v: unknown, fallback: string) {
   const raw = Array.isArray(v) ? v[0] : v;
   const s = raw == null ? '' : String(raw);
   const t = s.trim();
   return t.length ? t : fallback;
+}
+
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+function startFailureMessage(reason?: string) {
+  if (reason === 'camera-not-ready') return 'Camera was not ready yet. Please try again.';
+  if (reason === 'segment-dir-failed') return 'Could not prepare recording storage.';
+  if (reason === 'no-recording-api') return 'This device camera does not support recording here.';
+  if (reason === 'start-exception') return 'Camera hardware failed to start recording.';
+  if (reason === 'settled-immediately') return 'Camera stopped immediately. Please try again.';
+  return 'Could not start recording.';
 }
 
 export default function CameraScreen() {
@@ -67,28 +86,28 @@ export default function CameraScreen() {
   const athleteId = useMemo(() => paramToStr(params.athleteId, ''), [params.athleteId]);
   const rawSwimRace = useMemo(() => paramToStr(params.swimRace, ''), [params.swimRace]);
 
-const parsedSwimRace = useMemo(() => {
-  try {
-    return rawSwimRace ? JSON.parse(rawSwimRace) : null;
-  } catch {
-    return null;
-  }
-}, [rawSwimRace]);
+  const parsedSwimRace = useMemo(() => {
+    try {
+      return rawSwimRace ? JSON.parse(rawSwimRace) : null;
+    } catch {
+      return null;
+    }
+  }, [rawSwimRace]);
 
-const strokeParam = useMemo(
-  () => paramToStr(params.stroke, parsedSwimRace?.stroke ?? ''),
-  [params.stroke, parsedSwimRace],
-);
+  const strokeParam = useMemo(
+    () => paramToStr(params.stroke, parsedSwimRace?.stroke ?? ''),
+    [params.stroke, parsedSwimRace],
+  );
 
-const distanceParam = useMemo(
-  () => paramToStr(params.distance, parsedSwimRace?.distance ?? ''),
-  [params.distance, parsedSwimRace],
-);
+  const distanceParam = useMemo(
+    () => paramToStr(params.distance, parsedSwimRace?.distance ?? ''),
+    [params.distance, parsedSwimRace],
+  );
 
-const raceLabelParam = useMemo(
-  () => paramToStr(params.raceLabel, parsedSwimRace?.raceLabel ?? ''),
-  [params.raceLabel, parsedSwimRace],
-);
+  const raceLabelParam = useMemo(
+    () => paramToStr(params.raceLabel, parsedSwimRace?.raceLabel ?? ''),
+    [params.raceLabel, parsedSwimRace],
+  );
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
@@ -96,6 +115,7 @@ const raceLabelParam = useMemo(
   const [cameraReady, setCameraReady] = useState(false);
   const [shouldRenderCamera, setShouldRenderCamera] = useState(false);
   const [remountKey, setRemountKey] = useState(0);
+  const [cameraRetryCount, setCameraRetryCount] = useState(0);
 
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
   const camOpacity = useRef(new Animated.Value(0)).current;
@@ -124,7 +144,18 @@ const raceLabelParam = useMemo(
   const recordingOrientationRef = useRef<RecordingOrientationKind>('unknown');
   const recordingViewportRef = useRef({ width: 0, height: 0 });
 
+  const cameraReadyAtRef = useRef<number | null>(null);
+  const mountedRef = useRef(false);
+  const closingRef = useRef(false);
+
   const { orientation } = useRecordingStartGuard();
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (cameraPermission && !cameraPermission.granted && cameraPermission.canAskAgain) {
@@ -132,22 +163,76 @@ const raceLabelParam = useMemo(
     }
   }, [cameraPermission, requestCameraPermission]);
 
+  useEffect(() => {
+    if (!shouldRenderCamera || cameraReady || isRecording || isProcessing) return;
+
+    const timeout = setTimeout(() => {
+      if (!mountedRef.current || cameraReady || isRecording || isProcessing) return;
+
+      setCameraRetryCount((count) => {
+        if (count >= MAX_CAMERA_REMOUNTS) {
+          console.log('[camera] ready timeout, max remounts reached');
+          return count;
+        }
+
+        console.log('[camera] ready timeout, remounting camera', count + 1);
+
+        setCameraReady(false);
+        cameraReadyAtRef.current = null;
+        cameraRef.current = null;
+        camOpacity.setValue(0);
+        setShouldRenderCamera(false);
+
+        setTimeout(() => {
+          if (!mountedRef.current) return;
+          setRemountKey((k) => k + 1);
+          setShouldRenderCamera(true);
+        }, 250);
+
+        return count + 1;
+      });
+    }, CAMERA_READY_TIMEOUT_MS);
+
+    return () => clearTimeout(timeout);
+  }, [shouldRenderCamera, cameraReady, isRecording, isProcessing, camOpacity]);
+
+  const safeStopActiveSegment = useCallback(
+    async (context: string) => {
+      try {
+        const stopped = await stopCurrentSegment(cameraRef, segmentActiveRef);
+
+        if (!stopped) {
+          console.warn(`[camera] stop segment timed out during ${context}`);
+        }
+
+        return stopped;
+      } catch (e) {
+        console.log(`[camera] stop segment failed during ${context}`, e);
+        return false;
+      }
+    },
+    [],
+  );
+
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
+      closingRef.current = false;
 
       const enterLandscapeThenMountCamera = async () => {
         setShouldRenderCamera(false);
         setCameraReady(false);
+        setCameraRetryCount(0);
+        cameraReadyAtRef.current = null;
         camOpacity.setValue(0);
 
         try {
           await ScreenOrientation.lockAsync(
             Platform.OS === 'ios'
               ? ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT
-              : ScreenOrientation.OrientationLock.LANDSCAPE
+              : ScreenOrientation.OrientationLock.LANDSCAPE,
           );
-          
+
           const afterLock = await ScreenOrientation.getOrientationAsync();
           console.log('[camera] after landscape lock orientation=', afterLock);
         } catch (e) {
@@ -162,32 +247,27 @@ const raceLabelParam = useMemo(
 
             if (win.width > win.height) return true;
 
-            if (Date.now() - start > 3000) {
+            if (Date.now() - start > 3500) {
               console.log('[camera] landscape wait timed out', win);
               return false;
             }
 
-            await new Promise((r) => setTimeout(r, 80));
+            await sleep(80);
           }
 
           return false;
         };
 
-        const landscapeReady = await waitUntilLandscape();
+        await waitUntilLandscape();
         if (cancelled) return;
 
-        if (landscapeReady) {
-          setRemountKey((k) => k + 1);
+        setRemountKey((k) => k + 1);
 
-          InteractionManager.runAfterInteractions(() => {
-            if (!cancelled && cameraPermission?.granted) {
-              setShouldRenderCamera(true);
-            }
-          });
-        } else {
-          setRemountKey((k) => k + 1);
-          setShouldRenderCamera(true);
-        }
+        InteractionManager.runAfterInteractions(() => {
+          if (!cancelled && cameraPermission?.granted) {
+            setShouldRenderCamera(true);
+          }
+        });
       };
 
       if (cameraPermission?.granted) {
@@ -196,26 +276,26 @@ const raceLabelParam = useMemo(
 
       return () => {
         cancelled = true;
+        closingRef.current = true;
 
         setShouldRenderCamera(false);
         setCameraReady(false);
+        cameraReadyAtRef.current = null;
         camOpacity.setValue(0);
 
-        if (segmentActiveRef.current) {
-          stopCurrentSegment(cameraRef, segmentActiveRef);
-        }
+        (async () => {
+          if (segmentActiveRef.current) {
+            await safeStopActiveSegment('screen cleanup');
+          }
 
-        const unlockOrientation = async () => {
           try {
             await ScreenOrientation.unlockAsync();
           } catch (e) {
             console.log('[camera] failed to unlock orientation', e);
           }
-        };
-
-        unlockOrientation();
+        })();
       };
-    }, [cameraPermission?.granted, camOpacity]),
+    }, [cameraPermission?.granted, camOpacity, safeStopActiveSegment]),
   );
 
   useEffect(() => {
@@ -295,16 +375,15 @@ const raceLabelParam = useMemo(
 
   const captureRecordingSnapshot = () => {
     const win = Dimensions.get('window');
-  
     const isLandscapeViewport = win.width > win.height;
-  
+
     recordingOrientationRef.current = isLandscapeViewport ? 'landscape' : 'portrait';
-  
+
     recordingViewportRef.current = {
       width: win.width,
       height: win.height,
     };
-  
+
     console.log('[camera] recording snapshot', {
       sensorOrientation: orientation,
       savedOrientation: recordingOrientationRef.current,
@@ -313,28 +392,63 @@ const raceLabelParam = useMemo(
     });
   };
 
+  const waitForCameraSettled = async () => {
+    const readyAt = cameraReadyAtRef.current;
+
+    if (!readyAt) {
+      return false;
+    }
+
+    const elapsed = Date.now() - readyAt;
+    const remaining = CAMERA_READY_SETTLE_MS - elapsed;
+
+    if (remaining > 0) {
+      await sleep(remaining);
+    }
+
+    return !!cameraRef.current && !!cameraReadyAtRef.current;
+  };
+
   const handleStart = async () => {
     const hasPermissions = await ensureRecordingPermissions();
     if (!hasPermissions) return;
-    if (!cameraReady || isTransitioning) return;
-
-    captureRecordingSnapshot();
+    if (!cameraReady || isTransitioning || isProcessing) return;
 
     setIsTransitioning(true);
 
-    await new Promise((r) => setTimeout(r, 300));
-
-    eventsRef.current = [];
-    scoreRef.current = { home: 0, opponent: 0 };
-    setScore({ home: 0, opponent: 0 });
-    setMarkers([]);
-    segmentsRef.current = [];
-    startMs.current = Date.now();
-    totalPausedMsRef.current = 0;
-    pauseStartedAtRef.current = null;
-
     try {
-      await startNewSegment(cameraRef, true, segmentsRef, segmentActiveRef, recordPromiseRef);
+      const settled = await waitForCameraSettled();
+
+      if (!settled) {
+        Alert.alert('Camera not ready', 'Please wait a second and try again.');
+        return;
+      }
+
+      captureRecordingSnapshot();
+
+      eventsRef.current = [];
+      scoreRef.current = { home: 0, opponent: 0 };
+      setScore({ home: 0, opponent: 0 });
+      setMarkers([]);
+      segmentsRef.current = [];
+      startMs.current = Date.now();
+      totalPausedMsRef.current = 0;
+      pauseStartedAtRef.current = null;
+
+      const started = await startNewSegment(
+        cameraRef,
+        cameraReady,
+        segmentsRef,
+        segmentActiveRef,
+        recordPromiseRef,
+      );
+
+      if (!started.ok) {
+        console.log('[camera] start segment failed', started);
+        Alert.alert('Camera error', startFailureMessage(started.reason));
+        return;
+      }
+
       setIsRecording(true);
       setIsPaused(false);
     } catch (e) {
@@ -346,13 +460,20 @@ const raceLabelParam = useMemo(
   };
 
   const handlePause = async () => {
-    if (!isRecording || isPaused || isTransitioning) return;
+    if (!isRecording || isPaused || isTransitioning || isProcessing) return;
 
     setIsTransitioning(true);
     pauseStartedAtRef.current = Date.now();
 
     try {
-      await stopCurrentSegment(cameraRef, segmentActiveRef);
+      const stopped = await safeStopActiveSegment('pause');
+
+      if (!stopped) {
+        pauseStartedAtRef.current = null;
+        Alert.alert('Pause failed', 'The camera was still finishing the current clip. Try again.');
+        return;
+      }
+
       setIsPaused(true);
     } finally {
       setIsTransitioning(false);
@@ -360,18 +481,38 @@ const raceLabelParam = useMemo(
   };
 
   const handleResume = async () => {
-    if (!isPaused || isTransitioning) return;
+    if (!isPaused || isTransitioning || isProcessing) return;
 
     setIsTransitioning(true);
 
-    if (pauseStartedAtRef.current) {
-      totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
-    }
-
-    pauseStartedAtRef.current = null;
-
     try {
-      await startNewSegment(cameraRef, true, segmentsRef, segmentActiveRef, recordPromiseRef);
+      const settled = await waitForCameraSettled();
+
+      if (!settled) {
+        Alert.alert('Camera not ready', 'Please wait a second and try again.');
+        return;
+      }
+
+      if (pauseStartedAtRef.current) {
+        totalPausedMsRef.current += Date.now() - pauseStartedAtRef.current;
+      }
+
+      pauseStartedAtRef.current = null;
+
+      const started = await startNewSegment(
+        cameraRef,
+        cameraReady,
+        segmentsRef,
+        segmentActiveRef,
+        recordPromiseRef,
+      );
+
+      if (!started.ok) {
+        console.log('[camera] resume segment failed', started);
+        Alert.alert('Resume failed', startFailureMessage(started.reason));
+        return;
+      }
+
       setIsPaused(false);
     } finally {
       setIsTransitioning(false);
@@ -385,9 +526,16 @@ const raceLabelParam = useMemo(
     setIsTransitioning(true);
 
     try {
-      await stopCurrentSegment(cameraRef, segmentActiveRef);
+      const stopped = await safeStopActiveSegment('stop');
 
-      await new Promise((r) => setTimeout(r, 800));
+      if (!stopped) {
+        Alert.alert(
+          'Save warning',
+          'The camera took too long to finish the last segment. The saved video may be missing the last few seconds.',
+        );
+      }
+
+      await sleep(800);
 
       const mod = await import('../../lib/recording/finalizeRecording');
 
@@ -408,9 +556,12 @@ const raceLabelParam = useMemo(
         } as any,
       );
 
+      setIsRecording(false);
+      setIsPaused(false);
+
       try {
         await ScreenOrientation.unlockAsync();
-      } catch {}
+      } catch { }
 
       navigation.goBack();
     } catch (error) {
@@ -422,9 +573,42 @@ const raceLabelParam = useMemo(
     }
   };
 
+  const handleClose = async () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+  
+    console.log('[camera] manual close start');
+  
+    try {
+      setShouldRenderCamera(false);
+      setCameraReady(false);
+      cameraReadyAtRef.current = null;
+      cameraRef.current = null;
+      camOpacity.setValue(0);
+  
+      await sleep(500);
+  
+      if (segmentActiveRef.current) {
+        await safeStopActiveSegment('manual close');
+      }
+  
+      console.log('[camera] manual close unlock orientation');
+      await ScreenOrientation.unlockAsync().catch(() => {});
+  
+      await sleep(250);
+  
+      console.log('[camera] manual close goBack');
+      navigation.goBack();
+    } finally {
+      closingRef.current = false;
+    }
+  };
+
   const showWaitingForCamera = cameraPermission?.granted && !shouldRenderCamera && !isProcessing;
   const showReadyHud = cameraReady && !isRecording && !isProcessing;
-  const recordDisabled = !cameraReady || isTransitioning;
+  const recordDisabled = !cameraReady || isTransitioning || isProcessing;
+  const cameraHasFailedToReady =
+    shouldRenderCamera && !cameraReady && cameraRetryCount >= MAX_CAMERA_REMOUNTS;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -443,12 +627,31 @@ const raceLabelParam = useMemo(
                 mode="video"
                 zoom={zoom}
                 onCameraReady={() => {
+                  console.log('[camera] ready');
+                  cameraReadyAtRef.current = Date.now();
                   setCameraReady(true);
+                  setCameraRetryCount(0);
+
                   Animated.timing(camOpacity, {
                     toValue: 1,
                     duration: 250,
                     useNativeDriver: true,
                   }).start();
+                }}
+                onMountError={(error) => {
+                  console.log('[camera] mount error', error);
+
+                  setCameraReady(false);
+                  cameraReadyAtRef.current = null;
+                  cameraRef.current = null;
+                  camOpacity.setValue(0);
+                  setShouldRenderCamera(false);
+
+                  setTimeout(() => {
+                    if (!mountedRef.current) return;
+                    setRemountKey((k) => k + 1);
+                    setShouldRenderCamera(true);
+                  }, 500);
                 }}
               />
             </Animated.View>
@@ -473,12 +676,7 @@ const raceLabelParam = useMemo(
           {!isRecording && (
             <TouchableOpacity
               style={[styles.backBtn, { top: insets.top + 10 }]}
-              onPress={async () => {
-                try {
-                  await ScreenOrientation.unlockAsync();
-                } catch {}
-                navigation.goBack();
-              }}
+              onPress={handleClose}
             >
               <Text style={styles.backBtnText}>✕ CLOSE</Text>
             </TouchableOpacity>
@@ -488,6 +686,32 @@ const raceLabelParam = useMemo(
             <View style={styles.loadingNoteWrap} pointerEvents="none">
               <View style={styles.loadingNotePill}>
                 <Text style={styles.loadingNoteText}>Preparing camera</Text>
+              </View>
+            </View>
+          )}
+
+          {cameraHasFailedToReady && (
+            <View style={styles.cameraRetryWrap}>
+              <View style={styles.cameraRetryPill}>
+                <Text style={styles.cameraRetryText}>Camera is taking longer than expected.</Text>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => {
+                    setCameraRetryCount(0);
+                    setCameraReady(false);
+                    cameraReadyAtRef.current = null;
+                    cameraRef.current = null;
+                    camOpacity.setValue(0);
+                    setShouldRenderCamera(false);
+
+                    setTimeout(() => {
+                      setRemountKey((k) => k + 1);
+                      setShouldRenderCamera(true);
+                    }, 250);
+                  }}
+                >
+                  <Text style={styles.retryButtonText}>TRY AGAIN</Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -539,7 +763,7 @@ const raceLabelParam = useMemo(
                 stroke={strokeParam}
                 distance={distanceParam}
                 raceLabel={raceLabelParam}
-                />
+              />
             </View>
           )}
 
@@ -564,7 +788,7 @@ const raceLabelParam = useMemo(
                 <TouchableOpacity
                   style={styles.controlBtn}
                   onPress={isPaused ? handleResume : handlePause}
-                  disabled={isTransitioning}
+                  disabled={isTransitioning || isProcessing}
                 >
                   <Text style={styles.controlLabel}>{isPaused ? 'RESUME' : 'PAUSE'}</Text>
                 </TouchableOpacity>
@@ -572,7 +796,7 @@ const raceLabelParam = useMemo(
                 <TouchableOpacity
                   style={styles.stopBtn}
                   onPress={handleStop}
-                  disabled={isTransitioning}
+                  disabled={isTransitioning || isProcessing}
                 >
                   <View style={styles.stopIcon} />
                 </TouchableOpacity>
@@ -710,6 +934,43 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 13,
     letterSpacing: 1.4,
+  },
+
+  cameraRetryWrap: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    top: '42%',
+    alignItems: 'center',
+    zIndex: 50,
+  },
+  cameraRetryPill: {
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  cameraRetryText: {
+    color: 'white',
+    fontWeight: '800',
+    fontSize: 13,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  retryButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'white',
+  },
+  retryButtonText: {
+    color: 'black',
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 0.8,
   },
 
   overlayLoader: {
