@@ -3,6 +3,7 @@
 import * as FileSystem from 'expo-file-system';
 import { Alert, Platform } from 'react-native';
 
+import { getOrCreateThumb } from '../library/thumbs';
 import { stitchSegmentsWithFallback } from './segmentStitcher';
 import {
   forceQuickClipLandscapeVideo,
@@ -35,19 +36,13 @@ type FinalizeRecordingOptions = {
   orientationOverride?: OrientationOverride;
   viewportWidth?: number;
   viewportHeight?: number;
-
-  // permanent athlete identity
   athleteId?: string | null;
 };
 
 type SidecarPayload = {
-  // legacy/display
   athlete: string;
   athleteName: string;
-
-  // permanent identity
   athleteId?: string | null;
-
   sport: string;
   style: string;
   createdAt: number;
@@ -130,17 +125,26 @@ export async function finalizeRecording(
       ? options.athleteId.trim()
       : null;
 
-      const normalizedPath =
-      Platform.OS === 'ios'
-        ? await forceQuickClipLandscapeVideo(finalPath)
-        : finalPath;
-    
-    const { appUri } = await saveToAppStorage(normalizedPath, athlete, sport, {
-      importToPhotos: false,
-      athleteId,
-    } as any);
+  const normalizedPath =
+    Platform.OS === 'ios'
+      ? await forceQuickClipLandscapeVideo(finalPath)
+      : finalPath;
+
+  const { appUri } = await saveToAppStorage(normalizedPath, athlete, sport, {
+    importToPhotos: false,
+    athleteId,
+  } as any);
 
   log('saveToAppStorage done');
+
+  if (appUri) {
+    try {
+      const thumb = await getOrCreateThumb(appUri);
+      log(`thumbnail ${thumb ? 'created' : 'not created'}`);
+    } catch (e) {
+      console.log('[finalize] thumbnail generation failed', e);
+    }
+  }
 
   let jsonUri: string | null = null;
 

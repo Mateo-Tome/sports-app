@@ -2,62 +2,73 @@
 import type { CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
 import type { MutableRefObject, RefObject } from 'react';
-import { Alert } from 'react-native';
 
-const SEG_DIR = FileSystem.cacheDirectory + 'segments/';
+const SEG_DIR = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}segments/`;
+
+export type StartSegmentResult = {
+  ok: boolean;
+  reason?: string;
+};
 
 const ensureDir = async (dir: string) => {
-  try {
-    const info = await FileSystem.getInfoAsync(dir);
-    if (!info.exists) {
-      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-    }
-  } catch {
-    // ignore — downstream file ops will surface errors if truly broken
+  const info = await FileSystem.getInfoAsync(dir);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   }
 };
 
 const tsStamp = () => {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  const rand = Math.random().toString(36).slice(2, 7);
+
   return (
     `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
-    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}_${ms}_${rand}`
   );
 };
 
-async function waitFor(pred: () => boolean, timeoutMs: number, pollMs = 40) {
+async function waitFor(
+  pred: () => boolean,
+  timeoutMs: number,
+  pollMs = 40,
+): Promise<boolean> {
   const start = Date.now();
+
   while (!pred()) {
+    if (Date.now() - start > timeoutMs) return false;
     await new Promise((r) => setTimeout(r, pollMs));
-    if (Date.now() - start > timeoutMs) break;
   }
+
+  return true;
 }
 
-async function finalizeSegmentFile(uri: string, segmentsRef: MutableRefObject<string[]>) {
+async function finalizeSegmentFile(
+  uri: string,
+  segmentsRef: MutableRefObject<string[]>,
+): Promise<boolean> {
+  await ensureDir(SEG_DIR);
+
   const dest = SEG_DIR + `seg_${tsStamp()}.mp4`;
 
-  // Prefer moveAsync: faster and avoids FS lag on large files
   try {
     await FileSystem.moveAsync({ from: uri, to: dest });
     segmentsRef.current.push(dest);
-    return;
+    return true;
   } catch (e) {
     console.warn('[segment] moveAsync failed, falling back to copyAsync', e);
   }
 
   try {
     await FileSystem.copyAsync({ from: uri, to: dest });
-  } catch (e) {
-    console.warn('[segment] copyAsync failed', e);
-    return;
-  }
-
-  try {
     await FileSystem.deleteAsync(uri, { idempotent: true });
-  } catch {}
-
-  segmentsRef.current.push(dest);
+    segmentsRef.current.push(dest);
+    return true;
+  } catch (e) {
+    console.warn('[segment] copy/delete fallback failed', e);
+    return false;
+  }
 }
 
 export async function startNewSegment(
@@ -66,33 +77,47 @@ export async function startNewSegment(
   segmentsRef: MutableRefObject<string[]>,
   segmentActiveRef: MutableRefObject<boolean>,
   recordPromiseRef: MutableRefObject<Promise<any> | null>,
-) {
+): Promise<StartSegmentResult> {
   const cam: any = cameraRef.current;
+
   if (!cam || !cameraReady) {
     console.warn('[segment] camera not ready');
-    return;
+    return { ok: false, reason: 'camera-not-ready' };
   }
 
-  await ensureDir(SEG_DIR);
+  try {
+    await ensureDir(SEG_DIR);
+  } catch (e) {
+    console.warn('[segment] failed to create segment directory', e);
+    return { ok: false, reason: 'segment-dir-failed' };
+  }
+
   segmentActiveRef.current = true;
   recordPromiseRef.current = null;
 
   const onFinished = async (res: any) => {
     const uri = typeof res === 'string' ? res : res?.uri;
+
     try {
-      if (uri) await finalizeSegmentFile(uri, segmentsRef);
+      if (!uri) {
+        console.warn('[segment] recording finished with no uri');
+        return;
+      }
+
+      const saved = await finalizeSegmentFile(uri, segmentsRef);
+      if (!saved) {
+        console.warn('[segment] failed to finalize segment file');
+      }
+    } catch (e) {
+      console.warn('[segment] onFinished failed', e);
     } finally {
       segmentActiveRef.current = false;
     }
   };
 
   const onError = (e: any) => {
-    console.warn('[segment error]', e);
+    console.warn('[segment] recording error', e);
     segmentActiveRef.current = false;
-    Alert.alert(
-      'Recording error',
-      (e && (e.message || e.toString())) || 'Unknown camera error',
-    );
   };
 
   try {
@@ -108,24 +133,45 @@ export async function startNewSegment(
         .then(onFinished)
         .catch(onError);
     } else {
-      throw new Error('No recording API found on CameraView');
+      segmentActiveRef.current = false;
+      return { ok: false, reason: 'no-recording-api' };
     }
-  } catch (e: any) {
-    console.warn('[segment start exception]', e);
+  } catch (e) {
+    console.warn('[segment] start exception', e);
     segmentActiveRef.current = false;
-    Alert.alert('Recording error', e?.message ?? String(e));
+    return { ok: false, reason: 'start-exception' };
   }
+
+  await new Promise((r) => setTimeout(r, 250));
+
+  if (!segmentActiveRef.current) {
+    return { ok: false, reason: 'settled-immediately' };
+  }
+
+  return { ok: true };
 }
 
 export async function stopCurrentSegment(
   cameraRef: RefObject<CameraView | null>,
   segmentActiveRef: MutableRefObject<boolean>,
-) {
+): Promise<boolean> {
+  if (!segmentActiveRef.current) return true;
+
   const cam: any = cameraRef.current;
+
   try {
     cam?.stopRecording?.();
-  } catch {}
+  } catch (e) {
+    console.warn('[segment] stopRecording threw', e);
+  }
 
-  // Longer timeout to cover slower devices + iOS mp4 finalization
-  await waitFor(() => !segmentActiveRef.current, 3500);
+  const stopped = await waitFor(() => !segmentActiveRef.current, 7000);
+
+  if (!stopped) {
+    console.warn(
+      '[segment] stopCurrentSegment timed out after 7000ms — segment may still be writing',
+    );
+  }
+
+  return stopped;
 }
