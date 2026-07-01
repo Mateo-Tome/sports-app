@@ -16,6 +16,7 @@ import {
   type VideoPageCursor,
   type VideoRow,
 } from '../../../lib/videos';
+import { fetchClipSidecarByShareId } from '../../stats/fetchSidecarByShareId';
 
 export type LibraryStyle = {
   edgeColor?: string | null;
@@ -175,15 +176,15 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
       ? sportBits.highlightGold
       : !!(v as any).highlightGold;
 
-      const hittingLabel =
-      sportBits.hittingLabel ??
-      (safeStr((v as any).hittingLabel, '') || null) ??
-      null;
-    
-    const pitchingLabel =
-      sportBits.pitchingLabel ??
-      (safeStr((v as any).pitchingLabel, '') || null) ??
-      null;
+  const hittingLabel =
+    sportBits.hittingLabel ??
+    (safeStr((v as any).hittingLabel, '') || null) ??
+    null;
+
+  const pitchingLabel =
+    sportBits.pitchingLabel ??
+    (safeStr((v as any).pitchingLabel, '') || null) ??
+    null;
 
   return {
     uri: `cloud:${shareId}`,
@@ -234,6 +235,31 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     b2ThumbnailKey: (v as any).b2ThumbnailKey ?? null,
     thumbnailUrl: null,
   };
+}
+
+async function attachCloudSidecars(rows: VideoRow[]) {
+  return Promise.all(
+    rows.map(async (row) => {
+      const shareId = safeStr((row as any).shareId, safeStr((row as any).id, ''));
+      if (!shareId) return row;
+
+      const existing = getCloudSidecar(row as any);
+      if (existing) return row;
+
+      try {
+        const sidecar = await fetchClipSidecarByShareId(shareId);
+
+        return {
+          ...(row as any),
+          sidecar,
+          clipSidecar: sidecar,
+        } as VideoRow;
+      } catch (e) {
+        console.log('[useLibraryDataSource] sidecar fetch failed:', shareId, e);
+        return row;
+      }
+    }),
+  );
 }
 
 async function attachSignedThumbnails(
@@ -294,7 +320,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
       try {
         const v = await AsyncStorage.getItem(DS_KEY);
         if (v === 'cloud' || v === 'local') setDataSourceState(v);
-      } catch { }
+      } catch {}
     })();
   }, []);
 
@@ -302,7 +328,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     setDataSourceState(v);
     try {
       await AsyncStorage.setItem(DS_KEY, v);
-    } catch { }
+    } catch {}
   }, []);
 
   const refreshCloudRows = useCallback(async () => {
@@ -319,7 +345,9 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
       cursor: null,
     });
 
-    const mappedBase = page.rows
+    const rowsWithSidecars = await attachCloudSidecars(page.rows);
+
+    const mappedBase = rowsWithSidecars
       .map(toCloudLibraryRow)
       .filter(Boolean) as LibraryRowLike[];
 
@@ -356,7 +384,9 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
           cursor: null,
         });
 
-        const mappedBase = page.rows
+        const rowsWithSidecars = await attachCloudSidecars(page.rows);
+
+        const mappedBase = rowsWithSidecars
           .map(toCloudLibraryRow)
           .filter(Boolean) as LibraryRowLike[];
 
@@ -405,7 +435,9 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
         cursor: cursorRef.current,
       });
 
-      const mappedBase = page.rows
+      const rowsWithSidecars = await attachCloudSidecars(page.rows);
+
+      const mappedBase = rowsWithSidecars
         .map(toCloudLibraryRow)
         .filter(Boolean) as LibraryRowLike[];
 
