@@ -192,7 +192,11 @@ function toCloudLibraryRow(v: VideoRow): LibraryRowLike | null {
     sport: sportStyle,
     mtime: createdAt,
     assetId: null,
-    size: (v as any).bytes ?? null,
+    size:
+      (v as any).bytes ??
+      (v as any).sizeBytes ??
+      (v as any).videoSizeBytes ??
+      null,
     thumbUri: null,
 
     outcome: outcomeWL || undefined,
@@ -290,7 +294,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
       try {
         const v = await AsyncStorage.getItem(DS_KEY);
         if (v === 'cloud' || v === 'local') setDataSourceState(v);
-      } catch {}
+      } catch { }
     })();
   }, []);
 
@@ -298,7 +302,7 @@ export function useLibraryDataSource(router: any, localRows: any[]) {
     setDataSourceState(v);
     try {
       await AsyncStorage.setItem(DS_KEY, v);
-    } catch {}
+    } catch { }
   }, []);
 
   const refreshCloudRows = useCallback(async () => {

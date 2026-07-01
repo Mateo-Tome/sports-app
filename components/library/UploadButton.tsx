@@ -8,7 +8,7 @@ import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 import { doc, getDoc, getFirestore, setDoc } from "firebase/firestore";
 import { checkCloudUploadAllowed } from "../../lib/cloudUploadLimits";
 import { app, auth, authReady } from "../../lib/firebase";
-
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { testGetUploadUrl } from "../../lib/backend";
 import {
   cancelActiveB2Upload,
@@ -454,6 +454,8 @@ export function UploadButton(props: Props) {
             setState("preparing");
             setStatusText(getStatusLabel("preparing"));
 
+            await activateKeepAwakeAsync("quickclip-upload");
+
             let tempVideoUri: string | null = null;
             let tempThumbUri: string | null = null;
             let tempJsonPath: string | null = null;
@@ -888,6 +890,11 @@ export function UploadButton(props: Props) {
 
               Alert.alert("Upload failed", msg || "Please try again while online.");
             } finally {
+
+              try {
+                await deactivateKeepAwake("quickclip-upload");
+              } catch {}
+              
               if (tempVideoUri) {
                 try {
                   await FileSystem.deleteAsync(tempVideoUri, { idempotent: true });
