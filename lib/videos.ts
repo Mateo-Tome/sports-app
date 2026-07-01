@@ -56,6 +56,8 @@ export type VideoRow = {
   storagePath?: string | null;
 
   bytes?: number | null;
+  sizeBytes?: number | null;
+  videoSizeBytes?: number | null;
 };
 
 export type VideoPageCursor = QueryDocumentSnapshot<DocumentData> | null;
@@ -66,8 +68,17 @@ export type FetchMyVideosPageResult = {
   hasMore: boolean;
 };
 
+function cleanNumber(v: any): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
   const data = d.data() as any;
+
+  const bytes =
+    cleanNumber(data.bytes) ??
+    cleanNumber(data.sizeBytes) ??
+    cleanNumber(data.videoSizeBytes);
 
   return {
     id: d.id,
@@ -94,7 +105,7 @@ function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
       typeof data.highlightGold === 'boolean' ? data.highlightGold : null,
 
     hittingLabel: data.hittingLabel ?? null,
-    pitchingLabel: data.pitchtingLabel ?? null,
+    pitchingLabel: data.pitchingLabel ?? data.pitchtingLabel ?? null,
 
     b2VideoKey: data.b2VideoKey ?? null,
     b2SidecarKey: data.b2SidecarKey ?? null,
@@ -109,7 +120,9 @@ function docToVideoRow(d: QueryDocumentSnapshot<DocumentData>): VideoRow {
     url: data.url ?? null,
     storagePath: data.storagePath ?? null,
 
-    bytes: data.bytes ?? null,
+    bytes,
+    sizeBytes: cleanNumber(data.sizeBytes),
+    videoSizeBytes: cleanNumber(data.videoSizeBytes),
   };
 }
 
