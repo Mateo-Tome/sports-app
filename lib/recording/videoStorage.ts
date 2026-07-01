@@ -1,9 +1,12 @@
+// lib/recording/videoStorage.ts
+
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { Alert, InteractionManager } from 'react-native';
 
+import { updateIndex, type IndexMeta } from '../library/indexStore';
+
 const VIDEOS_DIR = FileSystem.documentDirectory + 'videos/';
-const INDEX_PATH = VIDEOS_DIR + 'index.json';
 const HIGHLIGHTS_SPORT = 'highlights';
 
 // ---------- small utils ----------
@@ -38,7 +41,6 @@ function cleanAthleteId(v: any): string | null {
   return s.length ? s : null;
 }
 
-// Lazy loader to avoid iOS NativeEventEmitter crash on import
 async function getFFmpeg() {
   const mod = await import('ffmpeg-kit-react-native');
   return {
@@ -85,11 +87,11 @@ export async function forceQuickClipLandscapeVideo(inputUri: string) {
   const outUri = FileSystem.cacheDirectory + `quickclip_landscape_${Date.now()}.mp4`;
 
   const cmd =
-  `-y -i ${q(inputUri)} ` +
-  `-map 0:v:0 -map 0:a? ` +
-  `-c copy ` +
-  `-metadata:s:v:0 rotate=0 ` +
-  `${q(outUri)}`;
+    `-y -i ${q(inputUri)} ` +
+    `-map 0:v:0 -map 0:a? ` +
+    `-c copy ` +
+    `-metadata:s:v:0 rotate=0 ` +
+    `${q(outUri)}`;
 
   console.log('[orientation] command=', cmd);
 
@@ -119,43 +121,15 @@ export async function forceQuickClipLandscapeVideo(inputUri: string) {
 
 // ---------- index & album helpers ----------
 
-type VideoMeta = {
-  uri: string;
-  displayName: string;
-  athlete: string;
-  athleteName?: string;
-  athleteId?: string | null;
-  sport: string;
-  createdAt: number;
-  assetId?: string;
-};
-
-async function readIndex(): Promise<VideoMeta[]> {
-  try {
-    const info = (await FileSystem.getInfoAsync(INDEX_PATH)) as any;
-    if (!info?.exists) return [];
-    const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
-    const list = JSON.parse(raw || '[]');
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeIndexAtomic(list: VideoMeta[]) {
-  const tmp = INDEX_PATH + '.tmp';
-  await FileSystem.writeAsStringAsync(tmp, JSON.stringify(list));
-  try {
-    await FileSystem.deleteAsync(INDEX_PATH, { idempotent: true });
-  } catch {}
-  await FileSystem.moveAsync({ from: tmp, to: INDEX_PATH });
-}
-
-async function appendVideoIndex(entry: VideoMeta) {
+async function appendVideoIndex(entry: IndexMeta) {
   await ensureDir(VIDEOS_DIR);
-  const list = await readIndex();
-  list.unshift(entry);
-  await writeIndexAtomic(list);
+  await updateIndex((list) => [entry, ...list]);
+}
+
+async function updateVideoAssetId(uri: string, assetId: string) {
+  await updateIndex((list) =>
+    list.map((x) => (x.uri === uri ? { ...x, assetId } : x)),
+  );
 }
 
 // Exported so finalizeRecording can defer Photos import without blocking Stop.
@@ -197,7 +171,7 @@ export const saveToAppStorage = async (
   opts?: {
     importToPhotos?: boolean;
     athleteId?: string | null;
-  }
+  },
 ) => {
   if (!srcUri) {
     Alert.alert('No video URI', 'Recording did not return a file path.');
@@ -244,12 +218,7 @@ export const saveToAppStorage = async (
 
     if (assetId) {
       try {
-        const list = await readIndex();
-        const idx = list.findIndex((x) => x.uri === destUri);
-        if (idx >= 0) {
-          list[idx] = { ...list[idx], assetId };
-          await writeIndexAtomic(list);
-        }
+        await updateVideoAssetId(destUri, assetId);
       } catch {}
     }
   }
@@ -264,7 +233,7 @@ async function writeHighlightSidecar(
   athlete: string,
   fromT: number,
   duration: number,
-  athleteId?: string | null
+  athleteId?: string | null,
 ) {
   try {
     const cleanId = cleanAthleteId(athleteId);
@@ -289,7 +258,7 @@ async function addClipToIndexAndAlbums(
   clipUri: string,
   athlete: string,
   importToPhotos: boolean,
-  athleteId?: string | null
+  athleteId?: string | null,
 ) {
   const cleanId = cleanAthleteId(athleteId);
   const displayName = `${athlete} - ${HIGHLIGHTS_SPORT} - ${new Date().toLocaleString()}`;
@@ -326,13 +295,13 @@ export const processHighlights = async (
     importHighlightsToPhotos?: boolean;
     maxClips?: number;
     athleteId?: string | null;
-  }
+  },
 ) => {
   if (!markers.length) return [];
 
   const athleteId = cleanAthleteId(opts?.athleteId);
   const importToPhotos = Boolean(opts?.importHighlightsToPhotos);
-  const maxClips = typeof opts?.maxClips === 'number' ? opts!.maxClips! : markers.length;
+  const maxClips = typeof opts?.maxClips === 'number' ? opts.maxClips : markers.length;
 
   let FFmpegKit: any;
   let ReturnCode: any;
