@@ -87,11 +87,12 @@ export async function forceQuickClipLandscapeVideo(inputUri: string) {
   const outUri = FileSystem.cacheDirectory + `quickclip_landscape_${Date.now()}.mp4`;
 
   const cmd =
-    `-y -i ${q(inputUri)} ` +
-    `-map 0:v:0 -map 0:a? ` +
-    `-c copy ` +
-    `-metadata:s:v:0 rotate=0 ` +
-    `${q(outUri)}`;
+  `-y -i ${q(inputUri)} ` +
+  `-map 0:v:0 -map 0:a? ` +
+  `-c copy ` +
+  `-metadata:s:v:0 rotate=0 ` +
+  `-movflags +faststart ` +
+  `${q(outUri)}`;
 
   console.log('[orientation] command=', cmd);
 

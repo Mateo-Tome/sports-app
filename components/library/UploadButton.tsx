@@ -1,9 +1,11 @@
+// components/library/UploadButton.tsx
+
 import * as FileSystem from "expo-file-system";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
-import { addDoc, collection, doc, getDoc, getFirestore } from "firebase/firestore";
+import { doc, getDoc, getFirestore, setDoc } from "firebase/firestore";
 import { checkCloudUploadAllowed } from "../../lib/cloudUploadLimits";
 import { app, auth, authReady } from "../../lib/firebase";
 
@@ -20,12 +22,21 @@ import "../../lib/library/sportLibraryBitsInit";
 import { buildSportLibraryBits } from "../../lib/library/sportLibraryStyleRegistry";
 import { computeSportColor } from "../../lib/sportColors/computeSportColor";
 
-async function readSidecarForUpload(videoUri: string): Promise<any | null> {
+type SidecarReadResult = {
+  data: any | null;
+  path: string | null;
+};
+
+function sidecarPathForVideo(videoUri: string): string {
+  const lastSlash = videoUri.lastIndexOf("/");
+  const lastDot = videoUri.lastIndexOf(".");
+  const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
+  return `${base}.json`;
+}
+
+async function readSidecarWithPath(videoUri: string): Promise<SidecarReadResult> {
   try {
-    const lastSlash = videoUri.lastIndexOf("/");
-    const lastDot = videoUri.lastIndexOf(".");
-    const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
-    const guess = `${base}.json`;
+    const guess = sidecarPathForVideo(videoUri);
 
     const tryRead = async (p: string): Promise<any | null> => {
       const info: any = await FileSystem.getInfoAsync(p);
@@ -34,34 +45,67 @@ async function readSidecarForUpload(videoUri: string): Promise<any | null> {
       return txt ? JSON.parse(txt) : {};
     };
 
-    let sc: any | null = await tryRead(guess);
-    if (sc) return sc;
+    const direct = await tryRead(guess);
+    if (direct) return { data: direct, path: guess };
 
+    const lastSlash = videoUri.lastIndexOf("/");
+    const lastDot = videoUri.lastIndexOf(".");
+    const base = lastDot > lastSlash ? videoUri.slice(0, lastDot) : videoUri;
     const dir = videoUri.slice(0, lastSlash + 1);
+    const baseName = base.slice(lastSlash + 1);
+
     try {
       // @ts-ignore
       const files: string[] = await (FileSystem as any).readDirectoryAsync(dir);
-      const baseName = base.slice(lastSlash + 1);
       const candidate = files.find(
-        (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`
+        (f) => f.toLowerCase() === `${baseName.toLowerCase()}.json`,
       );
-      if (candidate) {
-        sc = await tryRead(dir + candidate);
-        if (sc) return sc;
-      }
-    } catch { }
 
-    return null;
+      if (candidate) {
+        const candidatePath = dir + candidate;
+        const data = await tryRead(candidatePath);
+        if (data) return { data, path: candidatePath };
+      }
+    } catch {}
+
+    return { data: null, path: guess };
   } catch (e) {
-    console.log("readSidecarForUpload error", e);
-    return null;
+    console.log("readSidecarWithPath error", e);
+    return { data: null, path: sidecarPathForVideo(videoUri) };
+  }
+}
+
+async function writeLocalUploadMeta(
+  videoUri: string,
+  sidecarPath: string | null,
+  fullSidecar: any | null,
+  uploadMeta: Record<string, any>,
+) {
+  try {
+    const jsonPath = sidecarPath || sidecarPathForVideo(videoUri);
+    const next = {
+      ...(fullSidecar && typeof fullSidecar === "object" ? fullSidecar : {}),
+      uploadMeta: {
+        ...((fullSidecar as any)?.uploadMeta ?? {}),
+        ...uploadMeta,
+      },
+    };
+
+    await FileSystem.writeAsStringAsync(jsonPath, JSON.stringify(next, null, 2), {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+
+    return next;
+  } catch (e) {
+    console.log("[UploadButton] failed to write local uploadMeta", e);
+    return fullSidecar;
   }
 }
 
 async function makeFreshTempUploadCopy(
   sourceUri: string,
   shareId: string,
-  extension = "mp4"
+  extension = "mp4",
 ): Promise<string> {
   const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
   if (!baseDir) throw new Error("No writable cache/document directory available");
@@ -70,7 +114,7 @@ async function makeFreshTempUploadCopy(
 
   try {
     await FileSystem.deleteAsync(tempUri, { idempotent: true });
-  } catch { }
+  } catch {}
 
   await FileSystem.copyAsync({ from: sourceUri, to: tempUri });
 
@@ -105,7 +149,7 @@ async function makeUploadThumbnail(videoUri: string, shareId: string): Promise<s
 
     try {
       await FileSystem.deleteAsync(dest, { idempotent: true });
-    } catch { }
+    } catch {}
 
     await FileSystem.copyAsync({ from: generated.uri, to: dest });
 
@@ -162,8 +206,7 @@ type UploadState =
   | "failed";
 
 function randomShareId(length = 12): string {
-  const chars =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let out = "";
   for (let i = 0; i < length; i++) {
     out += chars[Math.floor(Math.random() * chars.length)];
@@ -238,9 +281,7 @@ function computeScoreBits(fullSidecar: any | null): {
     }
 
     const homeIsAthlete =
-      typeof fullSidecar.homeIsAthlete === "boolean"
-        ? fullSidecar.homeIsAthlete
-        : null;
+      typeof fullSidecar.homeIsAthlete === "boolean" ? fullSidecar.homeIsAthlete : null;
 
     const fs = fullSidecar.finalScore;
     const home = clampNum(fs?.home);
@@ -324,6 +365,7 @@ export function UploadButton(props: Props) {
         onUploaded: props.onUploaded,
       };
     }
+
     return {
       localUri: (props as UploadButtonProps).localUri,
       sidecar: (props as UploadButtonProps).sidecar,
@@ -337,7 +379,7 @@ export function UploadButton(props: Props) {
   const [state, setState] = useState<UploadState>(uploaded ? "done" : "idle");
   const [error, setError] = useState<string | undefined>();
   const [statusText, setStatusText] = useState<string>(
-    getStatusLabel(uploaded ? "done" : "idle")
+    getStatusLabel(uploaded ? "done" : "idle"),
   );
   const [videoProgress, setVideoProgress] = useState<UploadProgress | null>(null);
   const [sidecarProgress, setSidecarProgress] = useState<UploadProgress | null>(null);
@@ -350,6 +392,7 @@ export function UploadButton(props: Props) {
     const nextState: UploadState = uploaded ? "done" : "idle";
     setState(nextState);
     setStatusText(getStatusLabel(nextState));
+
     if (uploaded) {
       setError(undefined);
       setVideoProgress(null);
@@ -367,8 +410,7 @@ export function UploadButton(props: Props) {
     state === "uploadingSidecar" ||
     state === "savingMetadata";
 
-  const currentProgress =
-    state === "uploadingSidecar" ? sidecarProgress : videoProgress;
+  const currentProgress = state === "uploadingSidecar" ? sidecarProgress : videoProgress;
 
   const showProgressBar =
     (state === "uploadingVideo" || state === "uploadingSidecar") &&
@@ -419,7 +461,56 @@ export function UploadButton(props: Props) {
             try {
               const user = await getSignedInUserForUpload();
               const now = Date.now();
-              const shareId = randomShareId();
+
+              const sidecarRead = await readSidecarWithPath(localUri);
+              let fullSidecar =
+                sidecarRead.data ||
+                (sidecar && typeof sidecar === "object" ? (sidecar as any) : null);
+
+              const existingUploadMeta =
+                fullSidecar && typeof fullSidecar === "object"
+                  ? fullSidecar.uploadMeta
+                  : null;
+
+              const existingShareId =
+                typeof existingUploadMeta?.shareId === "string" &&
+                existingUploadMeta.shareId.trim()
+                  ? existingUploadMeta.shareId.trim()
+                  : null;
+
+              const alreadyUploaded =
+                existingUploadMeta?.uploaded === true &&
+                typeof existingUploadMeta?.shareId === "string" &&
+                existingUploadMeta.shareId.trim();
+
+              if (alreadyUploaded) {
+                const existingCloudKey =
+                  typeof existingUploadMeta?.b2VideoKey === "string" &&
+                  existingUploadMeta.b2VideoKey.trim()
+                    ? existingUploadMeta.b2VideoKey.trim()
+                    : existingUploadMeta.shareId;
+
+                setState("done");
+                setStatusText(getStatusLabel("done"));
+                setError(undefined);
+                setVideoProgress(null);
+                setSidecarProgress(null);
+                setIsCancelling(false);
+                cancelRequestedRef.current = false;
+                inFlightRef.current = false;
+
+                onUploaded?.(existingCloudKey, "b2://quickclip-videos");
+                return;
+              }
+
+              const shareId = existingShareId || randomShareId();
+
+              fullSidecar = await writeLocalUploadMeta(localUri, sidecarRead.path, fullSidecar, {
+                shareId,
+                uploaded: false,
+                status: "uploading",
+                startedAt: now,
+              });
 
               const fileInfo: any = await FileSystem.getInfoAsync(localUri);
               const fileSizeBytes =
@@ -444,6 +535,13 @@ export function UploadButton(props: Props) {
                 setState("idle");
                 setStatusText(getStatusLabel("idle"));
                 inFlightRef.current = false;
+
+                await writeLocalUploadMeta(localUri, sidecarRead.path, fullSidecar, {
+                  shareId,
+                  uploaded: false,
+                  status: "blocked",
+                  blockedAt: Date.now(),
+                });
 
                 Alert.alert(allowed.title, allowed.message);
                 return;
@@ -479,6 +577,16 @@ export function UploadButton(props: Props) {
               const b2VideoKey: string | null = videoUpload?.fileName ?? null;
               const b2VideoFileId: string | null = videoUpload?.fileId ?? null;
 
+              fullSidecar = await writeLocalUploadMeta(localUri, sidecarRead.path, fullSidecar, {
+                shareId,
+                uploaded: false,
+                status: "videoUploaded",
+                b2VideoKey,
+                b2VideoFileId,
+                bucket: creds1.bucketName ?? "quickclip-videos",
+                videoUploadedAt: Date.now(),
+              });
+
               let b2ThumbnailKey: string | null = null;
               let b2ThumbnailFileId: string | null = null;
               let thumbnailUrl: string | null = null;
@@ -490,7 +598,9 @@ export function UploadButton(props: Props) {
                 try {
                   const credsThumb: any = await testGetUploadUrl();
                   if (!credsThumb?.uploadUrl || !credsThumb?.uploadAuthToken) {
-                    throw new Error(`testGetUploadUrl missing thumbnail creds: ${JSON.stringify(credsThumb)}`);
+                    throw new Error(
+                      `testGetUploadUrl missing thumbnail creds: ${JSON.stringify(credsThumb)}`,
+                    );
                   }
 
                   const thumbUpload = await uploadVideoToB2({
@@ -504,19 +614,20 @@ export function UploadButton(props: Props) {
 
                   b2ThumbnailKey = thumbUpload?.fileName ?? null;
                   b2ThumbnailFileId = thumbUpload?.fileId ?? null;
-                  thumbnailUrl = b2FriendlyUrl(credsThumb.bucketName ?? creds1.bucketName, b2ThumbnailKey);
+                  thumbnailUrl = b2FriendlyUrl(
+                    credsThumb.bucketName ?? creds1.bucketName,
+                    b2ThumbnailKey,
+                  );
                 } catch (thumbErr) {
-                  console.warn("[UploadButton] thumbnail upload failed; continuing without thumbnail", thumbErr);
+                  console.warn(
+                    "[UploadButton] thumbnail upload failed; continuing without thumbnail",
+                    thumbErr,
+                  );
                 }
               }
 
               let b2SidecarKey: string | null = null;
               let b2SidecarFileId: string | null = null;
-
-              let fullSidecar = await readSidecarForUpload(localUri);
-              if (!fullSidecar && sidecar && typeof sidecar === "object") {
-                fullSidecar = sidecar as any;
-              }
 
               if (fullSidecar) {
                 setState("uploadingSidecar");
@@ -529,6 +640,7 @@ export function UploadButton(props: Props) {
                 const payload = {
                   ...fullSidecar,
                   uploadMeta: {
+                    ...(fullSidecar?.uploadMeta ?? {}),
                     uploadedAt: now,
                     shareId,
                     b2VideoKey,
@@ -573,167 +685,173 @@ export function UploadButton(props: Props) {
               setState("savingMetadata");
               setStatusText(getStatusLabel("savingMetadata"));
 
-              try {
-                const db = getFirestore(app);
-                const localName = fileNameFromUri(localUri);
-                const fallbackTitle = stripExt(localName);
+              const db = getFirestore(app);
+              const localName = fileNameFromUri(localUri);
+              const fallbackTitle = stripExt(localName);
 
-                const athleteName = safeString(
-                  fullSidecar?.athleteName ?? fullSidecar?.athlete,
-                  "Unassigned"
-                );
+              const athleteName = safeString(
+                fullSidecar?.athleteName ?? fullSidecar?.athlete,
+                "Unassigned",
+              );
 
-                const athleteId =
-                  typeof fullSidecar?.athleteId === "string" && fullSidecar.athleteId.trim()
-                    ? fullSidecar.athleteId.trim()
-                    : null;
+              const athleteId =
+                typeof fullSidecar?.athleteId === "string" && fullSidecar.athleteId.trim()
+                  ? fullSidecar.athleteId.trim()
+                  : null;
 
-                const sport = safeString(fullSidecar?.sport, "unknown");
-                const style = safeString(fullSidecar?.style, "");
-                const effectiveSport = fullSidecar
-                  ? getSportKeyFromSidecar(fullSidecar)
-                  : sport;
+              const sport = safeString(fullSidecar?.sport, "unknown");
+              const style = safeString(fullSidecar?.style, "");
+              const effectiveSport = fullSidecar ? getSportKeyFromSidecar(fullSidecar) : sport;
 
-                const sportStyle =
-                  effectiveSport && effectiveSport !== "unknown"
-                    ? effectiveSport
-                    : style && style !== "unknown"
-                      ? `${sport}:${style}`
-                      : sport;
+              const sportStyle =
+                effectiveSport && effectiveSport !== "unknown"
+                  ? effectiveSport
+                  : style && style !== "unknown"
+                    ? `${sport}:${style}`
+                    : sport;
 
-                const recordedAt =
-                  typeof fullSidecar?.createdAt === "number" &&
-                    Number.isFinite(fullSidecar.createdAt)
-                    ? fullSidecar.createdAt
-                    : now;
+              const recordedAt =
+                typeof fullSidecar?.createdAt === "number" &&
+                Number.isFinite(fullSidecar.createdAt)
+                  ? fullSidecar.createdAt
+                  : now;
 
-                let title = safeString(fullSidecar?.displayName ?? fullSidecar?.title, "");
+              let title = safeString(fullSidecar?.displayName ?? fullSidecar?.title, "");
 
-                if (!title) {
-                  const d = new Date(recordedAt);
-                  const datePart = d.toLocaleDateString([], {
-                    month: "short",
-                    day: "numeric",
-                  });
-                  const timePart = d.toLocaleTimeString([], {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  });
+              if (!title) {
+                const d = new Date(recordedAt);
+                const datePart = d.toLocaleDateString([], {
+                  month: "short",
+                  day: "numeric",
+                });
+                const timePart = d.toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
 
-                  title = `${athleteName} • ${sportStyle} • ${datePart} at ${timePart}`;
-                }
+                title = `${athleteName} • ${sportStyle} • ${datePart} at ${timePart}`;
+              }
 
-                if (!title.trim()) title = fallbackTitle;
+              if (!title.trim()) title = fallbackTitle;
 
-                const scoreBits = computeScoreBits(fullSidecar);
+              const scoreBits = computeScoreBits(fullSidecar);
 
-                const scSport = String(effectiveSport ?? sport ?? "");
-                const scEvents = Array.isArray(fullSidecar?.events)
-                  ? fullSidecar.events
-                  : Array.isArray(fullSidecar?.overlayEvents)
-                    ? fullSidecar.overlayEvents
-                    : Array.isArray(fullSidecar?.data?.events)
-                      ? fullSidecar.data.events
-                      : [];
+              const scSport = String(effectiveSport ?? sport ?? "");
+              const scEvents = Array.isArray(fullSidecar?.events)
+                ? fullSidecar.events
+                : Array.isArray(fullSidecar?.overlayEvents)
+                  ? fullSidecar.overlayEvents
+                  : Array.isArray(fullSidecar?.data?.events)
+                    ? fullSidecar.data.events
+                    : [];
 
-                const scHomeIsAthlete =
-                  typeof fullSidecar?.homeIsAthlete === "boolean"
-                    ? fullSidecar.homeIsAthlete
-                    : true;
+              const scHomeIsAthlete =
+                typeof fullSidecar?.homeIsAthlete === "boolean"
+                  ? fullSidecar.homeIsAthlete
+                  : true;
 
-                const fallbackColorRes = computeSportColor(
-                  {
-                    sport: scSport,
-                    events: scEvents,
-                    homeIsAthlete: scHomeIsAthlete,
-                  },
-                  scoreBits.result ?? null,
-                  false,
-                  scoreBits.finalScore
-                );
+              const fallbackColorRes = computeSportColor(
+                {
+                  sport: scSport,
+                  events: scEvents,
+                  homeIsAthlete: scHomeIsAthlete,
+                },
+                scoreBits.result ?? null,
+                false,
+                scoreBits.finalScore,
+              );
 
-                const sportBits = buildSportLibraryBits(scSport, fullSidecar);
+              const sportBits = buildSportLibraryBits(scSport, fullSidecar);
 
-                const finalEdgeColor =
-                  sportBits.edgeColor ??
-                  fallbackColorRes?.edgeColor ??
-                  null;
+              const finalEdgeColor =
+                sportBits.edgeColor ?? fallbackColorRes?.edgeColor ?? null;
 
-                const finalBadgeText = sportBits.badgeText ?? null;
+              const finalBadgeText = sportBits.badgeText ?? null;
 
-                const finalBadgeColor =
-                  sportBits.badgeColor ??
-                  sportBits.edgeColor ??
-                  finalEdgeColor ??
-                  null;
+              const finalBadgeColor =
+                sportBits.badgeColor ?? sportBits.edgeColor ?? finalEdgeColor ?? null;
 
-                const finalHighlightGold =
-                  typeof sportBits.highlightGold === "boolean"
-                    ? sportBits.highlightGold
-                    : !!fallbackColorRes?.highlightGold;
+              const finalHighlightGold =
+                typeof sportBits.highlightGold === "boolean"
+                  ? sportBits.highlightGold
+                  : !!fallbackColorRes?.highlightGold;
 
-                const libraryStyle =
-                  finalEdgeColor || finalBadgeText || finalBadgeColor
-                    ? {
+              const libraryStyle =
+                finalEdgeColor || finalBadgeText || finalBadgeColor
+                  ? {
                       edgeColor: finalEdgeColor,
                       badgeText: finalBadgeText,
                       badgeColor: finalBadgeColor,
                       highlight: finalHighlightGold,
                     }
-                    : null;
+                  : null;
 
-                const docData: any = {
-                  ownerUid: user.uid,
+              const docData: any = {
+                ownerUid: user.uid,
 
-                  title,
-                  athleteName,
-                  athleteId,
-                  sport,
-                  style: style || null,
-                  sportStyle: sportStyle || null,
-                  originalFileName: localName,
+                title,
+                athleteName,
+                athleteId,
+                sport,
+                style: style || null,
+                sportStyle: sportStyle || null,
+                originalFileName: localName,
 
-                  createdAt: recordedAt,
-                  uploadedAt: now,
-                  updatedAt: now,
+                createdAt: recordedAt,
+                uploadedAt: now,
+                updatedAt: now,
 
-                  storageProvider: "b2",
-                  videoSizeBytes: fileSizeBytes,
-                  b2Bucket: creds1.bucketName ?? "quickclip-videos",
-                  b2VideoKey,
-                  b2VideoFileId,
-                  b2SidecarKey,
-                  b2SidecarFileId,
+                storageProvider: "b2",
+                videoSizeBytes: fileSizeBytes,
+                sizeBytes: fileSizeBytes,
+                b2Bucket: creds1.bucketName ?? "quickclip-videos",
+                b2VideoKey,
+                b2VideoFileId,
+                b2SidecarKey,
+                b2SidecarFileId,
 
-                  b2ThumbnailKey,
-                  b2ThumbnailFileId,
-                  thumbnailUrl,
-                  thumbUri: thumbnailUrl,
+                b2ThumbnailKey,
+                b2ThumbnailFileId,
+                thumbnailUrl,
+                thumbUri: thumbnailUrl,
 
-                  shareId,
-                  isPublic: true,
+                shareId,
+                isPublic: true,
 
-                  result: scoreBits.result,
-                  scoreFor: scoreBits.scoreFor,
-                  scoreAgainst: scoreBits.scoreAgainst,
-                  scoreText: scoreBits.scoreText,
-                  homeIsAthlete: scoreBits.homeIsAthlete,
-                  finalScore: scoreBits.finalScore,
+                result: scoreBits.result,
+                scoreFor: scoreBits.scoreFor,
+                scoreAgainst: scoreBits.scoreAgainst,
+                scoreText: scoreBits.scoreText,
+                homeIsAthlete: scoreBits.homeIsAthlete,
+                finalScore: scoreBits.finalScore,
 
-                  libraryStyle,
+                libraryStyle,
 
-                  hittingLabel: sportBits.hittingLabel ?? null,
-                  pitchingLabel: sportBits.pitchingLabel ?? null,
+                hittingLabel: sportBits.hittingLabel ?? null,
+                pitchingLabel: sportBits.pitchingLabel ?? null,
 
-                  edgeColor: finalEdgeColor,
-                  highlightGold: finalHighlightGold,
-                };
+                edgeColor: finalEdgeColor,
+                highlightGold: finalHighlightGold,
+              };
 
-                const ref = await addDoc(collection(db, "videos"), docData);
-                console.log("[UploadButton] created VideoDoc:", ref.id, docData);
-              } catch (metaErr) {
-                console.warn("[UploadButton] upload succeeded but metadata write failed:", metaErr);
-              }
+              await setDoc(doc(db, "videos", shareId), docData, { merge: true });
+              console.log("[UploadButton] saved VideoDoc:", shareId, docData);
+
+              fullSidecar = await writeLocalUploadMeta(localUri, sidecarRead.path, fullSidecar, {
+                shareId,
+                uploaded: true,
+                status: "uploaded",
+                uploadedAt: now,
+                firestoreDocId: shareId,
+                b2VideoKey,
+                b2VideoFileId,
+                b2ThumbnailKey,
+                b2ThumbnailFileId,
+                b2SidecarKey,
+                b2SidecarFileId,
+                thumbnailUrl,
+                bucket: creds1.bucketName ?? "quickclip-videos",
+              });
 
               setState("done");
               setStatusText(getStatusLabel("done"));
@@ -773,17 +891,19 @@ export function UploadButton(props: Props) {
               if (tempVideoUri) {
                 try {
                   await FileSystem.deleteAsync(tempVideoUri, { idempotent: true });
-                } catch { }
+                } catch {}
               }
+
               if (tempThumbUri) {
                 try {
                   await FileSystem.deleteAsync(tempThumbUri, { idempotent: true });
-                } catch { }
+                } catch {}
               }
+
               if (tempJsonPath) {
                 try {
                   await FileSystem.deleteAsync(tempJsonPath, { idempotent: true });
-                } catch { }
+                } catch {}
               }
             }
           }}
